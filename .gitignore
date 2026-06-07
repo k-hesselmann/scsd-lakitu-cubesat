@@ -1,0 +1,21 @@
+# environments
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# data — never commit these
+95cloud/
+cloud_data/
+cloud_classes/
+*.TIF
+*.tif
+*.zip
+
+# model artifacts
+*.tflite
+*.h5
+*.keras
+
+# notebook noise
+.ipynb_checkpoints/
