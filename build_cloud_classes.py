@@ -24,19 +24,16 @@ import imageio.v2 as imageio
 from tqdm import tqdm
 
 # METAR sky-cover bins as cloud-pixel fraction
-# clear <12.5% | scattered 12.5-50% | broken 50-87.5% | overcast >87.5%
-CLASS_EDGES = [0.125, 0.50, 0.875]
-CLASS_NAMES = ["clear", "scattered", "broken", "overcast"]
+# clear <12.5% | partial 12.5-87.5% | overcast >87.5%
+CLASS_EDGES = [0.125, 0.875]
+CLASS_NAMES = ["clear", "partial", "overcast"]
 
 
 def classify(f):
-    if f < CLASS_EDGES[0]:
-        return CLASS_NAMES[0]
-    if f < CLASS_EDGES[1]:
-        return CLASS_NAMES[1]
-    if f < CLASS_EDGES[2]:
-        return CLASS_NAMES[2]
-    return CLASS_NAMES[3]
+    for i, edge in enumerate(CLASS_EDGES):
+        if f < edge:
+            return CLASS_NAMES[i]
+    return CLASS_NAMES[-1]
 
 
 def read_band(path):
