@@ -4,18 +4,24 @@ venv/
 __pycache__/
 *.pyc
 
-# data — never commit these
-95cloud/
-cloud_data/
-cloud_classes/
+# datasets — large, never committed (see README)
+data/*
+!data/.gitkeep
+
+# model artifacts — intermediate; the deployment model is tracked in coral/models/
+models/*
+!models/.gitkeep
+*.tflite
+*.h5
+*.keras
+
+# raw imagery
 *.TIF
 *.tif
 *.zip
 
-# model artifacts
-*.tflite
-*.h5
-*.keras
+# edge-tpu compile logs
+*_edgetpu.log
 
 # notebook noise
 .ipynb_checkpoints/
