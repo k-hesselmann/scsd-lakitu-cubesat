@@ -1,0 +1,18 @@
+# CMake build output
+/out/
+/build/
+
+# On-bench debug captures (see tools/cloud_regressor_client.py)
+/burst_frames/
+/debug_frames/
+*.png
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# The repo root ignores *.tflite (training artifacts), but the firmware ships
+# this one frozen model — re-include it so the build is self-contained.
+!/models/cloud_regressor_qat_int8_edgetpu.tflite

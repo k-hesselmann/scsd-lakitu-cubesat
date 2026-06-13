@@ -1,0 +1,20 @@
+diff --git a/third_party/modified/nxp/rt1176-sdk/board.h b/third_party/modified/nxp/rt1176-sdk/board.h
+index 2f5b9b30..e1122043 100644
+--- a/third_party/modified/nxp/rt1176-sdk/board.h
++++ b/third_party/modified/nxp/rt1176-sdk/board.h
+@@ -20,8 +20,13 @@
+ #define BOARD_DEBUG_UART_TYPE     kSerialPort_Uart
+ #define BOARD_DEBUG_UART_CLK_FREQ 24000000
+ 
+-#define BOARD_DEBUG_UART_INSTANCE_M7 6U
+-#define BOARD_UART_CLOCK_ROOT_M7     kCLOCK_Root_Lpuart6
++/* Moved off LPUART6 so the header UART6 pins are free for the OBC link
++ * (cloud_payload). Console output still reaches USB CDC; LPUART7's pins
++ * are not routed anywhere on the Dev Board Micro. Must be an instance <= 8:
++ * the serial adapter (fsl_adapter_lpuart.c) only provides IRQ handlers for
++ * LPUART0-8, anything higher hangs in DefaultISR at boot. */
++#define BOARD_DEBUG_UART_INSTANCE_M7 7U
++#define BOARD_UART_CLOCK_ROOT_M7     kCLOCK_Root_Lpuart7
+ #define BOARD_DEBUG_UART_BAUDRATE_M7 (115200U)
+ 
+ #define BOARD_DEBUG_UART_INSTANCE_M4 3U
