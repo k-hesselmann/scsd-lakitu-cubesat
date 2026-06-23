@@ -7,9 +7,9 @@ deployment target for the model trained in the rest of the `payload/` tree.
 A MobileNetV2 regression model (int8 QAT, Edge TPU compiled) captures 224×224
 grayscale frames, infers a cloud-cover fraction `[0,1]`, and ships the image +
 result to an OBC (On-Board Computer) over UART6. See
-[`shared/UART_PROTOCOL.md`](../../shared/UART_PROTOCOL.md) for the wire protocol
-(and [`shared/OBC_INTEGRATION.md`](../../shared/OBC_INTEGRATION.md) for the OBC
-handoff), and [`docs/TODO.md`](docs/TODO.md) for remaining firmware work.
+[`interface_docs/UART_PROTOCOL.md`](../../interface_docs/UART_PROTOCOL.md) for the
+wire protocol (and [`interface_docs/OBC_INTEGRATION.md`](../../interface_docs/OBC_INTEGRATION.md)
+for the OBC handoff), and [`docs/TODO.md`](docs/TODO.md) for remaining firmware work.
 
 All paths below are relative to this `coral/` directory.
 

@@ -17,8 +17,7 @@ scsd-lakitu-cubesat/
 │   ├── data/         datasets — NOT tracked
 │   └── models/       intermediate model artifacts — NOT tracked
 ├── firmware-stm32/   flight software and low-level drivers (one STM32L476RG binary)
-├── shared/           cross-target interface definitions (UART protocol)
-├── hardware/         KiCad projects (EPS board, sensor board)
+├── interface_docs/   cross-target interface definitions (UART protocol, OBC handoff)
 └── docs/             project-level docs (requirements, budgets, design notes)
 ```
 
@@ -32,8 +31,8 @@ Two independent binaries that do not share a toolchain:
    against the coralmicro SDK for the Edge TPU (FreeRTOS).
 
 The two communicate over UART (224x224 grayscale frame + 2-byte cloud fraction +
-SEQ, 115200 baud). The protocol definition lives in `shared/` so the framing
-cannot drift between the OBC and Coral sides.
+SEQ, 115200 baud). The protocol definition lives in `interface_docs/` so the
+framing cannot drift between the OBC and Coral sides.
 
 ## Getting started
 

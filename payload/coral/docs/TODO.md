@@ -24,7 +24,7 @@ is worth keeping behind a build flag.
 ## 3. Fuller OBC command handler
 `OBCCommandTask` currently handles only `TRIGGER` (0x10) and `SET_INTERVAL`
 (0x11). Candidates to add, with CRC + ACK/NAK like the existing ones, and
-documented in `shared/UART_PROTOCOL.md` (opcodes reserved there in §4.3):
+documented in `interface_docs/UART_PROTOCOL.md` (opcodes reserved there in §4.3):
 - **GET_STATUS / health** — uptime, current SEQ, last cloud %, reset count
   (`ResetGetStats()`), TPU/camera OK flags. Lets the OBC poll liveness.
 - **REQUEST_FRAME(seq)** — re-send a specific image the OBC missed (needs a
