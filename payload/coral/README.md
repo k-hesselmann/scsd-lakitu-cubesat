@@ -2,13 +2,14 @@
 
 On-device firmware for the **Coral Dev Board Micro**, built as an out-of-tree
 [coralmicro](https://github.com/google-coral/coralmicro) project. This is the
-deployment target for the model trained in the rest of `scsd-ml-payload`.
+deployment target for the model trained in the rest of the `payload/` tree.
 
 A MobileNetV2 regression model (int8 QAT, Edge TPU compiled) captures 224×224
 grayscale frames, infers a cloud-cover fraction `[0,1]`, and ships the image +
 result to an OBC (On-Board Computer) over UART6. See
-[`docs/UART_PROTOCOL.md`](docs/UART_PROTOCOL.md) for the wire protocol and
-[`docs/TODO.md`](docs/TODO.md) for remaining work.
+[`shared/UART_PROTOCOL.md`](../../shared/UART_PROTOCOL.md) for the wire protocol
+(and [`shared/OBC_INTEGRATION.md`](../../shared/OBC_INTEGRATION.md) for the OBC
+handoff), and [`docs/TODO.md`](docs/TODO.md) for remaining firmware work.
 
 All paths below are relative to this `coral/` directory.
 
@@ -20,7 +21,7 @@ coral/
   models/*.tflite                 model — committed here, lands on device at /models/<file>
   tools/cloud_regressor_client.py debug HTTP client (image preview, DEBUG ONLY)
   tools/quant_check.py            quantization sanity check
-  docs/UART_PROTOCOL.md           OBC ↔ Coral protocol spec
+  docs/TODO.md                    deferred firmware work before flight
   patches/                        the one coralmicro change this project needs
   coralmicro/                     submodule → our coralmicro fork (see below)
 ```
@@ -45,7 +46,7 @@ git clone https://github.com/k-hesselmann/coralmicro
 cd coralmicro
 git checkout c9f665b0          # the upstream commit this was developed against
 git checkout -b board-h-uart7
-git apply /path/to/scsd-ml-payload/coral/patches/coralmicro-board-h-lpuart7.patch
+git apply /path/to/scsd-lakitu-cubesat/payload/coral/patches/coralmicro-board-h-lpuart7.patch
 git commit -am "board.h: move M7 debug console off LPUART6 for cloud_payload"
 git push -u origin board-h-uart7
 ```
@@ -54,8 +55,8 @@ git push -u origin board-h-uart7
 
 ```bash
 # Clone the payload repo with the coralmicro submodule (pinned to the fork branch):
-git clone --recurse-submodules git@github.com:k-hesselmann/scsd-ml-payload.git
-cd scsd-ml-payload/coral
+git clone --recurse-submodules git@github.com:k-hesselmann/scsd-lakitu-cubesat.git
+cd scsd-lakitu-cubesat/payload/coral
 
 cmake -B out -S .
 make -C out -j$(nproc)

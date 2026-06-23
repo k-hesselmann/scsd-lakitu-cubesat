@@ -195,6 +195,27 @@ Offset  Size  Field     Value
 
 Total: **7 bytes**
 
+### 4.3 Reserved / planned commands
+
+The firmware currently implements only `TRIGGER` (0x10) and `SET_INTERVAL`
+(0x11); the opcodes below are **reserved** for planned commands so the OBC team
+can design around them and the command space is not reused. Each will follow the
+same framing (CMD + payload + CRC-16/CCITT-FALSE, ACK/NAK reply) when added.
+Tracked payload-side in [`payload/coral/docs/TODO.md`](../payload/coral/docs/TODO.md) §3.
+
+| CMD  | Name              | Purpose                                                       |
+|------|-------------------|---------------------------------------------------------------|
+| 0x12 | `GET_STATUS`      | Liveness/health poll: uptime, current SEQ, last cloud %, reset count, TPU/camera OK flags |
+| 0x13 | `REQUEST_FRAME`   | Re-send a specific image by SEQ the OBC missed (needs an on-board retained-frame cache) |
+| 0x14 | `SOFT_RESET`      | Commanded reboot                                              |
+| 0x16 | `SET_EXPOSURE`    | Adjust camera params (e.g. motion-blur tuning in flight)      |
+
+> 0x15 is intentionally skipped — it is the NAK response byte (§5).
+> These opcodes are not yet implemented: sending one today yields a single
+> **NAK** (per §5). Behaviour for unknown/garbage commands beyond that single
+> NAK (e.g. a resync window so line noise can't wedge the parser) is itself an
+> open item.
+
 ---
 
 ## 5. Coral → OBC: Command Responses

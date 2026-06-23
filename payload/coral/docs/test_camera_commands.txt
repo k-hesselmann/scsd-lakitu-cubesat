@@ -2,10 +2,10 @@ Test:
 cd ~/coralmicro
 python3 scripts/flashtool.py --build_dir build \
     --elf_path build/examples/camera_streaming_rpc/camera_streaming_rpc_usb
-python3 ~/ml-payload/coral/tools/camera_fov_viewer.py
+python3 ~/ml-payload/payload/coral/tools/camera_fov_viewer.py
 
 
 
 Revert to real model:
-cd ~/ml-payload/coral
+cd ~/ml-payload/payload/coral
 python3 coralmicro/scripts/flashtool.py --build_dir out --elf_path out/cloud_payload
