@@ -1,4 +1,4 @@
 [submodule "coral/coralmicro"]
-	path = coral/coralmicro
+	path = payload/coral/coralmicro
 	url = https://github.com/k-hesselmann/coralmicro
 	branch = board-h-uart7

@@ -5,13 +5,14 @@ __pycache__/
 *.pyc
 
 # datasets — large, never committed (see README)
-data/*
-!data/.gitkeep
+payload/data/*
+!payload/data/.gitkeep
 
 # model artifacts — intermediate; the deployment model is tracked in coral/models/
-models/*
-!models/.gitkeep
+payload/models/*
+!payload/models/.gitkeep
 *.tflite
+!payload/coral/models/*_edgetpu.tflite
 *.h5
 *.keras
 
