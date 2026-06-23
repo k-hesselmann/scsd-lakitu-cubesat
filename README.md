@@ -1,4 +1,4 @@
-# Lakitu — 1U CubeSat Stratospheric Balloon Platform
+# Lakitu - 1U CubeSat Stratospheric Balloon Platform
 
 Lakitu is a 1U CubeSat-format payload flown aboard a stratospheric balloon,
 built as a TUM course project. The platform runs an autonomous 4 to 6 hour
