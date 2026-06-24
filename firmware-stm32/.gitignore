@@ -1,0 +1,8 @@
+.pio/
+.vscode/
+.DS_Store
+Core/.DS_Store
+Drivers/.DS_Store
+Drivers/CMSIS/.DS_Store
+Drivers/STM32L4xx_HAL_Driver/.DS_Store
+
