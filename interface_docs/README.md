@@ -1,4 +1,4 @@
-# shared
+# OBC-Payload Interface
 
 Cross-target interface definitions — the contract between the Coral payload and
 the STM32 OBC. These docs are authoritative for both sides so the framing cannot
