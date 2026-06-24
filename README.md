@@ -45,4 +45,8 @@ git submodule update --init --recursive   # fetches coralmicro (large, one-time)
 The coralmicro submodule is pinned to a branch carrying a board.h LPUART7 patch;
 do not update it to upstream main without re-applying that patch.
 
-![Lakitu](scsd_lakitu_logo_small.png)
+## Data
+
+Training datasets are not committed; only the deployment Edge TPU model is
+tracked in git. See [payload/README.md](payload/README.md) for the dataset
+sources, local layout, and the train → quantize → flash pipeline.
