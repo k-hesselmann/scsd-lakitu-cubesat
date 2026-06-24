@@ -1,5 +1,5 @@
 # Lakitu - 1U CubeSat Stratospheric Balloon Platform
-![Lakitu](scsd_lakitu_logo_small.png)
+
 Lakitu is a 1U CubeSat-format payload flown aboard a stratospheric balloon,
 built as a TUM course project. The platform runs an autonomous 4 to 6 hour
 flight managed by a six-phase finite state machine (Standby, Launch, Ascent,
@@ -45,8 +45,4 @@ git submodule update --init --recursive   # fetches coralmicro (large, one-time)
 The coralmicro submodule is pinned to a branch carrying a board.h LPUART7 patch;
 do not update it to upstream main without re-applying that patch.
 
-## Data
-
-Training datasets are not committed; only the deployment Edge TPU model is
-tracked in git. See [payload/README.md](payload/README.md) for the dataset
-sources, local layout, and the train → quantize → flash pipeline.
+![Lakitu](scsd_lakitu_logo_small.png)
