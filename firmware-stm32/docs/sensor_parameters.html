@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FSW Sensor Parameter Reference</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    background: #ffffff;
+    color: #1a1a1a;
+    padding: 32px 24px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  h1 {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    margin-bottom: 4px;
+    color: #0a0a0a;
+  }
+
+  .subtitle {
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 28px;
+  }
+
+  /* Sensor block */
+  .sensor-block {
+    margin-bottom: 32px;
+  }
+
+  .sensor-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .sensor-label {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: #fff;
+    padding: 4px 12px;
+    border-radius: 4px;
+  }
+
+  .imu   { background: #1a6b4a; }
+  .gps   { background: #1a4b8c; }
+  .baro  { background: #8c5a00; }
+
+  .sensor-chip {
+    font-size: 12px;
+    color: #555;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+
+  thead tr {
+    background: #f5f5f5;
+    border-bottom: 2px solid #ddd;
+  }
+
+  thead th {
+    text-align: left;
+    padding: 8px 10px;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #444;
+  }
+
+  tbody tr {
+    border-bottom: 1px solid #efefef;
+  }
+
+  tbody tr:last-child {
+    border-bottom: none;
+  }
+
+  tbody td {
+    padding: 9px 10px;
+    vertical-align: top;
+    color: #222;
+  }
+
+  /* Parameter type badges */
+  .badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 3px;
+    letter-spacing: 0.3px;
+  }
+
+  .direct   { background: #e8f5ee; color: #1a6b4a; border: 1px solid #b6dfc8; }
+  .derived1 { background: #e8eef8; color: #1a4b8c; border: 1px solid #b6c8e8; }
+  .derived2 { background: #fff3e0; color: #8c5a00; border: 1px solid #e8c97a; }
+
+  /* Reliability dots */
+  .rel {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+    margin-top: 2px;
+  }
+
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  .dot.on  { background: #1a6b4a; }
+  .dot.off { background: #ddd; }
+
+  .rel-label {
+    font-size: 10px;
+    color: #888;
+    margin-left: 4px;
+  }
+
+  /* Limitation cell */
+  .limit {
+    color: #c0392b;
+    font-size: 11.5px;
+  }
+
+  /* Usage cell */
+  .usage {
+    font-size: 11.5px;
+    color: #333;
+  }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: #444;
+  }
+
+  .divider {
+    border: none;
+    border-top: 1px solid #eee;
+    margin: 8px 0 20px 0;
+  }
+
+  .footnote {
+    font-size: 11px;
+    color: #888;
+    margin-top: 24px;
+    border-top: 1px solid #eee;
+    padding-top: 12px;
+  }
+</style>
+</head>
+<body>
+
+<h1>FSW Sensor Parameter Reference</h1>
+<p class="subtitle">1U CubeSat Balloon Mission — MPU-6050 · MAX-M10S · MS5607 &nbsp;|&nbsp; Parameters available for phase detection logic</p>
+
+<!-- Legend -->
+<div class="legend">
+  <div class="legend-item"><span class="badge direct">Direct</span> Measured directly by sensor</div>
+  <div class="legend-item"><span class="badge derived1">Derived 1</span> One calculation step from direct</div>
+  <div class="legend-item"><span class="badge derived2">Derived 2</span> Two calculation steps — noisier</div>
+</div>
+
+<!-- Reliability legend -->
+<div class="legend">
+  <div class="legend-item">
+    <div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot on"></div></div> High reliability
+  </div>
+  <div class="legend-item">
+    <div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot off"></div></div> Medium reliability
+  </div>
+  <div class="legend-item">
+    <div class="rel"><div class="dot on"></div><div class="dot off"></div><div class="dot off"></div></div> Low reliability / short windows only
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- IMU -->
+<div class="sensor-block">
+  <div class="sensor-header">
+    <span class="sensor-label imu">IMU</span>
+    <span class="sensor-chip">MPU-6050 — I2C, 1 Hz polling</span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:18%">Parameter</th>
+        <th style="width:10%">Unit</th>
+        <th style="width:10%">Type</th>
+        <th style="width:12%">Reliability</th>
+        <th style="width:25%">Limitation</th>
+        <th style="width:25%">FSW Use</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Acceleration X, Y, Z</td>
+        <td>m/s² or g</td>
+        <td><span class="badge direct">Direct</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot on"></div><span class="rel-label">High</span></div></td>
+        <td class="limit">Reads 1g at rest (not 0). Cannot distinguish steady ascent from stationary.</td>
+        <td class="usage">Detect launch jerk, burst event. Total vector magnitude for dynamic events.</td>
+      </tr>
+      <tr>
+        <td>Total acceleration magnitude</td>
+        <td>m/s² or g</td>
+        <td><span class="badge derived1">Derived 1</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot on"></div><span class="rel-label">High</span></div></td>
+        <td class="limit">Still reads ~1g at rest and during smooth flight.</td>
+        <td class="usage">Orientation-independent event detection. Standby→Launch, Cruise→Descent burst.</td>
+      </tr>
+      <tr>
+        <td>Angular rate X, Y, Z</td>
+        <td>deg/s</td>
+        <td><span class="badge direct">Direct</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot on"></div><span class="rel-label">High</span></div></td>
+        <td class="limit">Near zero at rest and during smooth flight. Not useful for altitude phases.</td>
+        <td class="usage">Detect chaotic rotation during Launch or post-burst Descent.</td>
+      </tr>
+      <tr>
+        <td>Velocity (integrated)</td>
+        <td>m/s</td>
+        <td><span class="badge derived1">Derived 1</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot off"></div><div class="dot off"></div><span class="rel-label">Low</span></div></td>
+        <td class="limit">Drift accumulates rapidly. Only reliable over a few seconds. Useless over full flight.</td>
+        <td class="usage">Do not use for phase detection. Short-window cross check only.</td>
+      </tr>
+      <tr>
+        <td>Position (double integrated)</td>
+        <td>m</td>
+        <td><span class="badge derived2">Derived 2</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot off"></div><div class="dot off"></div><span class="rel-label">Very Low</span></div></td>
+        <td class="limit">Drift makes this completely unreliable beyond a few seconds. Do not use.</td>
+        <td class="usage">Not used in FSW phase detection.</td>
+      </tr>
+      <tr>
+        <td>Temperature</td>
+        <td>°C</td>
+        <td><span class="badge direct">Direct</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot off"></div><span class="rel-label">Medium</span></div></td>
+        <td class="limit">Not precise enough for scientific measurement. Monitors chip temperature only.</td>
+        <td class="usage">Electronics health monitoring. Flag if dangerously cold at altitude.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- GPS -->
+<div class="sensor-block">
+  <div class="sensor-header">
+    <span class="sensor-label gps">GPS</span>
+    <span class="sensor-chip">u-blox MAX-M10S — UART, 1 Hz polling, Airborne mode above 18 km</span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:18%">Parameter</th>
+        <th style="width:10%">Unit</th>
+        <th style="width:10%">Type</th>
+        <th style="width:12%">Reliability</th>
+        <th style="width:25%">Limitation</th>
+        <th style="width:25%">FSW Use</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Altitude (WGS84)</td>
+        <td>m</td>
+        <td><span class="badge direct">Direct</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot off"></div><span class="rel-label">Medium</span></div></td>
+        <td class="limit">Vertical accuracy 2x worse than horizontal (~5–15 m error). Unreliable if no fix.</td>
+        <td class="usage">Altitude thresholds for Launch→Ascent, Ascent→Cruise. Cross check with barometer.</td>
+      </tr>
+      <tr>
+        <td>Vertical velocity</td>
+        <td>m/s</td>
+        <td><span class="badge direct">Direct</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot on"></div><span class="rel-label">High</span></div></td>
+        <td class="limit">Requires valid fix. Cold start delay at power-on. COCOM above 18 km if not in Airborne mode.</td>
+        <td class="usage">Primary velocity source. Confirming condition for multiple transitions.</td>
+      </tr>
+      <tr>
+        <td>Horizontal velocity</td>
+        <td>m/s</td>
+        <td><span class="badge direct">Direct</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot on"></div><span class="rel-label">High</span></div></td>
+        <td class="limit">Requires valid fix.</td>
+        <td class="usage">Component of total 3D speed for Landing detection.</td>
+      </tr>
+      <tr>
+        <td>Total 3D speed</td>
+        <td>m/s</td>
+        <td><span class="badge derived1">Derived 1</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot on"></div><span class="rel-label">High</span></div></td>
+        <td class="limit">Requires valid fix.</td>
+        <td class="usage">Primary condition for Descent→Landing. Catches horizontal drift as well as vertical.</td>
+      </tr>
+      <tr>
+        <td>Fix status</td>
+        <td>flag</td>
+        <td><span class="badge direct">Direct</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot on"></div><span class="rel-label">High</span></div></td>
+        <td class="limit">Must always be checked before trusting any other GPS value.</td>
+        <td class="usage">Gate condition — if fix invalid, all GPS parameters ignored, fall back to barometer.</td>
+      </tr>
+      <tr>
+        <td>GPS-derived acceleration</td>
+        <td>m/s²</td>
+        <td><span class="badge derived1">Derived 1</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot off"></div><span class="rel-label">Medium</span></div></td>
+        <td class="limit">Noisier than IMU direct. Differentiation amplifies GPS velocity noise.</td>
+        <td class="usage">Cross check against IMU acceleration to detect sensor fault.</td>
+      </tr>
+      <tr>
+        <td>Timestamp</td>
+        <td>UTC</td>
+        <td><span class="badge direct">Direct</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot on"></div><span class="rel-label">High</span></div></td>
+        <td class="limit">Only available with valid fix.</td>
+        <td class="usage">Accurate mission timestamp for all logged data.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Barometer -->
+<div class="sensor-block">
+  <div class="sensor-header">
+    <span class="sensor-label baro">Barometer</span>
+    <span class="sensor-chip">MS5607 — I2C/SPI, 1 Hz polling, temperature-compensated</span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:18%">Parameter</th>
+        <th style="width:10%">Unit</th>
+        <th style="width:10%">Type</th>
+        <th style="width:12%">Reliability</th>
+        <th style="width:25%">Limitation</th>
+        <th style="width:25%">FSW Use</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Pressure</td>
+        <td>hPa</td>
+        <td><span class="badge direct">Direct</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot on"></div><span class="rel-label">High</span></div></td>
+        <td class="limit">Affected by wind gusts near ground. Requires temperature compensation from chip coefficients.</td>
+        <td class="usage">Raw input for all barometer-derived parameters. Not used directly in phase logic.</td>
+      </tr>
+      <tr>
+        <td>Altitude (relative)</td>
+        <td>m</td>
+        <td><span class="badge derived1">Derived 1</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot on"></div><span class="rel-label">High</span></div></td>
+        <td class="limit">Near ground, noise equivalent to 1–2 m. Baseline must be recorded at power-on in Standby.</td>
+        <td class="usage">Primary altitude source for most transitions. Works across full 0–30 km range.</td>
+      </tr>
+      <tr>
+        <td>Vertical velocity (derived)</td>
+        <td>m/s</td>
+        <td><span class="badge derived2">Derived 2</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot off"></div><span class="rel-label">Medium</span></div></td>
+        <td class="limit">Noisier than GPS direct velocity due to differentiation amplifying pressure noise.</td>
+        <td class="usage">Confirming velocity source when GPS fix unavailable. Cross check against GPS vertical velocity.</td>
+      </tr>
+      <tr>
+        <td>Vertical acceleration (derived)</td>
+        <td>m/s²</td>
+        <td><span class="badge derived2">Derived 2</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot off"></div><div class="dot off"></div><span class="rel-label">Low</span></div></td>
+        <td class="limit">Two differentiation steps from pressure. Very noisy. Not reliable for sharp events.</td>
+        <td class="usage">Do not use as primary. Rough cross check only over long windows.</td>
+      </tr>
+      <tr>
+        <td>Temperature</td>
+        <td>°C</td>
+        <td><span class="badge direct">Direct</span></td>
+        <td><div class="rel"><div class="dot on"></div><div class="dot on"></div><div class="dot off"></div><span class="rel-label">Medium</span></div></td>
+        <td class="limit">Measures ambient air temperature, not electronics temperature directly.</td>
+        <td class="usage">Ambient temperature logging. Required internally for pressure compensation calculation.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="footnote">
+  All parameters subject to median filter (window = 5 samples) before use in phase transition logic. &nbsp;·&nbsp;
+  GPS parameters only valid when fix status = 1. &nbsp;·&nbsp;
+  Barometric altitude is relative to ground-level baseline recorded at power-on. &nbsp;·&nbsp;
+  IMU integrated parameters (velocity, position) excluded from phase detection logic due to drift.
+</p>
+
+</body>
+</html>

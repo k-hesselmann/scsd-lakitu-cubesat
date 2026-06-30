@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FSW FSM Summary</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    background: #ffffff;
+    color: #1a1a1a;
+    padding: 32px 24px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  h1 {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    margin-bottom: 4px;
+    color: #0a0a0a;
+  }
+
+  .subtitle {
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 32px;
+  }
+
+  /* Section headers */
+  h2 {
+    font-size: 14px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #333;
+    margin-bottom: 14px;
+    padding-bottom: 6px;
+    border-bottom: 2px solid #eee;
+  }
+
+  /* Phase cards */
+  .phases-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 40px;
+  }
+
+  .phase-card {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 14px;
+    position: relative;
+  }
+
+  .phase-num {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #999;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  .phase-name {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  .phase-desc {
+    font-size: 11.5px;
+    color: #444;
+    line-height: 1.5;
+    margin-bottom: 10px;
+  }
+
+  .phase-sensors {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+
+  .ps {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 3px;
+  }
+
+  .ps-imu  { background: #e8f5ee; color: #1a6b4a; border: 1px solid #b6dfc8; }
+  .ps-gps  { background: #e8eef8; color: #1a4b8c; border: 1px solid #b6c8e8; }
+  .ps-baro { background: #fff3e0; color: #8c5a00; border: 1px solid #e8c97a; }
+
+  /* Phase accent colours */
+  .p1 { border-left: 4px solid #888; }
+  .p2 { border-left: 4px solid #e67e22; }
+  .p3 { border-left: 4px solid #27ae60; }
+  .p4 { border-left: 4px solid #2980b9; }
+  .p5 { border-left: 4px solid #8e44ad; }
+  .p6 { border-left: 4px solid #c0392b; }
+
+  /* Transitions table */
+  .table-wrap {
+    overflow-x: auto;
+    margin-bottom: 40px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    min-width: 860px;
+  }
+
+  thead tr {
+    background: #f5f5f5;
+    border-bottom: 2px solid #ddd;
+  }
+
+  thead th {
+    text-align: left;
+    padding: 9px 10px;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #444;
+  }
+
+  tbody tr {
+    border-bottom: 1px solid #efefef;
+  }
+
+  tbody tr:last-child { border-bottom: none; }
+
+  tbody td {
+    padding: 10px 10px;
+    vertical-align: top;
+    color: #222;
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+
+  .trans-label {
+    font-weight: 700;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .arrow { color: #aaa; margin: 0 4px; }
+
+  /* Badge */
+  .badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-right: 3px;
+    margin-bottom: 2px;
+  }
+
+  .primary   { background: #1a6b4a; color: #fff; }
+  .confirm   { background: #1a4b8c; color: #fff; }
+  .fallback  { background: #f0f0f0; color: #555; border: 1px solid #ddd; }
+  .persist   { background: #fff3e0; color: #8c5a00; border: 1px solid #e8c97a; }
+
+  .tbd { color: #aaa; font-style: italic; font-size: 11px; }
+
+  /* Cross cutting rules */
+  .rules {
+    background: #f9f9f9;
+    border: 1px solid #e8e8e8;
+    border-radius: 8px;
+    padding: 18px 20px;
+    margin-bottom: 40px;
+  }
+
+  .rules ul {
+    list-style: none;
+    padding: 0;
+  }
+
+  .rules ul li {
+    font-size: 12px;
+    color: #333;
+    padding: 5px 0;
+    border-bottom: 1px solid #eee;
+    padding-left: 16px;
+    position: relative;
+  }
+
+  .rules ul li:last-child { border-bottom: none; }
+
+  .rules ul li::before {
+    content: '→';
+    position: absolute;
+    left: 0;
+    color: #aaa;
+  }
+
+  .footnote {
+    font-size: 11px;
+    color: #888;
+    border-top: 1px solid #eee;
+    padding-top: 12px;
+  }
+
+  /* Special note cell */
+  .note {
+    font-size: 11px;
+    color: #666;
+    font-style: italic;
+    margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Flight Software FSM — Complete Design Summary</h1>
+<p class="subtitle">1U CubeSat Balloon Mission &nbsp;·&nbsp; STM32L476RG Bare Metal &nbsp;·&nbsp; Threshold values TBD from research</p>
+
+<!-- PHASES -->
+<h2>Six Flight Phases</h2>
+<div class="phases-grid">
+
+  <div class="phase-card p1">
+    <div class="phase-num">Phase 1</div>
+    <div class="phase-name">Standby</div>
+    <div class="phase-desc">System powered on, sitting on ground. All sensors initialising. Ground pressure baseline recorded here as reference for all altitude calculations.</div>
+    <div class="phase-sensors">
+      <span class="ps ps-imu">IMU</span>
+      <span class="ps ps-baro">Baro</span>
+      <span class="ps ps-gps">GPS</span>
+    </div>
+  </div>
+
+  <div class="phase-card p2">
+    <div class="phase-num">Phase 2</div>
+    <div class="phase-name">Launch</div>
+    <div class="phase-desc">Balloon released. Sharp upward jerk, brief chaotic motion. Lasts seconds. System transitioning from ground-constrained to free flight.</div>
+    <div class="phase-sensors">
+      <span class="ps ps-imu">IMU ★</span>
+      <span class="ps ps-baro">Baro</span>
+    </div>
+  </div>
+
+  <div class="phase-card p3">
+    <div class="phase-num">Phase 3</div>
+    <div class="phase-name">Ascent</div>
+    <div class="phase-desc">Balloon stabilised, climbing at 3 to 5 m/s steadily. Longest active phase, typically 1.5 to 2 hours. Temperature dropping significantly with altitude.</div>
+    <div class="phase-sensors">
+      <span class="ps ps-baro">Baro ★</span>
+      <span class="ps ps-gps">GPS</span>
+    </div>
+  </div>
+
+  <div class="phase-card p4">
+    <div class="phase-num">Phase 4</div>
+    <div class="phase-name">Cruise</div>
+    <div class="phase-desc">Balloon fully expanded at float altitude (~30 km). Vertical velocity near zero, altitude oscillating within a bounded range. Duration 30 min to a few hours.</div>
+    <div class="phase-sensors">
+      <span class="ps ps-gps">GPS ★</span>
+      <span class="ps ps-baro">Baro</span>
+    </div>
+  </div>
+
+  <div class="phase-card p5">
+    <div class="phase-num">Phase 5</div>
+    <div class="phase-name">Descent</div>
+    <div class="phase-desc">Balloon burst. Rapid fall begins. IMU sees sudden shift from near 0g float to ~1g. Parachute deploys, stabilising descent rate.</div>
+    <div class="phase-sensors">
+      <span class="ps ps-imu">IMU ★</span>
+      <span class="ps ps-gps">GPS</span>
+      <span class="ps ps-baro">Baro</span>
+    </div>
+  </div>
+
+  <div class="phase-card p6">
+    <div class="phase-num">Phase 6</div>
+    <div class="phase-name">Landing</div>
+    <div class="phase-desc">System touches down. All motion stops. Terminal state — no further transitions. Logging and telemetry continue for recovery. Shutdown timer starts.</div>
+    <div class="phase-sensors">
+      <span class="ps ps-gps">GPS ★</span>
+      <span class="ps ps-baro">Baro</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- TRANSITIONS TABLE -->
+<h2>Five Transition Conditions</h2>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th style="width:13%">Transition</th>
+      <th style="width:24%">Primary Condition</th>
+      <th style="width:24%">Confirming Condition</th>
+      <th style="width:18%">Fallback</th>
+      <th style="width:11%">Persistence</th>
+      <th style="width:10%">Key Reasoning</th>
+    </tr>
+  </thead>
+  <tbody>
+
+    <tr>
+      <td>
+        <div class="trans-label">Standby<span class="arrow">→</span>Launch</div>
+      </td>
+      <td>
+        <span class="badge primary">IMU</span> Total acceleration magnitude exceeds threshold X<br>
+        <span class="note">Detects release jerk directly. No derivation. Fastest response.</span>
+      </td>
+      <td>
+        <span class="badge confirm">Baro</span> Altitude increasing by more than Z metres over window<br>
+        <span class="note">Confirms genuine upward movement. Independent of IMU.</span>
+      </td>
+      <td>
+        <span class="tbd">No fallback needed. Both sensors reliable at ground level.</span>
+      </td>
+      <td>
+        <span class="badge persist">Short</span><br>
+        <span class="tbd">Y seconds TBD</span><br>
+        <span class="note">Jerk is brief. Long window would miss it.</span>
+      </td>
+      <td class="note">GPS unreliable at cold start. Barometer independent and clean near ground.</td>
+    </tr>
+
+    <tr>
+      <td>
+        <div class="trans-label">Launch<span class="arrow">→</span>Ascent</div>
+      </td>
+      <td>
+        <span class="badge primary">Baro</span> Altitude exceeds A metres above ground baseline<br>
+        <span class="note">More reliable than GPS at low altitude. Referenced to Standby baseline.</span>
+      </td>
+      <td>
+        <span class="badge confirm">GPS</span> Vertical velocity exceeds B m/s upward<br>
+        <span class="note">Confirms sustained climb, not just a brief altitude jump.</span>
+      </td>
+      <td>
+        <span class="badge fallback">Baro derived</span> Vertical velocity if GPS fix invalid
+      </td>
+      <td>
+        <span class="badge persist">Medium</span><br>
+        <span class="tbd">C seconds TBD</span><br>
+        <span class="note">Enough to confirm ascent has settled.</span>
+      </td>
+      <td class="note">GPS vertical accuracy weak at low altitude. Baro relative altitude is precise here.</td>
+    </tr>
+
+    <tr>
+      <td>
+        <div class="trans-label">Ascent<span class="arrow">→</span>Cruise</div>
+      </td>
+      <td>
+        <span class="badge primary">GPS</span> Vertical velocity below D m/s (near zero)<br>
+        <span class="note">Doppler-based direct measurement. Most reliable velocity source.</span>
+      </td>
+      <td>
+        <span class="badge confirm">Baro</span> Altitude change bounded within ±E metres over window<br>
+        <span class="note">Confirms genuine float, not just momentary slowdown.</span>
+      </td>
+      <td>
+        <span class="badge fallback">Baro derived</span> Vertical velocity if GPS fix invalid
+      </td>
+      <td>
+        <span class="badge persist">Long</span><br>
+        <span class="tbd">~30s TBD</span><br>
+        <span class="note">Float develops gradually. Short window risks premature trigger.</span>
+      </td>
+      <td class="note">Hysteresis applied. Minor fluctuations above threshold do not revert to Ascent.</td>
+    </tr>
+
+    <tr>
+      <td>
+        <div class="trans-label">Cruise<span class="arrow">→</span>Descent</div>
+      </td>
+      <td>
+        <span class="badge primary">IMU</span> Acceleration magnitude deviates significantly from float baseline<br>
+        <span class="note">Detects burst jerk immediately. Change from local baseline, not absolute value.</span>
+      </td>
+      <td>
+        <span class="badge confirm">GPS</span> Vertical velocity below F m/s (strongly negative)<br>
+        <span class="note">Confirms rapid descent has begun. Independent of IMU.</span>
+      </td>
+      <td>
+        <span class="badge fallback">Baro derived</span> Vertical velocity if GPS fix invalid
+      </td>
+      <td>
+        <span class="badge persist">Short-Medium</span><br>
+        <span class="tbd">~10s TBD</span><br>
+        <span class="note">Burst is sharp. Faster response needed than Ascent→Cruise.</span>
+      </td>
+      <td class="note">IMU tracks running float baseline during Cruise for relative change detection.</td>
+    </tr>
+
+    <tr>
+      <td>
+        <div class="trans-label">Descent<span class="arrow">→</span>Landing</div>
+      </td>
+      <td>
+        <span class="badge primary">GPS</span> Total 3D speed below threshold G m/s<br>
+        <span class="note">Catches horizontal drift too, not just vertical. Most complete stop confirmation.</span>
+      </td>
+      <td>
+        <span class="badge confirm">Baro</span> Altitude below H metres above ground baseline<br>
+        <span class="note">Confirms physically near ground. Precise at low altitude vs GPS.</span>
+      </td>
+      <td>
+        <span class="badge fallback">GPS vertical</span> velocity then Baro derived if fix invalid
+      </td>
+      <td>
+        <span class="badge persist">Short</span><br>
+        <span class="tbd">~5s TBD</span><br>
+        <span class="note">Touchdown is clear and unambiguous. Long window unnecessary.</span>
+      </td>
+      <td class="note">FSM context prevents confusion with Standby. Landing only reachable from Descent.</td>
+    </tr>
+
+  </tbody>
+</table>
+</div>
+
+<!-- CROSS CUTTING RULES -->
+<h2>Cross-Cutting Rules</h2>
+<div class="rules">
+  <ul>
+    <li>Median filter with window of 5 samples applied to all sensor parameters before any threshold comparison.</li>
+    <li>All persistence windows count consecutive filtered samples, not raw samples.</li>
+    <li>GPS fix status checked before every GPS parameter use. If fix invalid, fallback applies automatically.</li>
+    <li>GPS must be configured in Airborne mode above 18 km. CDH handles configuration. FSW monitors fix status.</li>
+    <li>Ground pressure baseline recorded and stored in Standby. All barometric altitude calculations relative to this value.</li>
+    <li>IMU float baseline tracked as running median during Cruise for relative change detection at burst.</li>
+    <li>Every state transition persisted to non-volatile memory within 1 second of transition.</li>
+    <li>Watchdog timer serviced within every 10 second window in all phases.</li>
+    <li>No invalid or undefined state transitions permitted. FSM only allows the 5 defined paths.</li>
+    <li>Direct Ascent to Descent transition permitted if Cruise is never detected (balloon burst before float).</li>
+    <li>Landing shutdown timer starts on Landing entry. Non-essential systems powered down after defined period.</li>
+  </ul>
+</div>
+
+<p class="footnote">
+  All threshold values (X, Y, Z, A, B, C, D, E, F, G, H) are placeholders pending research phase. &nbsp;·&nbsp;
+  Sources: CUSF telemetry, UKHAS flight data, MS5607 and MPU-6050 datasheets, STM32L476 reference manual. &nbsp;·&nbsp;
+  This document reflects FSM design decisions made prior to implementation. All decisions are traceable to sensor parameter analysis.
+</p>
+
+</body>
+</html>

@@ -1,0 +1,49 @@
+@startuml FSW Flight State Machine
+
+skinparam state {
+  BackgroundColor White
+  BorderColor #555
+  FontName Helvetica
+  ArrowColor #555
+  ArrowFontSize 10
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #E0C940
+  FontSize 10
+}
+
+[*] --> Standby : power-on
+
+Standby --> Launch : accel_mag > LAUNCH_ACCEL_G\nOR baro_alt_rise > LAUNCH_BARO_RISE_M\nfor >= LAUNCH_WINDOW_S s
+
+Launch --> Ascent : baro_alt_m > ASCENT_ALT_M\nOR gps_vvel_mps > ASCENT_VVEL_MPS\nfor >= ASCENT_WINDOW_S s
+
+Ascent --> Cruise : gps_vvel_mps < CRUISE_VVEL_MPS\nOR baro_alt_delta_m < CRUISE_ALT_BAND_M\nfor >= CRUISE_WINDOW_S s
+
+Ascent --> Descent : [cruise skip]\naccel_delta_g > DESCENT_ACCEL_DELTA_G\nOR gps_vvel_mps < DESCENT_VVEL_MPS\nfor >= DESCENT_WINDOW_S s
+
+Cruise --> Descent : accel_delta_g > DESCENT_ACCEL_DELTA_G\nOR gps_vvel_mps < DESCENT_VVEL_MPS\nfor >= DESCENT_WINDOW_S s
+
+Descent --> Landing : gps_speed_mps < LANDING_SPEED_MPS\nOR baro_alt_m < LANDING_ALT_M\nfor >= LANDING_WINDOW_S s
+
+Landing --> [*] : terminal state
+
+note right of Standby
+  Record ground pressure baseline.
+  All baro altitudes relative to this.
+end note
+
+note right of Cruise
+  Track running IMU median as float
+  baseline for relative burst detection.
+end note
+
+note right of Landing
+  Shutdown timer starts on entry.
+  Logging and telemetry continue
+  for recovery.
+end note
+
+@enduml
