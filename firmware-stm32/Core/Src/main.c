@@ -1,21 +1,23 @@
 #include "main.h"
+#include "usb_device.h"
 #include "datapool.h"
 #include "fsw/fsm.h"
 #include "cdh/cdh.h"
 #include "ttc/ttc.h"
 
-UART_HandleTypeDef huart2;
+I2C_HandleTypeDef hi2c1;
 
-static void SystemClock_Config(void);
+void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_USART2_UART_Init(void);
+static void MX_I2C1_Init(void);
 
 int main(void)
 {
     HAL_Init();
     SystemClock_Config();
     MX_GPIO_Init();
-    MX_USART2_UART_Init();
+    MX_I2C1_Init();
+    MX_USB_DEVICE_Init();
 
     CDH_Init();
     FSW_Init();
@@ -34,7 +36,7 @@ int main(void)
     }
 }
 
-static void SystemClock_Config(void)
+void SystemClock_Config(void)
 {
     RCC_OscInitTypeDef RCC_OscInitStruct = {0};
     RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
@@ -42,13 +44,14 @@ static void SystemClock_Config(void)
     if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
         Error_Handler();
 
-    RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_HSI;
-    RCC_OscInitStruct.HSIState            = RCC_HSI_ON;
-    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+    RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_MSI;
+    RCC_OscInitStruct.MSIState            = RCC_MSI_ON;
+    RCC_OscInitStruct.MSICalibrationValue = 0;
+    RCC_OscInitStruct.MSIClockRange       = RCC_MSIRANGE_6;
     RCC_OscInitStruct.PLL.PLLState        = RCC_PLL_ON;
-    RCC_OscInitStruct.PLL.PLLSource       = RCC_PLLSOURCE_HSI;
+    RCC_OscInitStruct.PLL.PLLSource       = RCC_PLLSOURCE_MSI;
     RCC_OscInitStruct.PLL.PLLM            = 1;
-    RCC_OscInitStruct.PLL.PLLN            = 10;
+    RCC_OscInitStruct.PLL.PLLN            = 40;
     RCC_OscInitStruct.PLL.PLLP            = RCC_PLLP_DIV7;
     RCC_OscInitStruct.PLL.PLLQ            = RCC_PLLQ_DIV2;
     RCC_OscInitStruct.PLL.PLLR            = RCC_PLLR_DIV2;
@@ -65,19 +68,24 @@ static void SystemClock_Config(void)
         Error_Handler();
 }
 
-static void MX_USART2_UART_Init(void)
+static void MX_I2C1_Init(void)
 {
-    huart2.Instance                    = USART2;
-    huart2.Init.BaudRate               = 115200;
-    huart2.Init.WordLength             = UART_WORDLENGTH_8B;
-    huart2.Init.StopBits               = UART_STOPBITS_1;
-    huart2.Init.Parity                 = UART_PARITY_NONE;
-    huart2.Init.Mode                   = UART_MODE_TX_RX;
-    huart2.Init.HwFlowCtl              = UART_HWCONTROL_NONE;
-    huart2.Init.OverSampling           = UART_OVERSAMPLING_16;
-    huart2.Init.OneBitSampling         = UART_ONE_BIT_SAMPLE_DISABLE;
-    huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-    if (HAL_UART_Init(&huart2) != HAL_OK)
+    hi2c1.Instance             = I2C1;
+    hi2c1.Init.Timing          = 0x10D19CE4;
+    hi2c1.Init.OwnAddress1     = 0;
+    hi2c1.Init.AddressingMode  = I2C_ADDRESSINGMODE_7BIT;
+    hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+    hi2c1.Init.OwnAddress2     = 0;
+    hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+    hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+    hi2c1.Init.NoStretchMode   = I2C_NOSTRETCH_DISABLE;
+    if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+        Error_Handler();
+
+    if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+        Error_Handler();
+
+    if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
         Error_Handler();
 }
 
