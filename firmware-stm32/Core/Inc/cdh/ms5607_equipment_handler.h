@@ -7,18 +7,16 @@
 
 #define MS5607_DATA_READ_INTERVAL 500
 #define MS5607_SENSOR_CHECK_INTERVAL_MS 2000
-#define MS5607_RECOVERY_ATTEMPT_INTERVAL_MS 5000
 #define MS5607_FLATLINE_THRESHOLD 0.1f
 #define MS5607_FLATLINE_COUNT_LIMIT 5
 
 typedef struct {
   MS5607_Data data;
   MS5607_Data last_data;
-  bool outdated;
+  uint8_t baro_valid;
   uint32_t last_good_data_ms;
   uint32_t last_sensor_check_ms;
   uint32_t last_data_read_ms;
-  uint32_t last_recovery_attempt_ms;
   uint32_t flatline_count;
 } MS5607_EquipmentHandler;
 

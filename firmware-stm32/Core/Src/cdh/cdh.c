@@ -1,6 +1,7 @@
 #include "cdh/cdh.h"
 #include "cdh/mpu6050_equipment_handler.h"
 #include "cdh/ms5607_equipment_handler.h"
+#include "cdh/cdh_fdir.h"
 
 #include "main.h"
 #include <math.h>
@@ -15,6 +16,7 @@ extern I2C_HandleTypeDef hi2c1;
 
 static MPU6050_EquipmentHandler s_imu;
 static MS5607_EquipmentHandler s_baro;
+static CDH_FDIR_Context s_fdir;
 static float s_ground_baro_alt_m = 0.0f;
 
 static void CDH_SetFault(SCV_t *scv, uint8_t mask, uint8_t active)
@@ -29,8 +31,9 @@ void CDH_Init(void)
 {
     s_imu = MPU6050_EquipmentHandler_Init(&hi2c1);
     s_baro = MS5607_EquipmentHandler_Init(&hi2c1);
+    CDH_FDIR_Init(&s_fdir);
 
-    if (!s_baro.outdated)
+    if (s_baro.baro_valid)
         s_ground_baro_alt_m = s_baro.data.altitude;
 
     g_scv.magic = SCV_MAGIC;
@@ -46,7 +49,7 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
     dp->timestamp_ms = HAL_GetTick();
 
     s_imu = MPU6050_EquipmentHandler_Update(s_imu, &hi2c1);
-    if (!s_imu.outdated)
+    if (s_imu.imu_valid)
     {
         dp->imu_accel_x_g = s_imu.data.accel_x;
         dp->imu_accel_y_g = s_imu.data.accel_y;
@@ -68,7 +71,7 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
     }
 
     s_baro = MS5607_EquipmentHandler_Update(s_baro, &hi2c1);
-    if (!s_baro.outdated)
+    if (s_baro.baro_valid)
     {
         dp->baro_pressure_pa = s_baro.data.pressure * 100.0f;
         dp->baro_alt_m = s_baro.data.altitude - s_ground_baro_alt_m;
@@ -82,6 +85,8 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
         if (scv->baro_timeout_count < UINT8_MAX)
             scv->baro_timeout_count++;
     }
+
+    dp->i2c_bus_state = s_fdir.bus_state;
 
     CDH_SetFault(scv, SENSOR_FAULT_IMU, dp->imu_valid == 0U);
     CDH_SetFault(scv, SENSOR_FAULT_BARO, dp->baro_valid == 0U);
