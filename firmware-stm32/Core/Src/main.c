@@ -4,12 +4,18 @@
 #include "fsw/fsm.h"
 #include "cdh/cdh.h"
 #include "ttc/ttc.h"
+#include <string.h>
+
+#define FSW_USE_DUMMY_DATAPOOL 1
 
 I2C_HandleTypeDef hi2c1;
 
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
+#if FSW_USE_DUMMY_DATAPOOL
+static void FSW_UpdateDummyDatapool(SensorData_t *dp);
+#endif
 
 int main(void)
 {
@@ -19,7 +25,9 @@ int main(void)
     MX_I2C1_Init();
     MX_USB_DEVICE_Init();
 
+#if !FSW_USE_DUMMY_DATAPOOL
     CDH_Init();
+#endif
     FSW_Init();
     TTC_Init();
 
@@ -27,7 +35,11 @@ int main(void)
 
     while (1)
     {
+#if FSW_USE_DUMMY_DATAPOOL
+        FSW_UpdateDummyDatapool(&g_datapool);
+#else
         CDH_Update(&g_datapool, &g_scv);
+#endif
         FSW_Update(&g_datapool);
         FSW_BuildTelemetryPacket(&g_datapool, &tx_packet);
         TTC_Transmit(&tx_packet);
@@ -35,6 +47,71 @@ int main(void)
         HAL_Delay(1000);
     }
 }
+
+#if FSW_USE_DUMMY_DATAPOOL
+static void FSW_UpdateDummyDatapool(SensorData_t *dp)
+{
+    uint32_t now_ms = HAL_GetTick();
+    uint32_t t_s = now_ms / 1000U;
+
+    memset(dp, 0, sizeof(*dp));
+
+    dp->timestamp_ms = now_ms;
+    dp->gps_valid = 1U;
+    dp->imu_valid = 1U;
+    dp->baro_valid = 1U;
+    dp->batt_valid = 1U;
+    dp->coral_valid = 1U;
+    dp->batt_voltage_mv = 7400U;
+    dp->imu_accel_z_g = 1.0f;
+    dp->imu_accel_mag_g = 1.0f;
+
+    if (t_s < 3U)
+    {
+        dp->baro_alt_m = 0.0f;
+        dp->gps_vvel_mps = 0.0f;
+        dp->gps_speed_mps = 0.0f;
+    }
+    else if (t_s < 8U)
+    {
+        dp->imu_accel_z_g = 1.8f;
+        dp->imu_accel_mag_g = 1.8f;
+        dp->baro_alt_m = 5.0f + (float)(t_s - 3U) * 20.0f;
+        dp->gps_vvel_mps = 4.0f;
+        dp->gps_speed_mps = 4.0f;
+    }
+    else if (t_s < 40U)
+    {
+        dp->baro_alt_m = 120.0f + (float)(t_s - 8U) * 60.0f;
+        dp->gps_alt_m = dp->baro_alt_m;
+        dp->gps_vvel_mps = 6.0f;
+        dp->gps_speed_mps = 6.0f;
+    }
+    else if (t_s < 80U)
+    {
+        dp->baro_alt_m = 2040.0f;
+        dp->gps_alt_m = dp->baro_alt_m;
+        dp->gps_vvel_mps = 0.1f;
+        dp->gps_speed_mps = 0.2f;
+    }
+    else if (t_s < 105U)
+    {
+        dp->imu_accel_z_g = 1.7f;
+        dp->imu_accel_mag_g = 1.7f;
+        dp->baro_alt_m = 2040.0f - (float)(t_s - 80U) * 75.0f;
+        dp->gps_alt_m = dp->baro_alt_m;
+        dp->gps_vvel_mps = -5.0f;
+        dp->gps_speed_mps = 8.0f;
+    }
+    else
+    {
+        dp->baro_alt_m = 100.0f;
+        dp->gps_alt_m = dp->baro_alt_m;
+        dp->gps_vvel_mps = 0.0f;
+        dp->gps_speed_mps = 0.3f;
+    }
+}
+#endif
 
 void SystemClock_Config(void)
 {
