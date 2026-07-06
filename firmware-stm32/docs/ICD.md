@@ -1,22 +1,24 @@
 # Interface Control Document
 **1U CubeSat Balloon Mission — Software Interfaces**
 
-All multi-byte fields are **little-endian** (native STM32 byte order).  
-All structs are **packed** (`__attribute__((packed))`) to avoid compiler padding in transmitted or stored blocks.  
+All multi-byte fields are **little-endian** (native STM32 byte order).
+All structs are **packed** (`__attribute__((packed))`) to avoid compiler padding in transmitted or stored blocks.
 `TBD` marks fields whose definition is deferred to the owning subsystem.
 
 ---
 
 ## 1. Datapool — `SensorData_t`
 
-**Interface:** IF-006  
-**Direction:** CDH writes → FSW reads  
-**Update rate:** 1 Hz (written by `CDH_Update()`, read by `FSW_Update()`)  
+**Interface:** IF-006
+**Direction:** CDH writes sensor fields → FDIR writes health state → FSW reads
+**Update rate:** 1 Hz (`CDH_Update()`, then `FDIR_Update()`, then `FSW_Update()`)
 **Location:** global variable in `datapool.h`, accessible to all modules
 
-CDH is responsible for filling every field each cycle. If a sensor read fails,
+CDH is responsible for filling sensor fields each cycle. If a sensor read fails,
 CDH sets the corresponding `_valid` flag to `0` and leaves the value field at
-its last known good value. FSW must check `_valid` before using any field.
+its last known good value. FDIR consumes those flags to update SCV health fields,
+request CDH-owned recovery functions, and report shared bus recovery state. FSW
+must check `_valid` and SCV fault bits before using any field.
 
 ```c
 typedef struct __attribute__((packed)) {
@@ -48,6 +50,9 @@ typedef struct __attribute__((packed)) {
     float    baro_temp_c;        /* degrees Celsius */
     uint8_t  baro_valid;
 
+    /* ── CDH/FDIR bus state ────────────────────────────────── */
+    uint8_t  i2c_bus_state;      /* CDH_FDIR_BUS_* value */
+
     /* ── EPS (ADC via IF-008) ───────────────────────────────── */
     uint16_t batt_voltage_mv;    /* millivolts, after resistor divider scaling */
     uint8_t  batt_valid;
@@ -66,20 +71,29 @@ typedef struct __attribute__((packed)) {
   down component so positive = upward, consistent with `baro_alt_m` convention.
 - If `gps_valid == 0`, FSW uses `baro_alt_m` and a baro-derived vertical velocity
   as fallback per FR-021.
+- `i2c_bus_state` is written by FDIR after processing the CDH nonblocking I2C
+  bus restart state machine.
 
 ---
 
 ## 2. Spacecraft Configuration Vector — `SCV_t`
 
-**Interface:** FR-020  
-**Direction:** CDH writes sensor fields; FSW writes `flight_phase` on transition  
-**Storage:** STM32 internal flash, dedicated page (address TBD by OBC)  
-**Update rate:** CDH updates health fields at 1 Hz; FSW updates `flight_phase`
-within 1 second of any state transition (FR-010)
+**Interface:** FR-020
+**Direction:** FSW/FDIR owns the SCV; other subsystems provide source health data
+**Storage:** STM32 internal flash, last 2 KiB page reserved for SCV
+**Update rate:** FSW updates `flight_phase` on transition; FDIR updates health
+fields on each 1 Hz monitoring cycle.
 
 The SCV is the single persistent system state record. It survives power cycles
-and resets. On boot, CDH reads it from flash and makes it available. FSW reads
-`flight_phase` to restore state after an unexpected reset (FR-010).
+and resets. FSW/FDIR initialise and validate it, restore `flight_phase` after
+unexpected reset, and persist selected fields to flash.
+
+The reserved flash region is:
+
+| Constant | Value | Meaning |
+|---|---:|---|
+| `SCV_FLASH_ADDR` | `0x080FF800` | Start of the final STM32L476RG 2 KiB flash page |
+| `SCV_FLASH_SIZE` | `0x00000800` | Reserved SCV flash size, 2048 bytes |
 
 A CRC-16 covers all fields except `crc16` itself. Any consumer reading the SCV
 must verify the CRC before trusting the contents.
@@ -87,57 +101,104 @@ must verify the CRC before trusting the contents.
 ```c
 typedef struct __attribute__((packed)) {
 
-    /* ── Identity ───────────────────────────────────────────── */
-    uint16_t magic;              /* 0xCAFE — sanity check on flash read */
-    uint16_t reboot_count;       /* incremented by CDH on every boot */
-    uint32_t last_update_ms;     /* HAL_GetTick() of last write */
-
-    /* ── Flight state (written by FSW) ─────────────────────── */
+    uint16_t magic;              /* 0xCAFE, initialized SCV marker */
+    uint32_t boot_count;
+    uint32_t mission_elapsed_ms;
     uint8_t  flight_phase;       /* FlightPhase_t enum value, see fsm.h */
+    uint8_t  reset_reason;       /* reset reason code, see table below */
 
-    /* ── Equipment health (written by CDH) ──────────────────── */
-    uint8_t  sensor_faults;      /* bitmask, see fault bit definitions below */
-    uint16_t last_batt_mv;       /* last valid battery voltage reading */
+    uint16_t equipment_enabled;  /* equipment allowed for use/recovery */
+    uint16_t equipment_faults;   /* equipment currently not trusted */
 
-    /* ── FDIR counters (written by CDH) ─────────────────────── */
-    uint8_t  gps_timeout_count;  /* consecutive cycles with gps_valid == 0 */
+    uint8_t  gps_timeout_count;
     uint8_t  imu_timeout_count;
     uint8_t  baro_timeout_count;
     uint8_t  coral_timeout_count;
+    uint8_t  sd_fault_count;
+    uint8_t  watchdog_reset_count;
 
-    /* ── Integrity ───────────────────────────────────────────── */
+    uint16_t last_batt_mv;
+    int32_t  baro_ground_alt_cm;
+
     uint16_t crc16;              /* CRC-16/CCITT over all preceding bytes */
 
 } SCV_t;
 ```
 
-**`sensor_faults` bitmask:**
+`SCV_MAGIC = 0xCAFE` is a recognizable sanity marker, not a cryptographic value.
+Erased STM32 flash reads as `0xFFFF`, so `0xCAFE` distinguishes an initialized
+SCV record from blank flash before the CRC is checked.
+
+**Equipment bitmask definitions:**
 
 | Bit | Mask   | Meaning                        |
 |-----|--------|-------------------------------|
-| 0   | `0x01` | GPS fault (no fix > 30 s)     |
-| 1   | `0x02` | IMU fault (read error)        |
-| 2   | `0x04` | Barometer fault (read error)  |
-| 3   | `0x08` | SD card fault (write failed)  |
-| 4   | `0x10` | Coral payload fault (no data) |
-| 5–7 | —      | Reserved                      |
+| 0   | `0x0001` | GPS                          |
+| 1   | `0x0002` | IMU                          |
+| 2   | `0x0004` | Barometer                    |
+| 3   | `0x0008` | Coral payload                |
+| 4   | `0x0010` | SD card                      |
+| 5   | `0x0020` | LoRa                         |
+| 6   | `0x0040` | EPS ADC / battery monitor    |
+| 7–15 | —       | Reserved                     |
+
+`equipment_enabled` and `equipment_faults` use the same bit assignments. A set
+bit in `equipment_enabled` means the equipment may be used or recovered. A set
+bit in `equipment_faults` means FSW/FDIR should not trust the equipment data.
+
+**Reset reason codes:**
+
+| Value | Meaning |
+|---|---|
+| `0` | Unknown / not yet classified |
+| `1` | Power-on reset |
+| `2` | Watchdog reset |
+| `3` | Software reset |
+
+Fields without a valid value use reserved impossible sentinels, e.g. `0xFFFF`
+for unknown `uint16_t` measurements and `INT32_MIN` for unknown signed values.
+
+**Default SCV values on invalid magic or CRC:**
+
+| Field | Default |
+|---|---:|
+| `magic` | `SCV_MAGIC` |
+| `boot_count` | `0`, then incremented during boot handling |
+| `mission_elapsed_ms` | `0` |
+| `flight_phase` | `PHASE_STANDBY` |
+| `reset_reason` | `RESET_REASON_UNKNOWN` |
+| `equipment_enabled` | `EQUIPMENT_ALL_NOMINAL` |
+| `equipment_faults` | `0` |
+| `gps_timeout_count`, `imu_timeout_count`, `baro_timeout_count`, `coral_timeout_count` | `0` |
+| `sd_fault_count`, `watchdog_reset_count` | `0` |
+| `last_batt_mv` | `SCV_INVALID_U16` |
+| `baro_ground_alt_cm` | `SCV_INVALID_I32` |
+| `crc16` | CRC-16/CCITT over all preceding bytes |
 
 **Ownership summary:**
 
 | Field | Written by | Read by |
 |---|---|---|
-| `magic`, `reboot_count` | CDH (boot) | CDH |
-| `flight_phase` | FSW (on transition) | FSW (on boot) |
-| `sensor_faults`, `*_timeout_count`, `last_batt_mv` | CDH (1 Hz) | FSW (FDIR decisions) |
-| `crc16` | whoever writes last | all readers before trusting data |
+| `magic`, `boot_count`, `mission_elapsed_ms`, `flight_phase`, `crc16` | FSW/FDIR | all SCV consumers |
+| `reset_reason`, `watchdog_reset_count` | FSW/FDIR after reset classification | FSW/FDIR, telemetry |
+| `equipment_enabled`, `equipment_faults`, `*_timeout_count` | FDIR | FSW, CDH, telemetry |
+| `last_batt_mv` | FDIR from CDH/EPS source data | FSW/FDIR, telemetry |
+| `baro_ground_alt_cm` | FSW/FDIR from barometer baseline source | FSW/FDIR |
+
+**Current FDIR policy:** IMU and barometer recovery is available through
+CDH-owned recovery wrappers. FDIR marks equipment faulty after the configured
+timeout limit, calls the relevant CDH recovery wrapper no more often than once
+per `FDIR_REINIT_PERIOD_MS`, and starts a nonblocking I2C bus restart when both
+I2C sensors are faulted. GPS, Coral, SD, LoRa, and EPS recovery ownership remains
+reserved for their subsystem handlers.
 
 ---
 
 ## 3. Telemetry Packet — `TelemetryPacket_t`
 
-**Interface:** IF-007, FR-023  
-**Direction:** FSW assembles → TTC transmits  
-**Rate:** 1 packet per 20 seconds (FR-022)  
+**Interface:** IF-007, FR-023
+**Direction:** FSW assembles → TTC transmits
+**Rate:** 1 packet per 20 seconds (FR-022)
 **Transport:** LoRa RFM95W SPI, SF9, BW 125 kHz, CR 4/5, 868 MHz (FR-026)
 
 ```c
@@ -188,10 +249,10 @@ typedef struct __attribute__((packed)) {
 
 ## 4. Coral Payload Block
 
-**Interface:** FR-027  
-**Direction:** Coral Dev Board Micro → OBC  
-**Transport:** UART, 115200 baud, 8N1  
-**Rate:** 1 block per second  
+**Interface:** FR-027
+**Direction:** Coral Dev Board Micro → OBC
+**Transport:** UART, 115200 baud, 8N1
+**Rate:** 1 block per second
 **Block size:** 16 bytes fixed
 
 The OBC triggers inference and receives a fixed 16-byte output block. Internal
@@ -213,9 +274,9 @@ and `coral_excerpt` field selection in `TelemetryPacket_t` confirmed.
 
 ## 5. SD Card Log Record
 
-**Interface:** FR-016, FR-017  
-**Direction:** CDH writes  
-**Rate:** ≥ 1 record per second  
+**Interface:** FR-016, FR-017
+**Direction:** CDH writes
+**Rate:** ≥ 1 record per second
 **Format:** CSV or binary TBD by CDH
 
 Minimum fields per record (FR-016):

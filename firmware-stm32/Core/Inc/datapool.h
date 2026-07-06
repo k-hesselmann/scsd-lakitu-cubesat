@@ -2,6 +2,37 @@
 #define DATAPOOL_H
 
 #include <stdint.h>
+#include <limits.h>
+
+/* SCV_MAGIC is a recognizable sanity marker. Erased STM32 flash reads as
+ * 0xFFFF, so 0xCAFE lets boot code distinguish an initialized SCV record from
+ * blank/corrupt storage before checking crc16. */
+#define SCV_MAGIC                 0xCAFEU
+#define SCV_FLASH_ADDR            0x080FF800UL
+#define SCV_FLASH_SIZE            0x00000800UL
+
+#define SCV_INVALID_U8            0xFFU
+#define SCV_INVALID_U16           0xFFFFU
+#define SCV_INVALID_U32           0xFFFFFFFFUL
+#define SCV_INVALID_I32           INT32_MIN
+
+#define EQUIPMENT_GPS             (1U << 0)
+#define EQUIPMENT_IMU             (1U << 1)
+#define EQUIPMENT_BARO            (1U << 2)
+#define EQUIPMENT_CORAL           (1U << 3)
+#define EQUIPMENT_SD              (1U << 4)
+#define EQUIPMENT_LORA            (1U << 5)
+#define EQUIPMENT_EPS_ADC         (1U << 6)
+
+#define EQUIPMENT_ALL_NOMINAL     (EQUIPMENT_GPS | EQUIPMENT_IMU | EQUIPMENT_BARO | \
+                                   EQUIPMENT_CORAL | EQUIPMENT_SD | EQUIPMENT_LORA | \
+                                   EQUIPMENT_EPS_ADC)
+
+#define RESET_REASON_UNKNOWN      0U
+#define RESET_REASON_POWER_ON     1U
+#define RESET_REASON_WATCHDOG     2U
+#define RESET_REASON_SOFTWARE     3U
+#define RESET_REASON_INVALID      SCV_INVALID_U8
 
 /* ICD Section 1 — SensorData_t
  * Written by CDH_Update() at 1 Hz. Read by FSW_Update() and TTC_Transmit().
@@ -34,6 +65,9 @@ typedef struct __attribute__((packed)) {
     float    baro_temp_c;
     uint8_t  baro_valid;
 
+    /* Shared I2C bus recovery state reported by FDIR. */
+    uint8_t  i2c_bus_state;
+
     /* EPS */
     uint16_t batt_voltage_mv;
     uint8_t  batt_valid;
@@ -45,22 +79,27 @@ typedef struct __attribute__((packed)) {
 } SensorData_t;
 
 /* ICD Section 2 — SCV_t
- * Persisted to NVM. CDH writes health fields; FSW writes flight_phase. */
+ * Persisted to reserved flash. FSW/FDIR owns health and flight state. */
 typedef struct __attribute__((packed)) {
 
     uint16_t magic;              /* 0xCAFE */
-    uint16_t reboot_count;
-    uint32_t last_update_ms;
-
+    uint32_t boot_count;
+    uint32_t mission_elapsed_ms;
     uint8_t  flight_phase;       /* FlightPhase_t from fsm.h */
+    uint8_t  reset_reason;
 
-    uint8_t  sensor_faults;      /* bitmask: bit0=GPS bit1=IMU bit2=Baro bit3=SD bit4=Coral */
-    uint16_t last_batt_mv;
+    uint16_t equipment_enabled;
+    uint16_t equipment_faults;
 
     uint8_t  gps_timeout_count;
     uint8_t  imu_timeout_count;
     uint8_t  baro_timeout_count;
     uint8_t  coral_timeout_count;
+    uint8_t  sd_fault_count;
+    uint8_t  watchdog_reset_count;
+
+    uint16_t last_batt_mv;
+    int32_t  baro_ground_alt_cm;
 
     uint16_t crc16;
 
