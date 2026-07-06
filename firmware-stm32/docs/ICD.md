@@ -1,22 +1,24 @@
 # Interface Control Document
 **1U CubeSat Balloon Mission — Software Interfaces**
 
-All multi-byte fields are **little-endian** (native STM32 byte order).  
-All structs are **packed** (`__attribute__((packed))`) to avoid compiler padding in transmitted or stored blocks.  
+All multi-byte fields are **little-endian** (native STM32 byte order).
+All structs are **packed** (`__attribute__((packed))`) to avoid compiler padding in transmitted or stored blocks.
 `TBD` marks fields whose definition is deferred to the owning subsystem.
 
 ---
 
 ## 1. Datapool — `SensorData_t`
 
-**Interface:** IF-006  
-**Direction:** CDH writes → FSW reads  
-**Update rate:** 1 Hz (written by `CDH_Update()`, read by `FSW_Update()`)  
+**Interface:** IF-006
+**Direction:** CDH writes sensor fields → FDIR writes health state → FSW reads
+**Update rate:** 1 Hz (`CDH_Update()`, then `FDIR_Update()`, then `FSW_Update()`)
 **Location:** global variable in `datapool.h`, accessible to all modules
 
-CDH is responsible for filling every field each cycle. If a sensor read fails,
+CDH is responsible for filling sensor fields each cycle. If a sensor read fails,
 CDH sets the corresponding `_valid` flag to `0` and leaves the value field at
-its last known good value. FSW must check `_valid` before using any field.
+its last known good value. FDIR consumes those flags to update SCV health fields,
+request CDH-owned recovery functions, and report shared bus recovery state. FSW
+must check `_valid` and SCV fault bits before using any field.
 
 ```c
 typedef struct __attribute__((packed)) {
@@ -48,6 +50,9 @@ typedef struct __attribute__((packed)) {
     float    baro_temp_c;        /* degrees Celsius */
     uint8_t  baro_valid;
 
+    /* ── CDH/FDIR bus state ────────────────────────────────── */
+    uint8_t  i2c_bus_state;      /* CDH_FDIR_BUS_* value */
+
     /* ── EPS (ADC via IF-008) ───────────────────────────────── */
     uint16_t batt_voltage_mv;    /* millivolts, after resistor divider scaling */
     uint8_t  batt_valid;
@@ -66,16 +71,18 @@ typedef struct __attribute__((packed)) {
   down component so positive = upward, consistent with `baro_alt_m` convention.
 - If `gps_valid == 0`, FSW uses `baro_alt_m` and a baro-derived vertical velocity
   as fallback per FR-021.
+- `i2c_bus_state` is written by FDIR after processing the CDH nonblocking I2C
+  bus restart state machine.
 
 ---
 
 ## 2. Spacecraft Configuration Vector — `SCV_t`
 
-**Interface:** FR-020  
-**Direction:** FSW/FDIR owns the SCV; other subsystems provide source health data  
-**Storage:** STM32 internal flash, last 2 KiB page reserved for SCV  
+**Interface:** FR-020
+**Direction:** FSW/FDIR owns the SCV; other subsystems provide source health data
+**Storage:** STM32 internal flash, last 2 KiB page reserved for SCV
 **Update rate:** FSW updates `flight_phase` on transition; FDIR updates health
-fields on its monitoring cycle once integrated.
+fields on each 1 Hz monitoring cycle.
 
 The SCV is the single persistent system state record. It survives power cycles
 and resets. FSW/FDIR initialise and validate it, restore `flight_phase` after
@@ -178,13 +185,20 @@ for unknown `uint16_t` measurements and `INT32_MIN` for unknown signed values.
 | `last_batt_mv` | FDIR from CDH/EPS source data | FSW/FDIR, telemetry |
 | `baro_ground_alt_cm` | FSW/FDIR from barometer baseline source | FSW/FDIR |
 
+**Current FDIR policy:** IMU and barometer recovery is available through
+CDH-owned recovery wrappers. FDIR marks equipment faulty after the configured
+timeout limit, calls the relevant CDH recovery wrapper no more often than once
+per `FDIR_REINIT_PERIOD_MS`, and starts a nonblocking I2C bus restart when both
+I2C sensors are faulted. GPS, Coral, SD, LoRa, and EPS recovery ownership remains
+reserved for their subsystem handlers.
+
 ---
 
 ## 3. Telemetry Packet — `TelemetryPacket_t`
 
-**Interface:** IF-007, FR-023  
-**Direction:** FSW assembles → TTC transmits  
-**Rate:** 1 packet per 20 seconds (FR-022)  
+**Interface:** IF-007, FR-023
+**Direction:** FSW assembles → TTC transmits
+**Rate:** 1 packet per 20 seconds (FR-022)
 **Transport:** LoRa RFM95W SPI, SF9, BW 125 kHz, CR 4/5, 868 MHz (FR-026)
 
 ```c
@@ -235,10 +249,10 @@ typedef struct __attribute__((packed)) {
 
 ## 4. Coral Payload Block
 
-**Interface:** FR-027  
-**Direction:** Coral Dev Board Micro → OBC  
-**Transport:** UART, 115200 baud, 8N1  
-**Rate:** 1 block per second  
+**Interface:** FR-027
+**Direction:** Coral Dev Board Micro → OBC
+**Transport:** UART, 115200 baud, 8N1
+**Rate:** 1 block per second
 **Block size:** 16 bytes fixed
 
 The OBC triggers inference and receives a fixed 16-byte output block. Internal
@@ -260,9 +274,9 @@ and `coral_excerpt` field selection in `TelemetryPacket_t` confirmed.
 
 ## 5. SD Card Log Record
 
-**Interface:** FR-016, FR-017  
-**Direction:** CDH writes  
-**Rate:** ≥ 1 record per second  
+**Interface:** FR-016, FR-017
+**Direction:** CDH writes
+**Rate:** ≥ 1 record per second
 **Format:** CSV or binary TBD by CDH
 
 Minimum fields per record (FR-016):

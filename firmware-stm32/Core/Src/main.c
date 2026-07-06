@@ -1,6 +1,7 @@
 #include "main.h"
 #include "usb_device.h"
 #include "datapool.h"
+#include "fdir/fdir.h"
 #include "fsw/fsm.h"
 #include "cdh/cdh.h"
 #include "ttc/ttc.h"
@@ -25,6 +26,7 @@ int main(void)
     MX_I2C1_Init();
     MX_USB_DEVICE_Init();
 
+    FDIR_Init(&g_scv);
 #if !FSW_USE_DUMMY_DATAPOOL
     CDH_Init();
 #endif
@@ -40,10 +42,11 @@ int main(void)
 #else
         CDH_Update(&g_datapool, &g_scv);
 #endif
+        FDIR_Update(&g_datapool, &g_scv);
         FSW_Update(&g_datapool);
         FSW_BuildTelemetryPacket(&g_datapool, &tx_packet);
         TTC_Transmit(&tx_packet);
-        /* TODO: HAL_IWDG_Refresh(&hiwdg); */
+        /* TODO: refresh IWDG here if FDIR_SystemHealthyEnoughToKickWatchdog(). */
         HAL_Delay(1000);
     }
 }
