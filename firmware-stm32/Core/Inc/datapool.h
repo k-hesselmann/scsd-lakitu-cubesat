@@ -64,6 +64,9 @@ typedef struct __attribute__((packed)) {
     float    baro_temp_c;
     uint8_t  baro_valid;
 
+    /* I2C Bus State (CDH FDIR) */
+    uint8_t  i2c_bus_state;
+
     /* EPS */
     uint16_t batt_voltage_mv;
     uint8_t  batt_valid;

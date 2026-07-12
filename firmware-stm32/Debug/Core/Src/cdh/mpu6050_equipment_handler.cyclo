@@ -1,0 +1,3 @@
+../Core/Src/cdh/mpu6050_equipment_handler.c:4:16:MPU6050_IsDataFlatlined	4
+../Core/Src/cdh/mpu6050_equipment_handler.c:18:26:MPU6050_EquipmentHandler_Init	2
+../Core/Src/cdh/mpu6050_equipment_handler.c:39:26:MPU6050_EquipmentHandler_Update	6

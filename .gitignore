@@ -26,3 +26,6 @@ payload/models/*
 
 # notebook noise
 .ipynb_checkpoints/
+
+# STM32CubeIDE / Eclipse workspace cache (not the project itself)
+.metadata/
