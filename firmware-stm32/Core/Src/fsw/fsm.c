@@ -1,20 +1,195 @@
 #include "fsw/fsm.h"
 #include "fsw/fsm_thresholds.h"
 
+#include <math.h>
+#include <stddef.h>
+#include <string.h>
+
 static FlightPhase_t s_phase = PHASE_STANDBY;
+static uint8_t s_standby_to_launch_count = 0U;
+static uint8_t s_launch_to_ascent_count = 0U;
+static uint8_t s_ascent_to_cruise_count = 0U;
+static uint8_t s_descent_count = 0U;
+static uint8_t s_landing_count = 0U;
+static uint8_t s_cruise_baro_ref_valid = 0U;
+static float s_cruise_baro_ref_m = 0.0f;
+static float s_float_accel_baseline_g = 1.0f;
+static uint16_t s_telemetry_sequence = 0U;
+
+static uint8_t FSW_EquipmentUsable(uint16_t equipment)
+{
+    return (g_scv.equipment_faults & equipment) == 0U;
+}
+
+static uint8_t FSW_GpsUsable(const SensorData_t *dp)
+{
+    return dp->gps_valid && FSW_EquipmentUsable(EQUIPMENT_GPS);
+}
+
+static uint8_t FSW_ImuUsable(const SensorData_t *dp)
+{
+    return dp->imu_valid && FSW_EquipmentUsable(EQUIPMENT_IMU);
+}
+
+static uint8_t FSW_BaroUsable(const SensorData_t *dp)
+{
+    return dp->baro_valid && FSW_EquipmentUsable(EQUIPMENT_BARO);
+}
+
+static uint8_t FSW_BattUsable(const SensorData_t *dp)
+{
+    return dp->batt_valid && FSW_EquipmentUsable(EQUIPMENT_EPS_ADC);
+}
+
+static uint8_t FSW_IsValidPhase(uint8_t phase)
+{
+    return phase <= (uint8_t)PHASE_LANDING;
+}
+
+static void FSW_ResetTransitionCounters(void)
+{
+    s_standby_to_launch_count = 0U;
+    s_launch_to_ascent_count = 0U;
+    s_ascent_to_cruise_count = 0U;
+    s_descent_count = 0U;
+    s_landing_count = 0U;
+    s_cruise_baro_ref_valid = 0U;
+}
+
+static void FSW_SetPhase(FlightPhase_t phase)
+{
+    if (s_phase == phase)
+        return;
+
+    s_phase = phase;
+    g_scv.flight_phase = (uint8_t)phase;
+    FSW_ResetTransitionCounters();
+}
+
+static uint8_t FSW_CountCondition(uint8_t condition, uint8_t *counter, uint8_t limit)
+{
+    if (condition)
+    {
+        if (*counter < UINT8_MAX)
+            (*counter)++;
+    }
+    else
+    {
+        *counter = 0U;
+    }
+
+    return *counter >= limit;
+}
+
+static uint16_t FSW_Crc16Ccitt(const uint8_t *data, size_t length)
+{
+    uint16_t crc = 0xFFFFU;
+
+    for (size_t i = 0U; i < length; i++)
+    {
+        crc ^= (uint16_t)data[i] << 8;
+        for (uint8_t bit = 0U; bit < 8U; bit++)
+        {
+            if ((crc & 0x8000U) != 0U)
+                crc = (uint16_t)((crc << 1) ^ 0x1021U);
+            else
+                crc <<= 1;
+        }
+    }
+
+    return crc;
+}
 
 void FSW_Init(void)
 {
-    /* TODO: read s_phase from g_scv.flight_phase to restore after reboot */
+    if (FSW_IsValidPhase(g_scv.flight_phase))
+        s_phase = (FlightPhase_t)g_scv.flight_phase;
+    else
+        FSW_SetPhase(PHASE_STANDBY);
+
     /* TODO: enable IWDG */
 }
 
 void FSW_Update(const SensorData_t *dp)
 {
-    /* TODO: run median filter on sensor inputs */
-    /* TODO: evaluate transition conditions per fsm_diagram.puml */
-    /* TODO: on transition — update s_phase, write to g_scv, persist to NVM */
-    (void)dp;
+    uint8_t launch_condition;
+    uint8_t ascent_condition;
+    uint8_t cruise_condition;
+    uint8_t descent_condition;
+    uint8_t landing_condition;
+    float accel_delta_g;
+    uint8_t gps_usable;
+    uint8_t imu_usable;
+    uint8_t baro_usable;
+
+    if (dp == NULL)
+        return;
+
+    gps_usable = FSW_GpsUsable(dp);
+    imu_usable = FSW_ImuUsable(dp);
+    baro_usable = FSW_BaroUsable(dp);
+
+    switch (s_phase)
+    {
+    case PHASE_STANDBY:
+        launch_condition = ((imu_usable && dp->imu_accel_mag_g > FSM_LAUNCH_ACCEL_G) ||
+                            (baro_usable && dp->baro_alt_m > FSM_LAUNCH_BARO_RISE_M));
+        if (FSW_CountCondition(launch_condition, &s_standby_to_launch_count, FSM_LAUNCH_WINDOW_S))
+            FSW_SetPhase(PHASE_LAUNCH);
+        break;
+
+    case PHASE_LAUNCH:
+        ascent_condition = ((baro_usable && dp->baro_alt_m > FSM_ASCENT_ALT_M) ||
+                            (gps_usable && dp->gps_vvel_mps > FSM_ASCENT_VVEL_MPS));
+        if (FSW_CountCondition(ascent_condition, &s_launch_to_ascent_count, FSM_ASCENT_WINDOW_S))
+            FSW_SetPhase(PHASE_ASCENT);
+        break;
+
+    case PHASE_ASCENT:
+        accel_delta_g = imu_usable ? fabsf(dp->imu_accel_mag_g - s_float_accel_baseline_g) : 0.0f;
+        descent_condition = ((imu_usable && accel_delta_g > FSM_DESCENT_ACCEL_DELTA_G) ||
+                             (gps_usable && dp->gps_vvel_mps < FSM_DESCENT_VVEL_MPS));
+        if (FSW_CountCondition(descent_condition, &s_descent_count, FSM_DESCENT_WINDOW_S))
+        {
+            FSW_SetPhase(PHASE_DESCENT);
+            break;
+        }
+
+        if (baro_usable && !s_cruise_baro_ref_valid)
+        {
+            s_cruise_baro_ref_m = dp->baro_alt_m;
+            s_cruise_baro_ref_valid = 1U;
+        }
+
+        cruise_condition = ((gps_usable && dp->gps_vvel_mps < FSM_CRUISE_VVEL_MPS) ||
+                            (baro_usable && s_cruise_baro_ref_valid &&
+                             fabsf(dp->baro_alt_m - s_cruise_baro_ref_m) < FSM_CRUISE_ALT_BAND_M));
+        if (FSW_CountCondition(cruise_condition, &s_ascent_to_cruise_count, FSM_CRUISE_WINDOW_S))
+            FSW_SetPhase(PHASE_CRUISE);
+        break;
+
+    case PHASE_CRUISE:
+        if (imu_usable)
+            s_float_accel_baseline_g = (0.9f * s_float_accel_baseline_g) + (0.1f * dp->imu_accel_mag_g);
+
+        accel_delta_g = imu_usable ? fabsf(dp->imu_accel_mag_g - s_float_accel_baseline_g) : 0.0f;
+        descent_condition = ((imu_usable && accel_delta_g > FSM_DESCENT_ACCEL_DELTA_G) ||
+                             (gps_usable && dp->gps_vvel_mps < FSM_DESCENT_VVEL_MPS));
+        if (FSW_CountCondition(descent_condition, &s_descent_count, FSM_DESCENT_WINDOW_S))
+            FSW_SetPhase(PHASE_DESCENT);
+        break;
+
+    case PHASE_DESCENT:
+        landing_condition = ((gps_usable && dp->gps_speed_mps < FSM_LANDING_SPEED_MPS) ||
+                             (baro_usable && dp->baro_alt_m < FSM_LANDING_ALT_M));
+        if (FSW_CountCondition(landing_condition, &s_landing_count, FSM_LANDING_WINDOW_S))
+            FSW_SetPhase(PHASE_LANDING);
+        break;
+
+    case PHASE_LANDING:
+    default:
+        break;
+    }
 }
 
 FlightPhase_t FSW_GetPhase(void)
@@ -24,8 +199,29 @@ FlightPhase_t FSW_GetPhase(void)
 
 void FSW_BuildTelemetryPacket(const SensorData_t *dp, TelemetryPacket_t *pkt)
 {
-    /* TODO: fill all TelemetryPacket_t fields from dp and s_phase */
-    /* TODO: compute CRC-16 over packet bytes */
-    (void)dp;
-    (void)pkt;
+    if (dp == NULL || pkt == NULL)
+        return;
+
+    memset(pkt, 0, sizeof(*pkt));
+
+    pkt->sync[0] = 0xAAU;
+    pkt->sync[1] = 0x55U;
+    pkt->packet_type = 0x01U;
+    pkt->packet_length = (uint8_t)sizeof(*pkt);
+    pkt->sequence_number = s_telemetry_sequence++;
+    pkt->timestamp_ms = dp->timestamp_ms;
+    pkt->flight_phase = (uint8_t)s_phase;
+
+    pkt->gps_lat_deg = dp->gps_lat_deg;
+    pkt->gps_lon_deg = dp->gps_lon_deg;
+    pkt->gps_alt_m = dp->gps_alt_m;
+
+    pkt->imu_accel_x_g = dp->imu_accel_x_g;
+    pkt->imu_accel_y_g = dp->imu_accel_y_g;
+    pkt->imu_accel_z_g = dp->imu_accel_z_g;
+
+    pkt->batt_voltage_mv = FSW_BattUsable(dp) ? dp->batt_voltage_mv : g_scv.last_batt_mv;
+    memcpy(pkt->coral_excerpt, dp->coral_block, sizeof(pkt->coral_excerpt));
+
+    pkt->crc16 = FSW_Crc16Ccitt((const uint8_t *)pkt, offsetof(TelemetryPacket_t, crc16));
 }

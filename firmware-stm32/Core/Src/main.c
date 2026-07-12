@@ -26,6 +26,7 @@
 #include "cdh/gps_diag.h"
 #include "cdh/baro_diag.h"
 #include "datapool.h"
+#include "fdir/fdir.h"
 #include "fsw/fsm.h"
 #include "ttc/ttc.h"
 /* USER CODE END Includes */
@@ -113,6 +114,7 @@ int main(void)
   MX_UART4_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
+  FDIR_Init(&g_scv);
   CDH_Init();
   FSW_Init();
   TTC_Init();
@@ -130,10 +132,11 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     CDH_Update(&g_datapool, &g_scv);
+    FDIR_Update(&g_datapool, &g_scv);
     FSW_Update(&g_datapool);
     FSW_BuildTelemetryPacket(&g_datapool, &tx_packet);
     TTC_Transmit(&tx_packet);
-    /* TODO: HAL_IWDG_Refresh(&hiwdg); */
+    /* TODO: refresh IWDG here if FDIR_SystemHealthyEnoughToKickWatchdog(). */
     HAL_Delay(1000);
   }
   /* USER CODE END 3 */
