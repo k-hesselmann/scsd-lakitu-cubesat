@@ -1,5 +1,0 @@
-../Core/Src/mpu6050_equipment_handler.c:4:16:MPU6050_IsDataFlatlined	24	static
-../Core/Src/mpu6050_equipment_handler.c:18:13:I2C_BusRestart	16	static
-../Core/Src/mpu6050_equipment_handler.c:26:13:MPU6050_Recover	16	static
-../Core/Src/mpu6050_equipment_handler.c:39:26:MPU6050_EquipmentHandler_Init	120	static
-../Core/Src/mpu6050_equipment_handler.c:60:26:MPU6050_EquipmentHandler_Update	88	static

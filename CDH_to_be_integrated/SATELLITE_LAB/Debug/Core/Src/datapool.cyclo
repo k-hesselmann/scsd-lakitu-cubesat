@@ -1,3 +1,0 @@
-../Core/Src/datapool.c:8:6:Datapool_Init	1
-../Core/Src/datapool.c:16:6:Datapool_Update	2
-../Core/Src/datapool.c:31:6:Datapool_PrintDebug	3
