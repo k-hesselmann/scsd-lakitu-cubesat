@@ -1,0 +1,4 @@
+../Core/Src/fsw/fsm.c:6:6:FSW_Init	4	static
+../Core/Src/fsw/fsm.c:12:6:FSW_Update	16	static
+../Core/Src/fsw/fsm.c:20:15:FSW_GetPhase	4	static
+../Core/Src/fsw/fsm.c:25:6:FSW_BuildTelemetryPacket	16	static
