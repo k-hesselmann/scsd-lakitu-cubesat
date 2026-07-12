@@ -1,6 +1,8 @@
 #include "cdh/cdh.h"
 #include "cdh/mpu6050_equipment_handler.h"
 #include "cdh/ms5607_equipment_handler.h"
+#include "cdh/gps_equipment_handler.h"
+#include "cdh/cdh_debug.h"
 #include "cdh/cdh_fdir.h"
 
 #include "main.h"
@@ -16,6 +18,7 @@ extern I2C_HandleTypeDef hi2c1;
 
 static MPU6050_EquipmentHandler s_imu;
 static MS5607_EquipmentHandler s_baro;
+static GPS_EquipmentHandler s_gps;
 static CDH_FDIR_Context s_fdir;
 static float s_ground_baro_alt_m = 0.0f;
 
@@ -31,6 +34,7 @@ void CDH_Init(void)
 {
     s_imu = MPU6050_EquipmentHandler_Init(&hi2c1);
     s_baro = MS5607_EquipmentHandler_Init(&hi2c1);
+    s_gps = GPS_EquipmentHandler_Init(&hi2c1);
     CDH_FDIR_Init(&s_fdir);
 
     if (s_baro.baro_valid)
@@ -85,6 +89,23 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
         if (scv->baro_timeout_count < UINT8_MAX)
             scv->baro_timeout_count++;
     }
+
+    s_gps = GPS_EquipmentHandler_Update(s_gps, &hi2c1);
+    if (s_gps.gps_valid)
+    {
+        dp->gps_lat_deg = s_gps.data.latitude;
+        dp->gps_lon_deg = s_gps.data.longitude;
+        dp->gps_alt_m = s_gps.data.altitude;
+        dp->gps_speed_mps = s_gps.data.speed;
+        dp->gps_valid = 1U;
+    }
+    else
+    {
+        dp->gps_valid = 0U;
+    }
+
+    CDH_Debug_PrintGPS(&s_gps);
+    CDH_Debug_PrintBaro(&s_baro);
 
     dp->i2c_bus_state = s_fdir.bus_state;
 
