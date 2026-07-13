@@ -4,11 +4,11 @@
 #include "main.h"
 #include <stdint.h>
 
-/* SD card chip-select line (SPI1 uses soft NSS). The pin is not defined in
+/* SD card chip-select line (SPI2 uses soft NSS). The pin is not defined in
  * the CubeMX .ioc, so declare it here; SD_SPI_Init() configures it as a
- * push-pull output. If SPI1/CS is ever added in CubeMX, move these to main.h. */
+ * push-pull output. If SPI2/CS is ever added in CubeMX, move these to main.h. */
 #ifndef SD_CS_Pin
-#define SD_CS_Pin        GPIO_PIN_6
+#define SD_CS_Pin        GPIO_PIN_1
 #define SD_CS_GPIO_Port  GPIOB
 #endif
 
