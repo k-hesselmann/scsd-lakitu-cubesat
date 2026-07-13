@@ -194,59 +194,39 @@ reserved for their subsystem handlers.
 
 ---
 
-## 3. Telemetry Packet — `TelemetryPacket_t`
+## 3. Telemetry Packet ? `TelemetryPacket_t` (protocol v3)
 
-**Interface:** IF-007, FR-023
-**Direction:** FSW assembles → TTC transmits
-**Rate:** 1 packet per 20 seconds (FR-022)
-**Transport:** LoRa RFM95W SPI, SF9, BW 125 kHz, CR 4/5, 868 MHz (FR-026)
+**Direction:** OBC ? ground station over LoRa
+**Wire order:** packed, little-endian
+**Total length:** **128 bytes**
+**Integrity:** CRC-16/CCITT (`0xFFFF` initial value, polynomial `0x1021`) over
+bytes 0?125; the final two bytes are the packet CRC.
 
-```c
-typedef struct __attribute__((packed)) {
+The v3 packet is a raw snapshot: it copies every `SensorData_t` field and every
+`SCV_t` field (including the SCV CRC) without flight-side rescaling or unit
+conversion. The only generated values are `packet_type` (`0x01`),
+`protocol_version` (`0x03`), sequence number, transmit uptime, and packet CRC.
 
-    /* ── Header (4 bytes) ───────────────────────────────────── */
-    uint8_t  sync[2];            /* 0xAA 0x55 */
-    uint8_t  packet_type;        /* 0x01 = telemetry */
-    uint8_t  packet_length;      /* total packet length in bytes including header */
+| Byte range | Fields | Source / notes |
+|---|---|---|
+| 0?7 | type, version, sequence, `tx_uptime_ms` | TTC/FSW transport metadata |
+| 8?95 | complete `SensorData_t` snapshot | Direct copies; source units are preserved |
+| 96?125 | complete `SCV_t` snapshot | Direct copies, including `scv_crc16` |
+| 126?127 | `crc16` | Packet CRC-16/CCITT |
 
-    /* ── Metadata (7 bytes) ─────────────────────────────────── */
-    uint16_t sequence_number;    /* wraps at 65535 */
-    uint32_t timestamp_ms;       /* mission elapsed time, ms since boot */
-    uint8_t  flight_phase;       /* FlightPhase_t enum value */
+Ground conversion rules:
 
-    /* ── GPS (12 bytes) ─────────────────────────────────────── */
-    float    gps_lat_deg;
-    float    gps_lon_deg;
-    float    gps_alt_m;
+- GPS degrees, metres, and m/s; barometer Pa, metres, and ?C; and battery mV
+  are already the native datapool units and are displayed directly.
+- IMU acceleration is transmitted in **g** and converted on ground to m/s?
+  using `9.80665`.
+- IMU gyro is transmitted in **deg/s** and converted on ground to rad/s.
+- Validity flags and SCV equipment bitmasks are transmitted independently;
+  ground derives display health flags from them.
+- UTC, GNSS fix/satellite/HDOP/VDOP/course, IMU/MCU temperatures, command
+  counters, and OBC uplink metrics are not presently available in the datapool
+  or SCV and are reported as unavailable by the ground station.
 
-    /* ── IMU (12 bytes) ─────────────────────────────────────── */
-    float    imu_accel_x_g;
-    float    imu_accel_y_g;
-    float    imu_accel_z_g;
-
-    /* ── EPS (2 bytes) ──────────────────────────────────────── */
-    uint16_t batt_voltage_mv;
-
-    /* ── Payload excerpt (8 bytes) ──────────────────────────── */
-    uint8_t  coral_excerpt[8];   /* TBD — first 8 bytes of coral_block, or
-                                    a selected subset defined by Payload team */
-
-    /* Reserved (2 bytes) */
-    uint8_t  reserved[2];        /* Transmitted as zero. */
-
-    /* ── Integrity (2 bytes) ────────────────────────────────── */
-    uint16_t crc16;              /* CRC-16/CCITT over all preceding bytes */
-
-} TelemetryPacket_t;            /* total: 49 bytes */
-```
-
-**Sizing check against FR-026:**
-- Packet size: 49 bytes = 392 bits
-- LoRa data rate at SF9/BW125/CR4-5: 1758 bps
-- Air time per packet: ~223 ms
-- TX interval: 20 s → duty cycle: 223 ms / 20 000 ms = **1.1%**
-- This marginally exceeds the 1% ISM band limit (FR-022, CR-005). TTC must
-  verify actual air time and adjust packet size or interval accordingly.
 
 ---
 

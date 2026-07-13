@@ -1,6 +1,5 @@
 Core/Src/ttc/ttc.o: ../Core/Src/ttc/ttc.c ../Core/Inc/ttc/ttc.h \
- ../Core/Inc/datapool.h ../Core/Inc/ttc/lora_driver.h \
- ../Core/Inc/ttc/telemetry_packet_test.h ../Core/Inc/main.h \
+ ../Core/Inc/datapool.h ../Core/Inc/ttc/lora_driver.h ../Core/Inc/main.h \
  C:/Users/alber/STM32Cube/Repository/STM32Cube_FW_L4_V1.18.2/Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal.h \
  ../Core/Inc/stm32l4xx_hal_conf.h \
  C:/Users/alber/STM32Cube/Repository/STM32Cube_FW_L4_V1.18.2/Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_rcc.h \
@@ -38,7 +37,6 @@ Core/Src/ttc/ttc.o: ../Core/Src/ttc/ttc.c ../Core/Inc/ttc/ttc.h \
 ../Core/Inc/ttc/ttc.h:
 ../Core/Inc/datapool.h:
 ../Core/Inc/ttc/lora_driver.h:
-../Core/Inc/ttc/telemetry_packet_test.h:
 ../Core/Inc/main.h:
 C:/Users/alber/STM32Cube/Repository/STM32Cube_FW_L4_V1.18.2/Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal.h:
 ../Core/Inc/stm32l4xx_hal_conf.h:

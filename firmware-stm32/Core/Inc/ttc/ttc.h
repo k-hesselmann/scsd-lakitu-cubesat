@@ -13,10 +13,4 @@ void TTC_Init(void);
  * Safe to call every superloop tick — internally rate-limited. */
 void TTC_Transmit(const TelemetryPacket_t *pkt);
 
-/*
- * Stand-alone radio/packet integration test. It sends a deterministic ICD
- * telemetry frame immediately and then once every 20 seconds. It does not
- * return. Select it in main.c with TTC_TELEMETRY_PACKET_TEST.
- */
-void TTC_RunTelemetryPacketTest(void);
 #endif /* TTC_TTC_H */

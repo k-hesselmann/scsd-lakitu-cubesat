@@ -3,6 +3,10 @@
 
 #include <stdint.h>
 
+/* Deprecated protocol-v2 mock definitions. They are retained only because
+ * existing CubeIDE generated makefiles still compile the source; TTC no longer
+ * calls this code. The active downlink is TelemetryPacket_t protocol v3. */
+
 #define TTC_TEST_TELEMETRY_PACKET_TYPE       0x01U
 #define TTC_TEST_TELEMETRY_PROTOCOL_VERSION  0x02U
 #define TTC_TEST_TELEMETRY_PACKET_SIZE       104U

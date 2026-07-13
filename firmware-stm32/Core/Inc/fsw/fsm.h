@@ -25,6 +25,6 @@ FlightPhase_t FSW_GetPhase(void);
 
 /* Assemble a telemetry packet from the current datapool and FSM state.
  * Called by TTC before each transmission. */
-void FSW_BuildTelemetryPacket(const SensorData_t *dp, TelemetryPacket_t *pkt);
+void FSW_BuildTelemetryPacket(const SensorData_t *dp, const SCV_t *scv, TelemetryPacket_t *pkt);
 
 #endif /* FSW_FSM_H */

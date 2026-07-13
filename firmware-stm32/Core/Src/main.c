@@ -35,8 +35,6 @@
 #include "fsw/fsm.h"
 #include "ttc/ttc.h"
 
-/* Set to 1 for the RFM95W telemetry-packet integration test. */
-#define TTC_TELEMETRY_PACKET_TEST  1
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -110,9 +108,6 @@ int main(void)
   MX_SPI1_Init();
   MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
-#if TTC_TELEMETRY_PACKET_TEST
-  TTC_RunTelemetryPacketTest();
-#endif
   FDIR_Init(&g_scv);
   CDH_Init();
   FSW_Init();
@@ -133,7 +128,7 @@ int main(void)
     CDH_Update(&g_datapool, &g_scv);
     FDIR_Update(&g_datapool, &g_scv);
     FSW_Update(&g_datapool);
-    FSW_BuildTelemetryPacket(&g_datapool, &tx_packet);
+    FSW_BuildTelemetryPacket(&g_datapool, &g_scv, &tx_packet);
     TTC_Transmit(&tx_packet);
     /* TODO: refresh IWDG here if FDIR_SystemHealthyEnoughToKickWatchdog(). */
     HAL_Delay(1000);

@@ -1,0 +1,28 @@
+# environments
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# datasets — large, never committed (see README)
+payload/data/*
+!payload/data/.gitkeep
+
+# model artifacts — intermediate; the deployment model is tracked in coral/models/
+payload/models/*
+!payload/models/.gitkeep
+*.tflite
+!payload/coral/models/*_edgetpu.tflite
+*.h5
+*.keras
+
+# raw imagery
+*.TIF
+*.tif
+*.zip
+
+# edge-tpu compile logs
+*_edgetpu.log
+
+# notebook noise
+.ipynb_checkpoints/
