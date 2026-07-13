@@ -6,3 +6,26 @@ Drivers/.DS_Store
 Drivers/CMSIS/.DS_Store
 Drivers/STM32L4xx_HAL_Driver/.DS_Store
 
+# STM32CubeIDE generated build output
+Debug/
+Release/
+
+# Eclipse/CubeIDE workspace metadata
+.metadata/
+
+# Generated binaries and intermediate build files
+*.o
+*.d
+*.su
+*.cyclo
+*.elf
+*.hex
+*.bin
+*.map
+*.list
+
+# Temporary and backup files
+*.bak
+*.bak_*
+*~
+

@@ -66,7 +66,18 @@ DRESULT USER_read (BYTE pdrv, BYTE *buff, DWORD sector, UINT count);
   DRESULT USER_ioctl (BYTE pdrv, BYTE cmd, void *buff);
 #endif /* _USE_IOCTL == 1 */
 
-
+Diskio_drvTypeDef  USER_Driver =
+{
+  USER_initialize,
+  USER_status,
+  USER_read,
+#if  _USE_WRITE
+  USER_write,
+#endif  /* _USE_WRITE == 1 */
+#if  _USE_IOCTL == 1
+  USER_ioctl,
+#endif /* _USE_IOCTL == 1 */
+};
 
 /* Private functions ---------------------------------------------------------*/
 
@@ -75,16 +86,15 @@ DRESULT USER_read (BYTE pdrv, BYTE *buff, DWORD sector, UINT count);
   * @param  pdrv: Physical drive number (0..)
   * @retval DSTATUS: Operation status
   */
-  DSTATUS USER_initialize(BYTE pdrv)
-  {
-    if (pdrv != 0)
-    {
-      return STA_NOINIT;
-    }
-
-    Stat = (SD_SPI_Init() == 0) ? 0 : STA_NOINIT;
+DSTATUS USER_initialize (
+	BYTE pdrv           /* Physical drive nmuber to identify the drive */
+)
+{
+  /* USER CODE BEGIN INIT */
+    Stat = STA_NOINIT;
     return Stat;
-  }
+  /* USER CODE END INIT */
+}
 
 /**
   * @brief  Gets Disk Status
@@ -218,5 +228,4 @@ DRESULT USER_ioctl (
   /* USER CODE END IOCTL */
 }
 #endif /* _USE_IOCTL == 1 */
-
 
