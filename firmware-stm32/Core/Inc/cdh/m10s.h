@@ -30,7 +30,11 @@ typedef struct {
     double latitude;        /* degrees, WGS-84 */
     double longitude;       /* degrees, WGS-84 */
     int32_t altitude;       /* meters above ellipsoid */
-    float speed;            /* meters per second */
+    float speed;            /* meters per second (gSpeed - 2D ground speed) */
+    float vel_north;        /* m/s, NED North velocity component */
+    float vel_east;         /* m/s, NED East velocity component */
+    float vel_down;         /* m/s, NED Down velocity component */
+    float heading;          /* degrees, heading of motion */
     uint8_t num_satellites; /* count */
     uint8_t fix_type;       /* GNSS fix type */
     uint32_t timestamp;     /* HAL_GetTick() */

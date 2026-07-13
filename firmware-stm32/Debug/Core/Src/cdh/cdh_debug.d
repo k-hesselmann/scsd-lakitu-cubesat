@@ -33,7 +33,8 @@ Core/Src/cdh/cdh_debug.o: ../Core/Src/cdh/cdh_debug.c \
  C:/Users/Frederik/STM32Cube/Repository/STM32Cube_FW_L4_V1.18.2/Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_pwr_ex.h \
  C:/Users/Frederik/STM32Cube/Repository/STM32Cube_FW_L4_V1.18.2/Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart.h \
  C:/Users/Frederik/STM32Cube/Repository/STM32Cube_FW_L4_V1.18.2/Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart_ex.h \
- ../Core/Inc/cdh/ms5607_equipment_handler.h ../Core/Inc/cdh/ms5607.h
+ ../Core/Inc/cdh/ms5607_equipment_handler.h ../Core/Inc/cdh/ms5607.h \
+ ../Core/Inc/datapool.h
 ../Core/Inc/cdh/cdh_debug.h:
 ../Core/Inc/cdh/gps_equipment_handler.h:
 ../Core/Inc/main.h:
@@ -71,3 +72,4 @@ C:/Users/Frederik/STM32Cube/Repository/STM32Cube_FW_L4_V1.18.2/Drivers/STM32L4xx
 C:/Users/Frederik/STM32Cube/Repository/STM32Cube_FW_L4_V1.18.2/Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart_ex.h:
 ../Core/Inc/cdh/ms5607_equipment_handler.h:
 ../Core/Inc/cdh/ms5607.h:
+../Core/Inc/datapool.h:
