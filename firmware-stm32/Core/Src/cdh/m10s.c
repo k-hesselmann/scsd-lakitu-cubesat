@@ -192,6 +192,11 @@ static uint8_t M10S_ParseNAVPVT(const uint8_t *payload, uint16_t len, M10S_NavPV
                          (payload[37] << 16) |
                          (payload[38] << 24);
 
+    int32_t veld_raw = (payload[59]) |
+                       (payload[60] << 8) |
+                       (payload[61] << 16) |
+                       (payload[62] << 24);
+
     int32_t gspeed_raw = (payload[63]) |
                          (payload[64] << 8) |
                          (payload[65] << 16) |
@@ -212,11 +217,13 @@ static uint8_t M10S_ParseNAVPVT(const uint8_t *payload, uint16_t len, M10S_NavPV
      * LAT/LON: divide by 1e7 to convert from 1e-7 deg to degrees
      * Height: divide by 1000 to convert from mm to meters
      * Speed: divide by 1000 to convert from mm/s to m/s
+     * VVel: velD is NED Down (mm/s); negate for datapool's positive-up convention
      */
     pvt->latitude = lat_raw / 10000000.0;
     pvt->longitude = lon_raw / 10000000.0;
     pvt->altitude = height_raw / 1000.0;
     pvt->speed = gspeed_raw / 1000.0;
+    pvt->vvel = -veld_raw / 1000.0f;
     pvt->fix_type = fix_type;
     pvt->num_satellites = num_sv;
     pvt->timestamp = HAL_GetTick();
@@ -668,6 +675,7 @@ static uint8_t M10S_ParseNMEA_GGA(const uint8_t *sentence, uint16_t len, M10S_Na
     pvt->num_satellites = num_sats;
     pvt->fix_type = (fix_quality == 2) ? 2 : 1;
     pvt->speed = 0;
+    pvt->vvel = 0;   /* NMEA GGA carries no vertical velocity */
     pvt->timestamp = HAL_GetTick();
 
     return 1;
@@ -726,6 +734,7 @@ static uint8_t M10S_ParseNMEA_RMC(const uint8_t *sentence, uint16_t len, M10S_Na
     pvt->longitude = lon;
     pvt->speed = speed;
     pvt->fix_type = 1;
+    pvt->vvel = 0;   /* NMEA RMC carries no vertical velocity */
     pvt->timestamp = HAL_GetTick();
 
     return 1;

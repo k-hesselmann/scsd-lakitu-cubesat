@@ -83,9 +83,7 @@ void CDH_Init(void)
     /* SCV health/identity fields (magic, timeout counts, faults) are owned and
      * initialised by FDIR_Init(); CDH only fills SensorData_t. */
 
-    /* TODO: initialise GPS (NEO-M8N) over UART, set Airborne mode (CR-006) */
     /* TODO: initialise Coral UART (115200 baud, FR-027) */
-    /* TODO: read and store ground pressure baseline for baro_alt_m reference */
 
     /* ---- SD card + FatFS init ---- */
     MX_FATFS_Init();
@@ -163,6 +161,7 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
         dp->gps_lon_deg = s_gps.data.longitude;
         dp->gps_alt_m = s_gps.data.altitude;
         dp->gps_speed_mps = s_gps.data.speed;
+        dp->gps_vvel_mps = s_gps.data.vvel;
         dp->gps_valid = 1U;
     }
     else
@@ -173,12 +172,14 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
     CDH_Debug_PrintGPS(&s_gps);
     CDH_Debug_PrintBaro(&s_baro);
 
+    /* CDH owns the I2C bus: advance any pending restart requested by FDIR and
+     * publish the resulting bus state. CDH is the sole writer of i2c_bus_state. */
+    CDH_FDIR_BusRestart_Process(&s_fdir, &hi2c1);
     dp->i2c_bus_state = s_fdir.bus_state;
 
     /* Equipment faults, timeout counts and SCV bookkeeping are owned by
      * FDIR_Update(); CDH only publishes SensorData_t here. */
 
-    /* TODO: read GPS — fill gps_* fields, set gps_valid */
     /* TODO: read ADC for battery voltage — fill batt_voltage_mv, set batt_valid */
     /* TODO: read Coral block over UART — fill coral_block[16], set coral_valid */
     /* TODO: write updated scv to NVM */
@@ -223,4 +224,15 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
     }
 
     (void)scv;
+}
+
+/* ------------------------------------------------------------------ */
+/*  CDH_RequestBusRestart                                              */
+/* ------------------------------------------------------------------ */
+void CDH_RequestBusRestart(void)
+{
+    /* FDIR requests, CDH executes: arm the restart FSM. The actual
+     * HAL_I2C_DeInit/Init is performed by CDH_FDIR_BusRestart_Process()
+     * from CDH_Update(). No-op if a restart is already in progress. */
+    CDH_FDIR_BusRestart_Start(&s_fdir);
 }

@@ -34,36 +34,6 @@
 #define RESET_REASON_SOFTWARE     3U
 #define RESET_REASON_INVALID      SCV_INVALID_U8
 
-/* SCV_MAGIC is a recognizable sanity marker. Erased STM32 flash reads as
- * 0xFFFF, so 0xCAFE lets boot code distinguish an initialized SCV record from
- * blank/corrupt storage before checking crc16. */
-#define SCV_MAGIC                 0xCAFEU
-#define SCV_FLASH_ADDR            0x080FF800UL
-#define SCV_FLASH_SIZE            0x00000800UL
-
-#define SCV_INVALID_U8            0xFFU
-#define SCV_INVALID_U16           0xFFFFU
-#define SCV_INVALID_U32           0xFFFFFFFFUL
-#define SCV_INVALID_I32           INT32_MIN
-
-#define EQUIPMENT_GPS             (1U << 0)
-#define EQUIPMENT_IMU             (1U << 1)
-#define EQUIPMENT_BARO            (1U << 2)
-#define EQUIPMENT_CORAL           (1U << 3)
-#define EQUIPMENT_SD              (1U << 4)
-#define EQUIPMENT_LORA            (1U << 5)
-#define EQUIPMENT_EPS_ADC         (1U << 6)
-
-#define EQUIPMENT_ALL_NOMINAL     (EQUIPMENT_GPS | EQUIPMENT_IMU | EQUIPMENT_BARO | \
-                                   EQUIPMENT_CORAL | EQUIPMENT_SD | EQUIPMENT_LORA | \
-                                   EQUIPMENT_EPS_ADC)
-
-#define RESET_REASON_UNKNOWN      0U
-#define RESET_REASON_POWER_ON     1U
-#define RESET_REASON_WATCHDOG     2U
-#define RESET_REASON_SOFTWARE     3U
-#define RESET_REASON_INVALID      SCV_INVALID_U8
-
 /* ICD Section 1 — SensorData_t
  * Written by CDH_Update() at 1 Hz. Read by FSW_Update() and TTC_Transmit().
  * Check *_valid flags before using any field. */
@@ -134,12 +104,6 @@ typedef struct __attribute__((packed)) {
     uint16_t crc16;
 
 } SCV_t;
-
-/* Temporary compatibility aliases for CDH-owned code. Remove when CDH adopts
- * the final FSW/FDIR-owned SCV interface. */
-#define reboot_count              boot_count
-#define last_update_ms            mission_elapsed_ms
-#define sensor_faults             equipment_faults
 
 /* ICD Section 3 — TelemetryPacket_t
  * Assembled by FSW, transmitted by TTC every 20 s. */

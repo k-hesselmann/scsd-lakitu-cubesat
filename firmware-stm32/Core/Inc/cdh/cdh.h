@@ -11,4 +11,8 @@ void CDH_Init(void);
  * Called once per 1 Hz superloop tick. */
 void CDH_Update(SensorData_t *dp, SCV_t *scv);
 
+/* Request an I2C bus restart. Called by FDIR when it decides recovery is due;
+ * CDH owns the bus hardware and executes the (multi-tick) restart in CDH_Update. */
+void CDH_RequestBusRestart(void);
+
 #endif /* CDH_CDH_H */

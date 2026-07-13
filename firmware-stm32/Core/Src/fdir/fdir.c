@@ -1,12 +1,12 @@
 #include "fdir/fdir.h"
 
+#include "cdh/cdh.h"
 #include "cdh/cdh_fdir.h"
 #include "fsw/fsm.h"
 #include "main.h"
 
 extern I2C_HandleTypeDef hi2c1;
 
-static CDH_FDIR_Context s_cdh_fdir;
 static uint32_t s_last_imu_reinit_ms;
 static uint32_t s_last_baro_reinit_ms;
 static uint32_t s_last_i2c_bus_restart_ms;
@@ -83,7 +83,6 @@ void FDIR_Init(SCV_t *scv)
     if (scv->boot_count < SCV_INVALID_U32)
         scv->boot_count++;
 
-    CDH_FDIR_Init(&s_cdh_fdir);
     s_last_imu_reinit_ms = 0U;
     s_last_baro_reinit_ms = 0U;
     s_last_i2c_bus_restart_ms = 0U;
@@ -95,8 +94,8 @@ void FDIR_Update(SensorData_t *dp, SCV_t *scv)
 {
     uint32_t now_ms = HAL_GetTick();
 
-    CDH_FDIR_BusRestart_Process(&s_cdh_fdir, &hi2c1);
-    dp->i2c_bus_state = s_cdh_fdir.bus_state;
+    /* Bus-restart execution and dp->i2c_bus_state are owned by CDH; FDIR only
+     * requests a restart below when both I2C sensors are faulted. */
 
     if (dp->gps_valid)
     {
@@ -156,7 +155,7 @@ void FDIR_Update(SensorData_t *dp, SCV_t *scv)
          (EQUIPMENT_IMU | EQUIPMENT_BARO)) &&
         FDIR_ReinitDue(now_ms, &s_last_i2c_bus_restart_ms))
     {
-        CDH_FDIR_BusRestart_Start(&s_cdh_fdir);
+        CDH_RequestBusRestart();
     }
 
     if (dp->coral_valid)

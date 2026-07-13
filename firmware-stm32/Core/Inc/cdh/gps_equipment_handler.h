@@ -12,6 +12,7 @@ typedef struct {
   float longitude;
   float altitude;
   float speed;
+  float vvel;
   uint8_t num_satellites;
   uint8_t fix_type;
 } GPS_Data;

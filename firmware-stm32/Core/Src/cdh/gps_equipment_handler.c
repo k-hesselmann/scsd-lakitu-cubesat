@@ -32,6 +32,7 @@ GPS_EquipmentHandler GPS_EquipmentHandler_Update(GPS_EquipmentHandler handler, I
       handler.data.longitude = pvt.longitude;
       handler.data.altitude = pvt.altitude;
       handler.data.speed = pvt.speed;
+      handler.data.vvel = pvt.vvel;
       handler.data.num_satellites = pvt.num_satellites;
       handler.data.fix_type = pvt.fix_type;
       handler.gps_valid = (pvt.num_satellites > 0 && pvt.fix_type > 0) ? 1 : 0;

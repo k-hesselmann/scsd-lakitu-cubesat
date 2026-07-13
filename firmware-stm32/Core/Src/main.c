@@ -53,10 +53,11 @@ UART_HandleTypeDef huart4;
 UART_HandleTypeDef huart5;
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
-SPI_HandleTypeDef hspi1;
 
 /* USER CODE BEGIN PV */
-
+/* SPI1 is hand-added (not in the .ioc) for the SD card. Kept in a USER-CODE
+ * block so a CubeMX regeneration does not delete it. */
+SPI_HandleTypeDef hspi1;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -67,9 +68,9 @@ static void MX_USART3_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_UART5_Init(void);
 static void MX_UART4_Init(void);
-static void MX_SPI1_Init(void);
 /* USER CODE BEGIN PFP */
-
+/* Hand-added SPI1 init for the SD card — see body in the USER CODE 4 block. */
+static void SPI1_UserInit(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -112,8 +113,8 @@ int main(void)
   MX_USART2_UART_Init();
   MX_UART5_Init();
   MX_UART4_Init();
-  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
+  SPI1_UserInit();   /* hand-added SPI1 for the SD card (must precede CDH_Init) */
   FDIR_Init(&g_scv);
   CDH_Init();
   FSW_Init();
@@ -443,8 +444,27 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
-static void MX_SPI1_Init(void)
+/* USER CODE BEGIN 4 */
+/* Hand-added SPI1 initialisation for the SD card. Lives in a USER-CODE block
+ * (not the CubeMX-generated MX_* section) so a .ioc regeneration cannot delete
+ * it. SPI1 is intentionally absent from the .ioc, so this also does the clock +
+ * GPIO setup itself rather than relying on HAL_SPI_MspInit() (which regen would
+ * drop). The manual config is idempotent if that MSP branch is still present. */
+static void SPI1_UserInit(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  __HAL_RCC_SPI1_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+
+  /* SPI1: PA5=SCK, PA6=MISO, PA7=MOSI */
+  GPIO_InitStruct.Pin = GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF5_SPI1;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
@@ -459,12 +479,9 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CRCPolynomial = 7;
   hspi1.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
   hspi1.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
-if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
         Error_Handler();
 }
-
-/* USER CODE BEGIN 4 */
-
 /* USER CODE END 4 */
 
 /**
