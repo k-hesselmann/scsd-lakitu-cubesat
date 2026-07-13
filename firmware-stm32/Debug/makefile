@@ -12,10 +12,14 @@ RM := rm -rf
 -include USB_DEVICE/Target/subdir.mk
 -include USB_DEVICE/App/subdir.mk
 -include Middlewares/USB_Device_Library/subdir.mk
+-include Middlewares/FatFs/subdir.mk
+-include FATFS/Target/subdir.mk
+-include FATFS/App/subdir.mk
 -include Drivers/STM32L4xx_HAL_Driver/subdir.mk
 -include Core/Startup/subdir.mk
 -include Core/Src/ttc/subdir.mk
 -include Core/Src/fsw/subdir.mk
+-include Core/Src/fdir/subdir.mk
 -include Core/Src/cdh/subdir.mk
 -include Core/Src/subdir.mk
 -include objects.mk
@@ -40,34 +44,34 @@ $(wildcard ../makefile.init) \
 $(wildcard ../makefile.targets) \
 
 
-BUILD_ARTIFACT_NAME := firmware-stm32
+BUILD_ARTIFACT_NAME := scsd-lakitu-cubesat
 BUILD_ARTIFACT_EXTENSION := elf
 BUILD_ARTIFACT_PREFIX :=
 BUILD_ARTIFACT := $(BUILD_ARTIFACT_PREFIX)$(BUILD_ARTIFACT_NAME)$(if $(BUILD_ARTIFACT_EXTENSION),.$(BUILD_ARTIFACT_EXTENSION),)
 
 # Add inputs and outputs from these tool invocations to the build variables 
 EXECUTABLES += \
-firmware-stm32.elf \
+scsd-lakitu-cubesat.elf \
 
 MAP_FILES += \
-firmware-stm32.map \
+scsd-lakitu-cubesat.map \
 
 SIZE_OUTPUT += \
 default.size.stdout \
 
 OBJDUMP_LIST += \
-firmware-stm32.list \
+scsd-lakitu-cubesat.list \
 
 
 # All Target
 all: main-build
 
 # Main-build Target
-main-build: firmware-stm32.elf secondary-outputs
+main-build: scsd-lakitu-cubesat.elf secondary-outputs
 
 # Tool invocations
-firmware-stm32.elf firmware-stm32.map: $(OBJS) $(USER_OBJS) C:\Users\Frederik\Desktop\Lakitu\scsd-lakitu-cubesat\firmware-stm32\STM32L476RGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "firmware-stm32.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\Frederik\Desktop\Lakitu\scsd-lakitu-cubesat\firmware-stm32\STM32L476RGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="firmware-stm32.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+scsd-lakitu-cubesat.elf scsd-lakitu-cubesat.map: $(OBJS) $(USER_OBJS) C:\Users\alber\Desktop\TTC\ STM\ subsyst\scsd-lakitu-cubesat\firmware-stm32\STM32L476RGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "scsd-lakitu-cubesat.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\alber\Desktop\TTC STM subsyst\scsd-lakitu-cubesat\firmware-stm32\STM32L476RGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="scsd-lakitu-cubesat.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -76,14 +80,14 @@ default.size.stdout: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	@echo 'Finished building: $@'
 	@echo ' '
 
-firmware-stm32.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "firmware-stm32.list"
+scsd-lakitu-cubesat.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "scsd-lakitu-cubesat.list"
 	@echo 'Finished building: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) default.size.stdout firmware-stm32.elf firmware-stm32.list firmware-stm32.map
+	-$(RM) default.size.stdout scsd-lakitu-cubesat.elf scsd-lakitu-cubesat.list scsd-lakitu-cubesat.map
 	-@echo ' '
 
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)

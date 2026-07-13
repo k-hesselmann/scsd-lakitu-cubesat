@@ -231,6 +231,9 @@ typedef struct __attribute__((packed)) {
     uint8_t  coral_excerpt[8];   /* TBD — first 8 bytes of coral_block, or
                                     a selected subset defined by Payload team */
 
+    /* Reserved (2 bytes) */
+    uint8_t  reserved[2];        /* Transmitted as zero. */
+
     /* ── Integrity (2 bytes) ────────────────────────────────── */
     uint16_t crc16;              /* CRC-16/CCITT over all preceding bytes */
 

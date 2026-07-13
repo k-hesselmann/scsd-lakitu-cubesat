@@ -59,17 +59,35 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define B1_Pin GPIO_PIN_13
 #define B1_GPIO_Port GPIOC
-#define LD2_Pin GPIO_PIN_5
-#define LD2_GPIO_Port GPIOA
+#define B1_EXTI_IRQn EXTI15_10_IRQn
+#define LORA_RST_Pin GPIO_PIN_7
+#define LORA_RST_GPIO_Port GPIOC
+#define LORA_DIO0_Pin GPIO_PIN_10
+#define LORA_DIO0_GPIO_Port GPIOA
+#define LORA_DIO0_EXTI_IRQn EXTI15_10_IRQn
 #define TMS_Pin GPIO_PIN_13
 #define TMS_GPIO_Port GPIOA
 #define TCK_Pin GPIO_PIN_14
 #define TCK_GPIO_Port GPIOA
 #define SWO_Pin GPIO_PIN_3
 #define SWO_GPIO_Port GPIOB
+#define LORA_CS_Pin GPIO_PIN_6
+#define LORA_CS_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
-
+/*
+ * RFM95W LoRa radio on the SPI1 bus shared with the SD card:
+ *   PA5 / PA6 / PA7 = SCK / MISO / MOSI (Arduino D13 / D12 / D11)
+ *   PB6             = NSS / CS (Arduino D10)
+ *   PC7             = RESET     (Arduino D9)
+ *
+ * PB6 is also the current SD-card CS definition. Move the SD card CS to a
+ * different GPIO before using the SD card and RFM95W concurrently.
+ */
+#define LORA_CS_Pin              GPIO_PIN_6
+#define LORA_CS_GPIO_Port        GPIOB
+#define LORA_RST_Pin             GPIO_PIN_7
+#define LORA_RST_GPIO_Port       GPIOC
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

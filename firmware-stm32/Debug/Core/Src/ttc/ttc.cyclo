@@ -1,2 +1,3 @@
-../Core/Src/ttc/ttc.c:8:6:TTC_Init	1
-../Core/Src/ttc/ttc.c:15:6:TTC_Transmit	2
+../Core/Src/ttc/ttc.c:14:6:TTC_Init	2
+../Core/Src/ttc/ttc.c:20:6:TTC_Transmit	6
+../Core/Src/ttc/ttc.c:39:6:TTC_RunTelemetryPacketTest	2

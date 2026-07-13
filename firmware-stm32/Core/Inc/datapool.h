@@ -129,6 +129,8 @@ typedef struct __attribute__((packed)) {
 
     uint8_t  coral_excerpt[8];   /* first 8 bytes of coral_block — TBD by Payload */
 
+    uint8_t  reserved[2];        /* Reserved; transmitted as zero. */
+
     uint16_t crc16;
 
 } TelemetryPacket_t;

@@ -1,0 +1,8 @@
+../Core/Src/ttc/lora_driver.c:37:13:LoRa_Select	1
+../Core/Src/ttc/lora_driver.c:42:13:LoRa_Deselect	1
+../Core/Src/ttc/lora_driver.c:47:16:LoRa_ReadRegister	2
+../Core/Src/ttc/lora_driver.c:63:21:LoRa_WriteRegister	2
+../Core/Src/ttc/lora_driver.c:77:21:LoRa_BurstWrite	3
+../Core/Src/ttc/lora_driver.c:92:21:LoRa_SetMode	1
+../Core/Src/ttc/lora_driver.c:97:14:LoRa_Init	17
+../Core/Src/ttc/lora_driver.c:135:14:LoRa_Send	14

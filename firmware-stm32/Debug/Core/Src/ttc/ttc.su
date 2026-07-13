@@ -1,2 +1,3 @@
-../Core/Src/ttc/ttc.c:8:6:TTC_Init	4	static
-../Core/Src/ttc/ttc.c:15:6:TTC_Transmit	24	static
+../Core/Src/ttc/ttc.c:14:6:TTC_Init	8	static
+../Core/Src/ttc/ttc.c:20:6:TTC_Transmit	24	static
+../Core/Src/ttc/ttc.c:39:6:TTC_RunTelemetryPacketTest	120	static

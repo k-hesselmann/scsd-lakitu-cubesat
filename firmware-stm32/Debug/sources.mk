@@ -24,10 +24,14 @@ C_DEPS :=
 SUBDIRS := \
 Core/Src/cdh \
 Core/Src \
+Core/Src/fdir \
 Core/Src/fsw \
 Core/Src/ttc \
 Core/Startup \
 Drivers/STM32L4xx_HAL_Driver \
+FATFS/App \
+FATFS/Target \
+Middlewares/FatFs \
 Middlewares/USB_Device_Library \
 USB_DEVICE/App \
 USB_DEVICE/Target \
