@@ -9,6 +9,7 @@
 #include "cdh/gps_equipment_handler.h"
 #include "cdh/cdh_debug.h"
 #include "cdh/cdh_fdir.h"
+#include "cdh/coral.h"
 
 #include "main.h"
 #include <math.h>
@@ -84,7 +85,7 @@ void CDH_Init(void)
      * initialised by FDIR_Init(); CDH only fills SensorData_t. */
 
     /* TODO: initialise Coral UART (115200 baud, FR-027) */
-
+Coral_Init();
     /* ---- SD card + FatFS init ---- */
     MX_FATFS_Init();
 
@@ -187,6 +188,7 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
 
     /* TODO: read ADC for battery voltage — fill batt_voltage_mv, set batt_valid */
     /* TODO: read Coral block over UART — fill coral_block[16], set coral_valid */
+     Coral_Update(dp);
     /* TODO: write updated scv to NVM */
 
     /* ---- SD logging ---- */
