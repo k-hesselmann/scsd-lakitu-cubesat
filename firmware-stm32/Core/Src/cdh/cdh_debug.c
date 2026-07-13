@@ -84,3 +84,67 @@ void CDH_Debug_PrintBaro(MS5607_EquipmentHandler *baro)
     }
   }
 }
+
+void CDH_Debug_PrintDatapool(SensorData_t *dp)
+{
+  static uint32_t last_print_time = 0;
+  uint32_t current_time = HAL_GetTick();
+
+  if (current_time - last_print_time >= 1000)
+  {
+    last_print_time = current_time;
+
+    uint8_t debug_buffer[512];
+    int lat = (int)(dp->gps_lat_deg * 1000000);
+    int lon = (int)(dp->gps_lon_deg * 1000000);
+    int alt = (int)(dp->gps_alt_m * 100);
+    int speed = (int)(dp->gps_speed_mps * 100);
+    int vel_n = (int)(dp->gps_vel_north_mps * 100);
+    int vel_e = (int)(dp->gps_vel_east_mps * 100);
+    int vel_d = (int)(dp->gps_vel_down_mps * 100);
+    int heading = (int)(dp->gps_heading_deg * 100);
+
+    int len = snprintf((char*)debug_buffer, sizeof(debug_buffer),
+      "GPS_POOL: LAT=%d.%06d LON=%d.%06d ALT=%d.%02d SPEED=%d.%02d "
+      "VN=%d.%02d VE=%d.%02d VD=%d.%02d HDG=%d.%02d SAT=%d FIX=%d VALID=%d\r\n",
+      lat/1000000, (lat < 0 ? -lat : lat) % 1000000,
+      lon/1000000, (lon < 0 ? -lon : lon) % 1000000,
+      alt/100, (alt < 0 ? -alt : alt) % 100,
+      speed/100, (speed < 0 ? -speed : speed) % 100,
+      vel_n/100, (vel_n < 0 ? -vel_n : vel_n) % 100,
+      vel_e/100, (vel_e < 0 ? -vel_e : vel_e) % 100,
+      vel_d/100, (vel_d < 0 ? -vel_d : vel_d) % 100,
+      heading/100, (heading < 0 ? -heading : heading) % 100,
+      dp->gps_num_satellites,
+      dp->gps_fix_type,
+      dp->gps_valid);
+
+    if (len > 0)
+    {
+      HAL_UART_Transmit(&huart2, debug_buffer, len, 100);
+    }
+
+    /* IMU Debug Output */
+    int ax = (int)(dp->imu_accel_x_g * 1000);
+    int ay = (int)(dp->imu_accel_y_g * 1000);
+    int az = (int)(dp->imu_accel_z_g * 1000);
+    int gx = (int)(dp->imu_gyro_x_dps * 100);
+    int gy = (int)(dp->imu_gyro_y_dps * 100);
+    int gz = (int)(dp->imu_gyro_z_dps * 100);
+
+    len = snprintf((char*)debug_buffer, sizeof(debug_buffer),
+      "IMU_POOL: AX=%d.%03d AY=%d.%03d AZ=%d.%03d GX=%d.%02d GY=%d.%02d GZ=%d.%02d VALID=%d\r\n",
+      ax/1000, (ax < 0 ? -ax : ax) % 1000,
+      ay/1000, (ay < 0 ? -ay : ay) % 1000,
+      az/1000, (az < 0 ? -az : az) % 1000,
+      gx/100, (gx < 0 ? -gx : gx) % 100,
+      gy/100, (gy < 0 ? -gy : gy) % 100,
+      gz/100, (gz < 0 ? -gz : gz) % 100,
+      dp->imu_valid);
+
+    if (len > 0)
+    {
+      HAL_UART_Transmit(&huart2, debug_buffer, len, 100);
+    }
+  }
+}

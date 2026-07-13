@@ -192,15 +192,32 @@ static uint8_t M10S_ParseNAVPVT(const uint8_t *payload, uint16_t len, M10S_NavPV
                          (payload[37] << 16) |
                          (payload[38] << 24);
 
-    int32_t veld_raw = (payload[59]) |
-                       (payload[60] << 8) |
-                       (payload[61] << 16) |
-                       (payload[62] << 24);
-
     int32_t gspeed_raw = (payload[63]) |
                          (payload[64] << 8) |
                          (payload[65] << 16) |
                          (payload[66] << 24);
+
+    /* Extract velocity components (NED - North/East/Down) */
+    int32_t vel_north_raw = (payload[51]) |
+                            (payload[52] << 8) |
+                            (payload[53] << 16) |
+                            (payload[54] << 24);
+
+    int32_t vel_east_raw = (payload[55]) |
+                           (payload[56] << 8) |
+                           (payload[57] << 16) |
+                           (payload[58] << 24);
+
+    int32_t vel_down_raw = (payload[59]) |
+                           (payload[60] << 8) |
+                           (payload[61] << 16) |
+                           (payload[62] << 24);
+
+    /* Extract heading of motion */
+    int32_t heading_raw = (payload[67]) |
+                          (payload[68] << 8) |
+                          (payload[69] << 16) |
+                          (payload[70] << 24);
 
     /* Extract validity flags */
     uint8_t gnss_fix_ok = (flags & 0x01);  /* Bit 0: GNSS fix valid */
@@ -218,12 +235,18 @@ static uint8_t M10S_ParseNAVPVT(const uint8_t *payload, uint16_t len, M10S_NavPV
      * Height: divide by 1000 to convert from mm to meters
      * Speed: divide by 1000 to convert from mm/s to m/s
      * VVel: velD is NED Down (mm/s); negate for datapool's positive-up convention
+     * Velocity: divide by 1000 to convert from mm/s to m/s
+     * Heading: divide by 1e5 to convert from 1e-5 deg to degrees
      */
     pvt->latitude = lat_raw / 10000000.0;
     pvt->longitude = lon_raw / 10000000.0;
     pvt->altitude = height_raw / 1000.0;
     pvt->speed = gspeed_raw / 1000.0;
-    pvt->vvel = -veld_raw / 1000.0f;
+    pvt->vel_north = vel_north_raw / 1000.0;
+    pvt->vel_east = vel_east_raw / 1000.0;
+    pvt->vel_down = vel_down_raw / 1000.0;
+    pvt->vvel = -pvt->vel_down;
+    pvt->heading = heading_raw / 100000.0;
     pvt->fix_type = fix_type;
     pvt->num_satellites = num_sv;
     pvt->timestamp = HAL_GetTick();
@@ -416,14 +439,14 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
     len = snprintf(dbg, sizeof(dbg), "[M10S] Device found at I2C 0x42\r\n");
     HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
 
-    /* Step 1: Configure I2C port to output both UBX and NMEA
+    /* Step 1: Configure I2C port to output only UBX (like SparkFun library)
      * UBX-CFG-PRT (0x06 0x00)
      * Structure:
      *   Port ID: 0 (I2C)
      *   Reserved: 0
      *   TX Ready: 0
-     *   In proto: 3 (UBX + NMEA)
-     *   Out proto: 3 (UBX + NMEA)
+     *   In proto: 1 (UBX only)
+     *   Out proto: 1 (UBX only)
      *   Flags: 0
      */
     uint8_t cfg_prt[] = {
@@ -434,8 +457,8 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
         0x00,                 /* Reserved */
         0x00, 0x00,           /* Reserved */
         0x00, 0x00,           /* TX Ready = 0 */
-        0x03, 0x00,           /* In proto: UBX(1) + NMEA(2) = 3 */
-        0x03, 0x00,           /* Out proto: UBX(1) + NMEA(2) = 3 */
+        0x01, 0x00,           /* In proto: UBX only (1) */
+        0x01, 0x00,           /* Out proto: UBX only (1) */
         0x00, 0x00,           /* Flags = 0 */
         0x00, 0x00,           /* Reserved */
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* Reserved */
@@ -676,6 +699,10 @@ static uint8_t M10S_ParseNMEA_GGA(const uint8_t *sentence, uint16_t len, M10S_Na
     pvt->fix_type = (fix_quality == 2) ? 2 : 1;
     pvt->speed = 0;
     pvt->vvel = 0;   /* NMEA GGA carries no vertical velocity */
+    pvt->vel_north = 0;
+    pvt->vel_east = 0;
+    pvt->vel_down = 0;
+    pvt->heading = 0;
     pvt->timestamp = HAL_GetTick();
 
     return 1;
@@ -735,6 +762,10 @@ static uint8_t M10S_ParseNMEA_RMC(const uint8_t *sentence, uint16_t len, M10S_Na
     pvt->speed = speed;
     pvt->fix_type = 1;
     pvt->vvel = 0;   /* NMEA RMC carries no vertical velocity */
+    pvt->vel_north = 0;
+    pvt->vel_east = 0;
+    pvt->vel_down = 0;
+    pvt->heading = 0;
     pvt->timestamp = HAL_GetTick();
 
     return 1;

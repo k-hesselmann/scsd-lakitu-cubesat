@@ -162,6 +162,12 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
         dp->gps_alt_m = s_gps.data.altitude;
         dp->gps_speed_mps = s_gps.data.speed;
         dp->gps_vvel_mps = s_gps.data.vvel;
+        dp->gps_vel_north_mps = s_gps.data.vel_north;
+        dp->gps_vel_east_mps = s_gps.data.vel_east;
+        dp->gps_vel_down_mps = s_gps.data.vel_down;
+        dp->gps_heading_deg = s_gps.data.heading;
+        dp->gps_num_satellites = s_gps.data.num_satellites;
+        dp->gps_fix_type = s_gps.data.fix_type;
         dp->gps_valid = 1U;
     }
     else
@@ -169,7 +175,7 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
         dp->gps_valid = 0U;
     }
 
-    CDH_Debug_PrintGPS(&s_gps);
+    CDH_Debug_PrintDatapool(dp);
     CDH_Debug_PrintBaro(&s_baro);
 
     /* CDH owns the I2C bus: advance any pending restart requested by FDIR and
