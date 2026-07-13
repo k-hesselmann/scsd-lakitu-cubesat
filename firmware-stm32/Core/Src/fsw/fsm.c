@@ -140,7 +140,7 @@ void FSW_Update(const SensorData_t *dp)
 
     case PHASE_LAUNCH:
         ascent_condition = ((baro_usable && dp->baro_alt_m > FSM_ASCENT_ALT_M) ||
-                            (gps_usable && dp->gps_vvel_mps > FSM_ASCENT_VVEL_MPS));
+                            (gps_usable && dp->gps_vel_down_mps < FSM_ASCENT_VEL_DOWN_MPS));
         if (FSW_CountCondition(ascent_condition, &s_launch_to_ascent_count, FSM_ASCENT_WINDOW_S))
             FSW_SetPhase(PHASE_ASCENT);
         break;
@@ -148,7 +148,7 @@ void FSW_Update(const SensorData_t *dp)
     case PHASE_ASCENT:
         accel_delta_g = imu_usable ? fabsf(dp->imu_accel_mag_g - s_float_accel_baseline_g) : 0.0f;
         descent_condition = ((imu_usable && accel_delta_g > FSM_DESCENT_ACCEL_DELTA_G) ||
-                             (gps_usable && dp->gps_vvel_mps < FSM_DESCENT_VVEL_MPS));
+                             (gps_usable && dp->gps_vel_down_mps > FSM_DESCENT_VEL_DOWN_MPS));
         if (FSW_CountCondition(descent_condition, &s_descent_count, FSM_DESCENT_WINDOW_S))
         {
             FSW_SetPhase(PHASE_DESCENT);
@@ -161,7 +161,7 @@ void FSW_Update(const SensorData_t *dp)
             s_cruise_baro_ref_valid = 1U;
         }
 
-        cruise_condition = ((gps_usable && dp->gps_vvel_mps < FSM_CRUISE_VVEL_MPS) ||
+        cruise_condition = ((gps_usable && dp->gps_vel_down_mps > FSM_CRUISE_VEL_DOWN_MPS) ||
                             (baro_usable && s_cruise_baro_ref_valid &&
                              fabsf(dp->baro_alt_m - s_cruise_baro_ref_m) < FSM_CRUISE_ALT_BAND_M));
         if (FSW_CountCondition(cruise_condition, &s_ascent_to_cruise_count, FSM_CRUISE_WINDOW_S))
@@ -174,7 +174,7 @@ void FSW_Update(const SensorData_t *dp)
 
         accel_delta_g = imu_usable ? fabsf(dp->imu_accel_mag_g - s_float_accel_baseline_g) : 0.0f;
         descent_condition = ((imu_usable && accel_delta_g > FSM_DESCENT_ACCEL_DELTA_G) ||
-                             (gps_usable && dp->gps_vvel_mps < FSM_DESCENT_VVEL_MPS));
+                             (gps_usable && dp->gps_vel_down_mps > FSM_DESCENT_VEL_DOWN_MPS));
         if (FSW_CountCondition(descent_condition, &s_descent_count, FSM_DESCENT_WINDOW_S))
             FSW_SetPhase(PHASE_DESCENT);
         break;

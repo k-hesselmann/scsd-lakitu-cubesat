@@ -30,8 +30,13 @@ typedef struct __attribute__((packed)) {
     float    gps_lat_deg;        /* degrees, WGS-84 */
     float    gps_lon_deg;        /* degrees, WGS-84 */
     float    gps_alt_m;          /* metres above MSL */
-    float    gps_vvel_mps;       /* vertical velocity, positive = upward */
-    float    gps_speed_mps;      /* 3D speed magnitude */
+    float    gps_speed_mps;      /* 2D ground speed magnitude */
+    float    gps_vel_north_mps;  /* NED North velocity */
+    float    gps_vel_east_mps;   /* NED East velocity */
+    float    gps_vel_down_mps;   /* NED Down velocity */
+    float    gps_heading_deg;    /* heading of motion */
+    uint8_t  gps_num_satellites;
+    uint8_t  gps_fix_type;
     uint8_t  gps_valid;          /* 1 = fresh fix this cycle, 0 = no fix */
 
     /* ── IMU (MPU-6050, IF-002) ─────────────────────────────── */
@@ -67,8 +72,8 @@ typedef struct __attribute__((packed)) {
 **Notes:**
 - `baro_alt_m` is relative to the ground baseline recorded during Standby. CDH
   computes and stores this baseline on startup. FSW must not recompute it.
-- `gps_vvel_mps` is derived from u-blox NED velocity output. CDH negates the
-  down component so positive = upward, consistent with `baro_alt_m` convention.
+- `gps_vel_down_mps` is the u-blox NED down velocity component. Positive values
+  indicate downward motion; negative values indicate upward motion.
 - If `gps_valid == 0`, FSW uses `baro_alt_m` and a baro-derived vertical velocity
   as fallback per FR-021.
 - `i2c_bus_state` is written by FDIR after processing the CDH nonblocking I2C
