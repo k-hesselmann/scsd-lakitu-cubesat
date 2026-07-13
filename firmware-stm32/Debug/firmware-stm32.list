@@ -2156,7 +2156,7 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
  800171c:	699a      	ldr	r2, [r3, #24]
  800171e:	6d7b      	ldr	r3, [r7, #84]	@ 0x54
  8001720:	621a      	str	r2, [r3, #32]
-        dp->gps_vvel_mps = s_gps.data.vel_down;
+        dp->gps_vel_down_mps = s_gps.data.vel_down;
  8001722:	4b11      	ldr	r3, [pc, #68]	@ (8001768 <CDH_Update+0x28c>)
  8001724:	699a      	ldr	r2, [r3, #24]
  8001726:	6d7b      	ldr	r3, [r7, #84]	@ 0x54

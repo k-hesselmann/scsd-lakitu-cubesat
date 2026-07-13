@@ -234,7 +234,6 @@ static uint8_t M10S_ParseNAVPVT(const uint8_t *payload, uint16_t len, M10S_NavPV
      * LAT/LON: divide by 1e7 to convert from 1e-7 deg to degrees
      * Height: divide by 1000 to convert from mm to meters
      * Speed: divide by 1000 to convert from mm/s to m/s
-     * VVel: velD is NED Down (mm/s); negate for datapool's positive-up convention
      * Velocity: divide by 1000 to convert from mm/s to m/s
      * Heading: divide by 1e5 to convert from 1e-5 deg to degrees
      */
@@ -245,7 +244,6 @@ static uint8_t M10S_ParseNAVPVT(const uint8_t *payload, uint16_t len, M10S_NavPV
     pvt->vel_north = vel_north_raw / 1000.0;
     pvt->vel_east = vel_east_raw / 1000.0;
     pvt->vel_down = vel_down_raw / 1000.0;
-    pvt->vvel = -pvt->vel_down;
     pvt->heading = heading_raw / 100000.0;
     pvt->fix_type = fix_type;
     pvt->num_satellites = num_sv;
@@ -698,7 +696,6 @@ static uint8_t M10S_ParseNMEA_GGA(const uint8_t *sentence, uint16_t len, M10S_Na
     pvt->num_satellites = num_sats;
     pvt->fix_type = (fix_quality == 2) ? 2 : 1;
     pvt->speed = 0;
-    pvt->vvel = 0;   /* NMEA GGA carries no vertical velocity */
     pvt->vel_north = 0;
     pvt->vel_east = 0;
     pvt->vel_down = 0;
@@ -761,7 +758,6 @@ static uint8_t M10S_ParseNMEA_RMC(const uint8_t *sentence, uint16_t len, M10S_Na
     pvt->longitude = lon;
     pvt->speed = speed;
     pvt->fix_type = 1;
-    pvt->vvel = 0;   /* NMEA RMC carries no vertical velocity */
     pvt->vel_north = 0;
     pvt->vel_east = 0;
     pvt->vel_down = 0;

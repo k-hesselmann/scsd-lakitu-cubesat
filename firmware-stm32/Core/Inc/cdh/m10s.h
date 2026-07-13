@@ -31,7 +31,6 @@ typedef struct {
     double longitude;       /* degrees, WGS-84 */
     int32_t altitude;       /* meters above ellipsoid */
     float speed;            /* meters per second (gSpeed - 2D ground speed) */
-    float vvel;             /* meters per second, positive = upward */
     float vel_north;        /* m/s, NED North velocity component */
     float vel_east;         /* m/s, NED East velocity component */
     float vel_down;         /* m/s, NED Down velocity component */

@@ -32,7 +32,6 @@ GPS_EquipmentHandler GPS_EquipmentHandler_Update(GPS_EquipmentHandler handler, I
       handler.data.longitude = pvt.longitude;
       handler.data.altitude = pvt.altitude;
       handler.data.speed = pvt.speed;
-      handler.data.vvel = pvt.vvel;
       handler.data.vel_north = pvt.vel_north;
       handler.data.vel_east = pvt.vel_east;
       handler.data.vel_down = pvt.vel_down;

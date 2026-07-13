@@ -41,10 +41,10 @@
  * FR-006 specifies 100 m. GPS unreliable at cold start; baro is primary here. */
 #define FSM_ASCENT_ALT_M          100.0f /* m above Standby baseline */
 
-/* GPS vertical velocity confirming sustained climb.
+/* GPS NED down velocity confirming sustained climb.
  * FR-006 specifies 5 m/s. Typical ascent rate 3–5 m/s — threshold sits at the
  * fast end to avoid premature trigger; lower if test flights ascend slower. */
-#define FSM_ASCENT_VVEL_MPS       5.0f   /* m/s upward */
+#define FSM_ASCENT_VEL_DOWN_MPS  -5.0f   /* m/s NED down; negative = upward */
 
 /* Persistence window. No hard requirement in FR-006 beyond both conditions met.
  * A few seconds avoids triggering on a momentary GPS spike. TBD from test. */
@@ -53,10 +53,10 @@
 
 /* ── Ascent → Cruise ──────────────────────────────────────────────────────── */
 
-/* GPS vertical velocity below which float is detected.
+/* GPS NED down velocity above which float is detected.
  * FR-007 specifies <0.5 m/s. Typical float oscillation ±0.1–0.3 m/s.
  * u-blox velocity noise ~0.05 m/s RMS, so 0.5 m/s provides 10× noise margin. */
-#define FSM_CRUISE_VVEL_MPS       0.5f   /* m/s — balloon considered stationary */
+#define FSM_CRUISE_VEL_DOWN_MPS  -0.5f   /* m/s NED down; climb has slowed */
 
 /* Baro altitude change band over the persistence window.
  * Confirms altitude is bounded, not just momentarily slow.
@@ -77,10 +77,10 @@
  * ~0.05 g at 1 Hz; 0.5 g gives 10× margin. TBD from burst simulation test. */
 #define FSM_DESCENT_ACCEL_DELTA_G 0.5f   /* g deviation from Cruise baseline — TBD */
 
-/* GPS vertical velocity below which rapid descent is confirmed.
+/* GPS NED down velocity above which rapid descent is confirmed.
  * FR-008 specifies <-2 m/s. Typical post-burst descent 8–15 m/s with parachute.
- * -2 m/s threshold is conservative; increase if false triggers occur near float. */
-#define FSM_DESCENT_VVEL_MPS      -2.0f  /* m/s (negative = downward) */
+ * 2 m/s threshold is conservative; increase if false triggers occur near float. */
+#define FSM_DESCENT_VEL_DOWN_MPS   2.0f  /* m/s NED down; positive = downward */
 
 /* Persistence window. FR-008 specifies 10 s. Burst is sharp but parachute
  * deployment may temporarily slow descent. 10 s confirms sustained fall. */

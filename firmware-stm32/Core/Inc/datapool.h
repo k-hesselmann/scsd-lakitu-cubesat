@@ -45,7 +45,6 @@ typedef struct __attribute__((packed)) {
     float    gps_lat_deg;
     float    gps_lon_deg;
     float    gps_alt_m;
-    float    gps_vvel_mps;       /* positive = upward (vel_down component) */
     float    gps_speed_mps;      /* 2D ground speed magnitude */
     float    gps_vel_north_mps;  /* NED North velocity */
     float    gps_vel_east_mps;   /* NED East velocity */

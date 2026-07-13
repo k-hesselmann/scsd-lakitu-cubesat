@@ -12,7 +12,6 @@ typedef struct {
   float longitude;
   float altitude;
   float speed;
-  float vvel;
   float vel_north;
   float vel_east;
   float vel_down;
