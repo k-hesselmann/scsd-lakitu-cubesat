@@ -309,7 +309,8 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
         }
     }
 
-    /* Only a completed write/sync proves the recovered path is healthy. */
+    /* Only a completed write/sync proves the recovered path is healthy.
+     * Do not reset this counter merely because mounting/opening succeeded. */
     s_consecutive_faults = 0U;
 }
 

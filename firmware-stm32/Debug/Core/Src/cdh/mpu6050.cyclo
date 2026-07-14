@@ -1,5 +1,0 @@
-../Core/Src/cdh/mpu6050.c:3:13:MPU6050_WriteReg	1
-../Core/Src/cdh/mpu6050.c:8:16:MPU6050_ReadReg	1
-../Core/Src/cdh/mpu6050.c:15:9:MPU6050_Check	1
-../Core/Src/cdh/mpu6050.c:21:6:MPU6050_Init	1
-../Core/Src/cdh/mpu6050.c:32:14:MPU6050_Read	1

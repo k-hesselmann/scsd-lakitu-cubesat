@@ -40,7 +40,7 @@
  *   [12..13] FRAME_CNT  uint16 -- good-frame counter (wraps at 65535)
  *   [14..15] reserved   zero
  *
- * coral_excerpt[8] in TelemetryPacket_t = coral_block[0..7]
+ * TelemetryPacket_t carries the full 16-byte coral_block snapshot.
  * (SEQ + FRAC_RAW + FRAC_PCT + STATUS)
  * ---------------------------------------------------------------------- */
 #define CORAL_STATUS_OK          0x00U

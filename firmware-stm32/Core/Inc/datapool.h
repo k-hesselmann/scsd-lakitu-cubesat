@@ -110,32 +110,60 @@ typedef struct __attribute__((packed)) {
 
 } SCV_t;
 
-/* ICD Section 3 — TelemetryPacket_t
- * Assembled by FSW, transmitted by TTC every 20 s. */
+/* Raw downlink telemetry v3. Fields are copied directly from SensorData_t and
+ * SCV_t. Engineering-unit conversions are intentionally performed by the
+ * ground station, not by the flight CPU. */
 typedef struct __attribute__((packed)) {
-
-    uint8_t  sync[2];            /* 0xAA 0x55 */
     uint8_t  packet_type;        /* 0x01 = telemetry */
-    uint8_t  packet_length;
-
+    uint8_t  protocol_version;   /* 0x03 = raw datapool/SCV layout */
     uint16_t sequence_number;
-    uint32_t timestamp_ms;
-    uint8_t  flight_phase;
+    uint32_t tx_uptime_ms;       /* HAL_GetTick() when this frame was built */
 
+    /* SensorData_t snapshot (raw source units and validity flags). */
+    uint32_t datapool_timestamp_ms;
     float    gps_lat_deg;
     float    gps_lon_deg;
     float    gps_alt_m;
-
+    float    gps_vvel_mps;       /* positive = upward */
+    float    gps_speed_mps;
+    uint8_t  gps_valid;
     float    imu_accel_x_g;
     float    imu_accel_y_g;
     float    imu_accel_z_g;
-
+    float    imu_accel_mag_g;
+    float    imu_gyro_x_dps;
+    float    imu_gyro_y_dps;
+    float    imu_gyro_z_dps;
+    uint8_t  imu_valid;
+    float    baro_pressure_pa;
+    float    baro_alt_m;
+    float    baro_temp_c;
+    uint8_t  baro_valid;
+    uint8_t  i2c_bus_state;
     uint16_t batt_voltage_mv;
+    uint8_t  batt_valid;
+    uint8_t  coral_block[16];
+    uint8_t  coral_valid;
 
-    uint8_t  coral_excerpt[8];   /* first 8 bytes of coral_block — TBD by Payload */
+    /* SCV_t snapshot, including its persisted CRC. */
+    uint16_t scv_magic;
+    uint32_t scv_boot_count;
+    uint32_t scv_mission_elapsed_ms;
+    uint8_t  scv_flight_phase;
+    uint8_t  scv_reset_reason;
+    uint16_t scv_equipment_enabled;
+    uint16_t scv_equipment_faults;
+    uint8_t  scv_gps_timeout_count;
+    uint8_t  scv_imu_timeout_count;
+    uint8_t  scv_baro_timeout_count;
+    uint8_t  scv_coral_timeout_count;
+    uint8_t  scv_sd_fault_count;
+    uint8_t  scv_watchdog_reset_count;
+    uint16_t scv_last_batt_mv;
+    int32_t  scv_baro_ground_alt_cm;
+    uint16_t scv_crc16;
 
-    uint16_t crc16;
-
+    uint16_t crc16;              /* CRC-16/CCITT over every preceding byte */
 } TelemetryPacket_t;
 
 /* Shared datapool instance — defined in datapool.c, extern everywhere else */

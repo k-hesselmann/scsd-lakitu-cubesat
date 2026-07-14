@@ -70,9 +70,6 @@ DRESULT USER_read (BYTE pdrv, BYTE *buff, DWORD sector, UINT count);
 #if _USE_IOCTL == 1
   DRESULT USER_ioctl (BYTE pdrv, BYTE cmd, void *buff);
 #endif /* _USE_IOCTL == 1 */
-
-
-
 /* Private functions ---------------------------------------------------------*/
 
 /**

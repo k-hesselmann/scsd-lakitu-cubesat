@@ -37,12 +37,18 @@ void Baro_Diag_Test(I2C_HandleTypeDef *hi2c)
 
   MS5607_Data baro = MS5607_Read(hi2c);
 
+  int press = (int)(baro.pressure * 100.0f);
+  int temp = (int)(baro.temperature * 100.0f);
+  int alt = (int)(baro.altitude * 100.0f);
+
   len = snprintf((char*)debug_buffer, sizeof(debug_buffer),
     "✓ Barometer responding:\r\n"
-    "  Pressure: %.2f hPa\r\n"
-    "  Temperature: %.2f °C\r\n"
-    "  Altitude: %.2f m\r\n",
-    baro.pressure, baro.temperature, baro.altitude);
+    "  Pressure: %d.%02d hPa\r\n"
+    "  Temperature: %d.%02d °C\r\n"
+    "  Altitude: %d.%02d m\r\n",
+    press / 100, (press < 0 ? -press : press) % 100,
+    temp / 100, (temp < 0 ? -temp : temp) % 100,
+    alt / 100, (alt < 0 ? -alt : alt) % 100);
   HAL_UART_Transmit(&huart2, debug_buffer, len, 100);
 
   /* Test 3: Summary */
