@@ -14,6 +14,14 @@ static uint32_t s_last_tx_ms  = 0;
 static uint8_t s_has_transmitted = 0U;
 static uint8_t s_radio_ready = 0U;
 
+static void TTC_SetLoRaFault(uint8_t active)
+{
+    if (active)
+        g_scv.equipment_faults |= EQUIPMENT_LORA;
+    else
+        g_scv.equipment_faults &= (uint16_t)~EQUIPMENT_LORA;
+}
+
 static uint8_t TTC_IntervalElapsed(uint32_t now)
 {
     return (!s_has_transmitted ||
@@ -22,8 +30,12 @@ static uint8_t TTC_IntervalElapsed(uint32_t now)
 
 void TTC_Init(void)
 {
+    LoRaStatus_t init_status;
+
     s_has_transmitted = 0U;
-    s_radio_ready = (LoRa_Init() == LORA_OK) ? 1U : 0U;
+    init_status = LoRa_Init();
+    s_radio_ready = (init_status == LORA_OK) ? 1U : 0U;
+    TTC_SetLoRaFault(s_radio_ready ? 0U : 1U);
 }
 
 uint8_t TTC_TelemetryDue(void)
@@ -34,6 +46,7 @@ uint8_t TTC_TelemetryDue(void)
 void TTC_Transmit(const TelemetryPacket_t *pkt)
 {
     uint32_t now;
+    LoRaStatus_t send_status;
 
     if (pkt == NULL)
         return;
@@ -48,7 +61,12 @@ void TTC_Transmit(const TelemetryPacket_t *pkt)
 
     if (s_radio_ready)
     {
-        (void)LoRa_Send((const uint8_t *)pkt, (uint8_t)sizeof(*pkt), 5000U);
+        send_status = LoRa_Send((const uint8_t *)pkt, (uint8_t)sizeof(*pkt), 5000U);
+        TTC_SetLoRaFault((send_status == LORA_OK) ? 0U : 1U);
+    }
+    else
+    {
+        TTC_SetLoRaFault(1U);
     }
 
     s_last_tx_ms = now;
