@@ -9,7 +9,7 @@ extern SPI_HandleTypeDef  hspi2;
 extern UART_HandleTypeDef huart2;   /* NUCLEO ST-LINK virtual COM port */
 
 #ifndef SD_SPI_DEBUG
-#define SD_SPI_DEBUG 0
+#define SD_SPI_DEBUG 1   /* set to 0 to silence SD init trace on UART2 */
 #endif
 
 /* ------------------------------------------------------------------ */
