@@ -16,5 +16,6 @@ uint8_t SD_SPI_Init(void);
 uint8_t SD_SPI_ReadBlocks(uint8_t *buff, uint32_t sector, uint32_t count);
 uint8_t SD_SPI_WriteBlocks(const uint8_t *buff, uint32_t sector, uint32_t count);
 uint8_t SD_SPI_Sync(void);
+uint8_t SD_SPI_GetSectorCount(uint32_t *sector_count);
 
 #endif

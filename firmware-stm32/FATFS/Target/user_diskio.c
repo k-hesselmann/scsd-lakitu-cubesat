@@ -27,6 +27,11 @@
 
 static volatile DSTATUS Stat = STA_NOINIT;
 
+void USER_force_reinitialize(void)
+{
+  Stat = STA_NOINIT;
+}
+
 DSTATUS USER_initialize(BYTE pdrv);
 DSTATUS USER_status(BYTE pdrv);
 DRESULT USER_read(BYTE pdrv, BYTE *buff, DWORD sector, UINT count);
@@ -197,8 +202,7 @@ DRESULT USER_ioctl (
 
       case GET_SECTOR_COUNT:
         if (buff == 0) { return RES_PARERR; }
-        *(DWORD *)buff = 62500000UL;
-        return RES_OK;
+        return (SD_SPI_GetSectorCount((uint32_t *)buff) == 0U) ? RES_OK : RES_ERROR;
 
       case GET_SECTOR_SIZE:
         if (buff == 0) { return RES_PARERR; }
