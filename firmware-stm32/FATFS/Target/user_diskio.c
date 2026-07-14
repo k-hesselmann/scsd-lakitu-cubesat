@@ -196,9 +196,13 @@ DRESULT USER_ioctl (
         return SD_SPI_Sync() ? RES_OK : RES_ERROR;
 
       case GET_SECTOR_COUNT:
+      {
         if (buff == 0) { return RES_PARERR; }
-        *(DWORD *)buff = 62500000UL;
+        uint32_t sectors = SD_SPI_GetSectorCount();
+        if (sectors == 0) { return RES_ERROR; }
+        *(DWORD *)buff = (DWORD)sectors;
         return RES_OK;
+      }
 
       case GET_SECTOR_SIZE:
         if (buff == 0) { return RES_PARERR; }

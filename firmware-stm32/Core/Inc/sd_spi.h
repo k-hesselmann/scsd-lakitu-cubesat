@@ -12,9 +12,11 @@
 #define SD_CS_GPIO_Port  GPIOB
 #endif
 
-uint8_t SD_SPI_Init(void);
-uint8_t SD_SPI_ReadBlocks(uint8_t *buff, uint32_t sector, uint32_t count);
-uint8_t SD_SPI_WriteBlocks(const uint8_t *buff, uint32_t sector, uint32_t count);
-uint8_t SD_SPI_Sync(void);
+uint8_t  SD_SPI_Init(void);
+uint8_t  SD_SPI_ReadBlocks(uint8_t *buff, uint32_t sector, uint32_t count);
+uint8_t  SD_SPI_WriteBlocks(const uint8_t *buff, uint32_t sector, uint32_t count);
+uint8_t  SD_SPI_Sync(void);
+void     SD_SPI_SetHighSpeed(void);    /* call once after Init — switches to 10 MHz */
+uint32_t SD_SPI_GetSectorCount(void);  /* reads CSD via CMD9; returns actual sectors */
 
 #endif
