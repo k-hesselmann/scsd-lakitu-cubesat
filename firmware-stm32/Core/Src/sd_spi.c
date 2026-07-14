@@ -8,16 +8,25 @@
 extern SPI_HandleTypeDef  hspi2;
 extern UART_HandleTypeDef huart2;   /* NUCLEO ST-LINK virtual COM port */
 
+#ifndef SD_SPI_DEBUG
+#define SD_SPI_DEBUG 0
+#endif
+
 /* ------------------------------------------------------------------ */
 /*  Debug UART helper - reads on any 115200-8N1 serial terminal        */
 /* ------------------------------------------------------------------ */
 static void dbg(const char *msg)
 {
+#if SD_SPI_DEBUG
   HAL_UART_Transmit(&huart2, (const uint8_t *)msg, (uint16_t)strlen(msg), 100);
+#else
+  (void)msg;
+#endif
 }
 
 static void dbg_hex(const char *label, uint8_t val)
 {
+#if SD_SPI_DEBUG
   const char hex[] = "0123456789ABCDEF";
   char buf[64];
   uint8_t i = 0;
@@ -27,6 +36,10 @@ static void dbg_hex(const char *label, uint8_t val)
   buf[i++] = hex[val & 0xF];
   buf[i++] = '\r'; buf[i++] = '\n'; buf[i] = '\0';
   dbg(buf);
+#else
+  (void)label;
+  (void)val;
+#endif
 }
 
 /* ------------------------------------------------------------------ */

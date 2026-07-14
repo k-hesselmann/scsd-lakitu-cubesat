@@ -138,8 +138,11 @@ int main(void)
     CDH_Update(&g_datapool, &g_scv);
     FDIR_Update(&g_datapool, &g_scv);
     FSW_Update(&g_datapool);
-    FSW_BuildTelemetryPacket(&g_datapool, &g_scv, &tx_packet);
-    TTC_Transmit(&tx_packet);
+    if (TTC_TelemetryDue())
+    {
+      FSW_BuildTelemetryPacket(&g_datapool, &g_scv, &tx_packet);
+      TTC_Transmit(&tx_packet);
+    }
     /* TODO: refresh IWDG here if FDIR_SystemHealthyEnoughToKickWatchdog(). */
     HAL_Delay(1000);
   }
