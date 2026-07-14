@@ -67,6 +67,7 @@ DRESULT USER_read (BYTE pdrv, BYTE *buff, DWORD sector, UINT count);
 #endif /* _USE_IOCTL == 1 */
 
 
+
 /* Private functions ---------------------------------------------------------*/
 
 /**
@@ -74,12 +75,11 @@ DRESULT USER_read (BYTE pdrv, BYTE *buff, DWORD sector, UINT count);
   * @param  pdrv: Physical drive number (0..)
   * @retval DSTATUS: Operation status
   */
-DSTATUS USER_initialize (
-	BYTE pdrv           /* Physical drive nmuber to identify the drive */
-)
+DSTATUS USER_initialize (BYTE pdrv)
 {
   /* USER CODE BEGIN INIT */
-    Stat = STA_NOINIT;
+    if (pdrv != 0) { return STA_NOINIT; }
+    Stat = (SD_SPI_Init() == 0) ? 0 : STA_NOINIT;
     return Stat;
   /* USER CODE END INIT */
 }
@@ -216,4 +216,5 @@ DRESULT USER_ioctl (
   /* USER CODE END IOCTL */
 }
 #endif /* _USE_IOCTL == 1 */
+
 

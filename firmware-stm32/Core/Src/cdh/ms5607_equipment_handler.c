@@ -14,6 +14,8 @@ MS5607_EquipmentHandler MS5607_EquipmentHandler_Init(I2C_HandleTypeDef *hi2c)
   MS5607_Init(hi2c);
 
   handler.data = MS5607_Read(hi2c);
+  handler.baseline_altitude_m = 513.0f;  /* Known altitude at this location (meters) */
+  handler.baseline_pressure_pa = handler.data.pressure * 100.0f;  /* Store in Pa for calculation */
   handler.last_good_data_ms = HAL_GetTick();
   handler.last_sensor_check_ms = HAL_GetTick();
   handler.baro_valid = 1;
@@ -28,6 +30,8 @@ MS5607_EquipmentHandler MS5607_EquipmentHandler_Update(MS5607_EquipmentHandler h
   if (current_time - handler.last_data_read_ms >= MS5607_DATA_READ_INTERVAL)
   {
     handler.data = MS5607_Read(hi2c);
+    /* Add baseline altitude: altimeter gives 0m at baseline, add 513m to get final height */
+    handler.data.altitude = handler.baseline_altitude_m + handler.data.altitude;
     handler.last_good_data_ms = current_time;
     handler.last_data_read_ms = current_time;
     handler.baro_valid = 1;

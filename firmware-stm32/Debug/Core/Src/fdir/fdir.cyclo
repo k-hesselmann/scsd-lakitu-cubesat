@@ -1,7 +1,0 @@
-../Core/Src/fdir/fdir.c:14:13:FDIR_SetFault	2
-../Core/Src/fdir/fdir.c:22:16:FDIR_ReinitDue	3
-../Core/Src/fdir/fdir.c:33:13:FDIR_InitDefaults	1
-../Core/Src/fdir/fdir.c:53:16:FDIR_ClassifyResetReason	5
-../Core/Src/fdir/fdir.c:68:6:FDIR_Init	5
-../Core/Src/fdir/fdir.c:93:6:FDIR_Update	20
-../Core/Src/fdir/fdir.c:186:9:FDIR_SystemHealthyEnoughToKickWatchdog	1

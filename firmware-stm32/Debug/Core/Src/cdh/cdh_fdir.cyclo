@@ -1,5 +1,0 @@
-../Core/Src/cdh/cdh_fdir.c:5:6:CDH_FDIR_Init	1
-../Core/Src/cdh/cdh_fdir.c:11:6:CDH_FDIR_RecoverIMU	1
-../Core/Src/cdh/cdh_fdir.c:16:6:CDH_FDIR_RecoverBaro	1
-../Core/Src/cdh/cdh_fdir.c:21:6:CDH_FDIR_BusRestart_Start	2
-../Core/Src/cdh/cdh_fdir.c:30:6:CDH_FDIR_BusRestart_Process	4

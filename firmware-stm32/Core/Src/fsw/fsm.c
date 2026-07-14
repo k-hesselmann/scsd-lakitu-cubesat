@@ -37,6 +37,11 @@ static uint8_t FSW_BaroUsable(const SensorData_t *dp)
     return dp->baro_valid && FSW_EquipmentUsable(EQUIPMENT_BARO);
 }
 
+static uint8_t FSW_BattUsable(const SensorData_t *dp)
+{
+    return dp->batt_valid && FSW_EquipmentUsable(EQUIPMENT_EPS_ADC);
+}
+
 static uint8_t FSW_IsValidPhase(uint8_t phase)
 {
     return phase <= (uint8_t)PHASE_LANDING;
@@ -136,7 +141,7 @@ void FSW_Update(const SensorData_t *dp)
 
     case PHASE_LAUNCH:
         ascent_condition = ((baro_usable && dp->baro_alt_m > FSM_ASCENT_ALT_M) ||
-                            (gps_usable && dp->gps_vvel_mps > FSM_ASCENT_VVEL_MPS));
+                            (gps_usable && dp->gps_vel_down_mps < FSM_ASCENT_VEL_DOWN_MPS));
         if (FSW_CountCondition(ascent_condition, &s_launch_to_ascent_count, FSM_ASCENT_WINDOW_S))
             FSW_SetPhase(PHASE_ASCENT);
         break;
@@ -144,7 +149,7 @@ void FSW_Update(const SensorData_t *dp)
     case PHASE_ASCENT:
         accel_delta_g = imu_usable ? fabsf(dp->imu_accel_mag_g - s_float_accel_baseline_g) : 0.0f;
         descent_condition = ((imu_usable && accel_delta_g > FSM_DESCENT_ACCEL_DELTA_G) ||
-                             (gps_usable && dp->gps_vvel_mps < FSM_DESCENT_VVEL_MPS));
+                             (gps_usable && dp->gps_vel_down_mps > FSM_DESCENT_VEL_DOWN_MPS));
         if (FSW_CountCondition(descent_condition, &s_descent_count, FSM_DESCENT_WINDOW_S))
         {
             FSW_SetPhase(PHASE_DESCENT);
@@ -157,7 +162,7 @@ void FSW_Update(const SensorData_t *dp)
             s_cruise_baro_ref_valid = 1U;
         }
 
-        cruise_condition = ((gps_usable && dp->gps_vvel_mps < FSM_CRUISE_VVEL_MPS) ||
+        cruise_condition = ((gps_usable && dp->gps_vel_down_mps > FSM_CRUISE_VEL_DOWN_MPS) ||
                             (baro_usable && s_cruise_baro_ref_valid &&
                              fabsf(dp->baro_alt_m - s_cruise_baro_ref_m) < FSM_CRUISE_ALT_BAND_M));
         if (FSW_CountCondition(cruise_condition, &s_ascent_to_cruise_count, FSM_CRUISE_WINDOW_S))
@@ -170,7 +175,7 @@ void FSW_Update(const SensorData_t *dp)
 
         accel_delta_g = imu_usable ? fabsf(dp->imu_accel_mag_g - s_float_accel_baseline_g) : 0.0f;
         descent_condition = ((imu_usable && accel_delta_g > FSM_DESCENT_ACCEL_DELTA_G) ||
-                             (gps_usable && dp->gps_vvel_mps < FSM_DESCENT_VVEL_MPS));
+                             (gps_usable && dp->gps_vel_down_mps > FSM_DESCENT_VEL_DOWN_MPS));
         if (FSW_CountCondition(descent_condition, &s_descent_count, FSM_DESCENT_WINDOW_S))
             FSW_SetPhase(PHASE_DESCENT);
         break;
@@ -210,7 +215,7 @@ void FSW_BuildTelemetryPacket(const SensorData_t *dp, const SCV_t *scv,
     pkt->gps_lat_deg = dp->gps_lat_deg;
     pkt->gps_lon_deg = dp->gps_lon_deg;
     pkt->gps_alt_m = dp->gps_alt_m;
-    pkt->gps_vvel_mps = dp->gps_vvel_mps;
+    pkt->gps_vvel_mps = -dp->gps_vel_down_mps;
     pkt->gps_speed_mps = dp->gps_speed_mps;
     pkt->gps_valid = dp->gps_valid;
     pkt->imu_accel_x_g = dp->imu_accel_x_g;
@@ -226,7 +231,7 @@ void FSW_BuildTelemetryPacket(const SensorData_t *dp, const SCV_t *scv,
     pkt->baro_temp_c = dp->baro_temp_c;
     pkt->baro_valid = dp->baro_valid;
     pkt->i2c_bus_state = dp->i2c_bus_state;
-    pkt->batt_voltage_mv = dp->batt_voltage_mv;
+    pkt->batt_voltage_mv = FSW_BattUsable(dp) ? dp->batt_voltage_mv : scv->last_batt_mv;
     pkt->batt_valid = dp->batt_valid;
     memcpy(pkt->coral_block, dp->coral_block, sizeof(pkt->coral_block));
     pkt->coral_valid = dp->coral_valid;
@@ -248,6 +253,5 @@ void FSW_BuildTelemetryPacket(const SensorData_t *dp, const SCV_t *scv,
     pkt->scv_baro_ground_alt_cm = scv->baro_ground_alt_cm;
     pkt->scv_crc16 = scv->crc16;
 
-    pkt->crc16 = FSW_Crc16Ccitt((const uint8_t *)pkt,
-                                 offsetof(TelemetryPacket_t, crc16));
+    pkt->crc16 = FSW_Crc16Ccitt((const uint8_t *)pkt, offsetof(TelemetryPacket_t, crc16));
 }

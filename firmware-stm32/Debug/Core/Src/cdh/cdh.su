@@ -1,5 +1,0 @@
-../Core/Src/cdh/cdh.c:47:16:sd_flush	16	static
-../Core/Src/cdh/cdh.c:57:16:sd_append	24	static
-../Core/Src/cdh/cdh.c:73:6:CDH_Init	96	static
-../Core/Src/cdh/cdh.c:121:6:CDH_Update	696	static
-../Core/Src/cdh/cdh.c:232:6:CDH_RequestBusRestart	8	static
