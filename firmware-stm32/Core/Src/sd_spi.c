@@ -399,3 +399,61 @@ uint8_t SD_SPI_Sync(void)
   return ok;
 }
 
+/* Switch SPI2 from the slow init prescaler (/256 = 312 kHz) to /8 (10 MHz).
+ * Call once after SD_SPI_Init() succeeds and before any data transfers. */
+void SD_SPI_SetHighSpeed(void)
+{
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
+  HAL_SPI_Init(&hspi2);
+}
+
+/* Read the CSD register via CMD9 and return the actual card sector count.
+ * Returns 0 on failure.  Supports CSD v1 (SD/MMC) and CSD v2 (SDHC/SDXC). */
+uint32_t SD_SPI_GetSectorCount(void)
+{
+  uint8_t  csd[16];
+  uint8_t  token;
+  uint32_t start;
+  uint8_t  i;
+
+  if (card_type == 0) { return 0; }
+
+  if (send_command(CMD9, 0) != 0) { deselect_card(); return 0; }
+
+  /* Wait for data token 0xFE */
+  start = HAL_GetTick();
+  do
+  {
+    token = spi_xchg(0xFF);
+    if (token == 0xFE) { break; }
+  } while ((HAL_GetTick() - start) < 200);
+
+  if (token != 0xFE) { deselect_card(); return 0; }
+
+  for (i = 0; i < 16; i++) { csd[i] = spi_xchg(0xFF); }
+  spi_xchg(0xFF); spi_xchg(0xFF);  /* discard CRC */
+  deselect_card();
+
+  if ((csd[0] >> 6) == 1)
+  {
+    /* CSD v2 (SDHC/SDXC): C_SIZE at bits[69:48] spans bytes 7-9 */
+    uint32_t c_size = ((uint32_t)(csd[7] & 0x3FU) << 16) |
+                      ((uint32_t) csd[8]            <<  8) |
+                      ((uint32_t) csd[9]);
+    return (c_size + 1UL) * 1024UL;
+  }
+  else
+  {
+    /* CSD v1: C_SIZE[11:0], C_SIZE_MULT[2:0], READ_BL_LEN[3:0] */
+    uint32_t c_size      = ((uint32_t)(csd[6] & 0x03U) << 10) |
+                           ((uint32_t) csd[7]            <<  2) |
+                           ((uint32_t)(csd[8] >> 6));
+    uint32_t c_size_mult = ((uint32_t)(csd[9]  & 0x03U) << 1) |
+                           ((uint32_t)(csd[10] >> 7));
+    uint32_t read_bl_len = (uint32_t)(csd[5] & 0x0FU);
+    uint32_t block_len   = 1UL << read_bl_len;
+    uint32_t block_count = (c_size + 1UL) * (1UL << (c_size_mult + 2UL));
+    return block_count * (block_len / 512UL);
+  }
+}
+
