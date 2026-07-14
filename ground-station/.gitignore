@@ -4,6 +4,13 @@ venv/
 __pycache__/
 *.pyc
 
+# runtime telemetry captures
+logs/
+
+# frontend dependencies/build output
+frontend/node_modules/
+frontend/dist/
+
 # datasets — large, never committed (see README)
 payload/data/*
 !payload/data/.gitkeep

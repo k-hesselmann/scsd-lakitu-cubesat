@@ -1,3 +1,0 @@
-../Core/Src/ttc/telemetry_packet_test.c:7:10:TtcTestTelemetryCrc16Ccitt	24	static
-../Core/Src/ttc/telemetry_packet_test.c:21:13:TtcTestTelemetryUpdateCrc	16	static
-../Core/Src/ttc/telemetry_packet_test.c:27:6:TtcTestTelemetryFillMock	16	static

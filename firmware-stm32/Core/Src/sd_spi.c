@@ -5,7 +5,7 @@
 #include "spi.h"
 #endif
 
-extern SPI_HandleTypeDef  hspi1;
+extern SPI_HandleTypeDef  hspi2;
 extern UART_HandleTypeDef huart2;   /* NUCLEO ST-LINK virtual COM port */
 
 /* ------------------------------------------------------------------ */
@@ -69,18 +69,18 @@ static uint8_t spi_xchg(uint8_t data)
   uint8_t rx = 0xFF;
   HAL_StatusTypeDef status;
 
-  status = HAL_SPI_TransmitReceive(&hspi1, &data, &rx, 1, 1000);
+  status = HAL_SPI_TransmitReceive(&hspi2, &data, &rx, 1, 1000);
 
   spi_rx_last = rx;
 
   if (status != HAL_OK)
   {
     spi_error_count++;
-    spi_hal_error_last = HAL_SPI_GetError(&hspi1);
-    spi_hal_state_last = hspi1.State;
+    spi_hal_error_last = HAL_SPI_GetError(&hspi2);
+    spi_hal_state_last = hspi2.State;
     /* Force HAL state machine back to ready so next call can proceed */
-    hspi1.State = HAL_SPI_STATE_READY;
-    __HAL_SPI_CLEAR_OVRFLAG(&hspi1);
+    hspi2.State = HAL_SPI_STATE_READY;
+    __HAL_SPI_CLEAR_OVRFLAG(&hspi2);
     return 0xFF;
   }
 
@@ -195,7 +195,7 @@ uint8_t SD_SPI_Init(void)
   uint8_t  n, ty = 0, ocr[4], r;
   uint32_t start;
 
-  /* ---- Ensure CS pin (PB6) is configured as push-pull output. ---- */
+  /* ---- Ensure CS pin (PB1) is configured as push-pull output. ---- */
   {
     GPIO_InitTypeDef _cs = {0};
     __HAL_RCC_GPIOB_CLK_ENABLE();

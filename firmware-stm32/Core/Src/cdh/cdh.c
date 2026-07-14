@@ -9,6 +9,7 @@
 #include "cdh/gps_equipment_handler.h"
 #include "cdh/cdh_debug.h"
 #include "cdh/cdh_fdir.h"
+#include "cdh/coral.h"
 
 #include "main.h"
 #include <math.h>
@@ -38,7 +39,7 @@ static const char *CSV_HEADER =
     "baro_pressure_pa,baro_temp_c,baro_alt_m,baro_valid,"
     "imu_accel_x_g,imu_accel_y_g,imu_accel_z_g,imu_accel_mag_g,"
     "imu_gyro_x_dps,imu_gyro_y_dps,imu_gyro_z_dps,imu_valid,"
-    "gps_lat_deg,gps_lon_deg,gps_alt_m,gps_vvel_mps,gps_speed_mps,gps_valid,"
+    "gps_lat_deg,gps_lon_deg,gps_alt_m,gps_vel_down_mps,gps_speed_mps,gps_valid,"
     "batt_voltage_mv,batt_valid,coral_valid\r\n";
 
 /* ------------------------------------------------------------------ */
@@ -84,7 +85,7 @@ void CDH_Init(void)
      * initialised by FDIR_Init(); CDH only fills SensorData_t. */
 
     /* TODO: initialise Coral UART (115200 baud, FR-027) */
-
+Coral_Init();
     /* ---- SD card + FatFS init ---- */
     MX_FATFS_Init();
 
@@ -161,7 +162,12 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
         dp->gps_lon_deg = s_gps.data.longitude;
         dp->gps_alt_m = s_gps.data.altitude;
         dp->gps_speed_mps = s_gps.data.speed;
-        dp->gps_vvel_mps = s_gps.data.vvel;
+        dp->gps_vel_north_mps = s_gps.data.vel_north;
+        dp->gps_vel_east_mps = s_gps.data.vel_east;
+        dp->gps_vel_down_mps = s_gps.data.vel_down;
+        dp->gps_heading_deg = s_gps.data.heading;
+        dp->gps_num_satellites = s_gps.data.num_satellites;
+        dp->gps_fix_type = s_gps.data.fix_type;
         dp->gps_valid = 1U;
     }
     else
@@ -169,7 +175,7 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
         dp->gps_valid = 0U;
     }
 
-    CDH_Debug_PrintGPS(&s_gps);
+    CDH_Debug_PrintDatapool(dp);
     CDH_Debug_PrintBaro(&s_baro);
 
     /* CDH owns the I2C bus: advance any pending restart requested by FDIR and
@@ -182,6 +188,7 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
 
     /* TODO: read ADC for battery voltage — fill batt_voltage_mv, set batt_valid */
     /* TODO: read Coral block over UART — fill coral_block[16], set coral_valid */
+     Coral_Update(dp);
     /* TODO: write updated scv to NVM */
 
     /* ---- SD logging ---- */
@@ -203,7 +210,7 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
         dp->imu_gyro_x_dps, dp->imu_gyro_y_dps, dp->imu_gyro_z_dps, (unsigned)dp->imu_valid,
         /* GPS */
         dp->gps_lat_deg, dp->gps_lon_deg, dp->gps_alt_m,
-        dp->gps_vvel_mps, dp->gps_speed_mps, (unsigned)dp->gps_valid,
+        dp->gps_vel_down_mps, dp->gps_speed_mps, (unsigned)dp->gps_valid,
         /* EPS + payload */
         (unsigned)dp->batt_voltage_mv, (unsigned)dp->batt_valid, (unsigned)dp->coral_valid);
 
