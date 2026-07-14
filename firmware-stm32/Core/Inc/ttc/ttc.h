@@ -3,6 +3,8 @@
 
 #include "datapool.h"
 
+#define TTC_TELEMETRY_INTERVAL_MS  20000U
+
 /* Initialise LoRa module (SPI, registers, frequency, SF/BW/CR).
  * Must be called once before the superloop starts. */
 void TTC_Init(void);

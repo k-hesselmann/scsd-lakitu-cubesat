@@ -69,6 +69,10 @@ void Error_Handler(void);
 #define SWO_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
+#define LORA_CS_Pin              GPIO_PIN_6
+#define LORA_CS_GPIO_Port        GPIOB
+#define LORA_RST_Pin             GPIO_PIN_7
+#define LORA_RST_GPIO_Port       GPIOC
 
 /* USER CODE END Private defines */
 
