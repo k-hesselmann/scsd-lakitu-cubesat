@@ -14,7 +14,14 @@
 #include "main.h"
 #include <math.h>
 
-extern I2C_HandleTypeDef hi2c1;
+extern I2C_HandleTypeDef  hi2c1;
+extern UART_HandleTypeDef huart2;   /* NUCLEO ST-LINK virtual COM – 115200 8N1 */
+
+/* Quick helper so CDH_Init() can print one-liner status strings */
+static void cdh_dbg(const char *msg)
+{
+    HAL_UART_Transmit(&huart2, (const uint8_t *)msg, (uint16_t)strlen(msg), 200);
+}
 
 static MPU6050_EquipmentHandler s_imu;
 static MS5607_EquipmentHandler  s_baro;
@@ -51,8 +58,8 @@ static uint32_t s_log_used        = 0;
 static uint32_t s_row_count       = 0;   /* rows in current segment        */
 static FIL      s_log_file;
 static uint8_t  s_sd_ready        = 0;
-static char     s_log_filename[24];      /* "B{boot}L{start_s}.CSV" while open */
-static uint32_t s_file_open_tick  = 0;   /* HAL_GetTick() when opened      */
+static char     s_log_filename[16];      /* "B{boot}S{seg}.LOG" while open (8.3) */
+static uint16_t s_segment         = 0;   /* segment index within this boot */
 static uint8_t  s_fault_strikes   = 0;
 static SCV_t   *s_scv             = NULL; /* captured on first CDH_Update() */
 
@@ -118,18 +125,18 @@ static void sd_record_fault(void)
 /* ------------------------------------------------------------------ */
 
 /* Open a fresh log segment.
- * Name format: B{boot_count}L{seconds_since_boot}.CSV
- * boot_count comes from SCV (persisted in flash across reboots), so each
- * boot gets a unique prefix — no two boots can collide even at tick=0.
- * Example:  B001L000000.CSV → B001L000000D0300.CSV → B001L000300.CSV
- *           B002L000000.CSV  (next boot — different prefix)           */
+ * Filename (8.3 format — LFN is disabled in ffconf.h):
+ *   "B{boot:02}S{seg:04}.LOG"  e.g. B01S0000.LOG  (open / in-progress)
+ *   "B{boot:02}S{seg:04}.CSV"  e.g. B01S0000.CSV  (cleanly closed)
+ * boot = g_scv.boot_count % 100  (persisted in flash — unique across reboots)
+ * seg  = s_segment, incremented on every roll
+ * .LOG extension marks a partial file if power is cut mid-segment. */
 static uint8_t CDH_SD_OpenNewFile(void)
 {
-    s_file_open_tick = HAL_GetTick();
     snprintf(s_log_filename, sizeof(s_log_filename),
-             "B%03luL%05lu.CSV",
-             (unsigned long)(g_scv.boot_count % 1000UL),
-             (unsigned long)(s_file_open_tick / 1000UL));
+             "B%02uS%04u.LOG",
+             (unsigned)(g_scv.boot_count % 100U),
+             (unsigned)s_segment);
 
     if (f_open(&s_log_file, s_log_filename, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
     {
@@ -145,25 +152,26 @@ static uint8_t CDH_SD_OpenNewFile(void)
     return 1;
 }
 
-/* Flush + close current segment, rename it to include duration, then
- * open the next one.  Example: L000060.CSV → L000060D0300.CSV */
+/* Flush + close current segment, rename .LOG → .CSV to mark it complete,
+ * then open the next segment.
+ * .LOG = power-cut partial  /  .CSV = cleanly closed */
 static uint8_t CDH_SD_RollFile(void)
 {
-    uint32_t dur_s = (HAL_GetTick() - s_file_open_tick) / 1000UL;
-    char closed_name[28];
-    snprintf(closed_name, sizeof(closed_name), "B%03luL%05luD%04lu.CSV",
-             (unsigned long)(g_scv.boot_count % 1000UL),
-             (unsigned long)(s_file_open_tick / 1000UL),
-             (unsigned long)dur_s);
+    /* Build closed name: identical to s_log_filename but with .CSV extension */
+    char closed_name[16];
+    memcpy(closed_name, s_log_filename, sizeof(closed_name));
+    char *dot = strrchr(closed_name, '.');
+    if (dot) { memcpy(dot, ".CSV", 4); }
 
     sd_flush();
     f_sync(&s_log_file);
     f_close(&s_log_file);
     s_log_used = 0;
 
-    /* Rename to add duration — data is already safe even if rename fails */
+    /* Rename — data is already on card even if rename fails */
     f_rename(s_log_filename, closed_name);
 
+    s_segment++;
     return CDH_SD_OpenNewFile();
 }
 
@@ -202,27 +210,39 @@ void CDH_Init(void)
     Coral_Init();   /* UART5 already init by MX_UART5_Init() in main.c */
 
     /* ---- SD card + FatFS init ---- */
+    cdh_dbg("[CDH] MX_FATFS_Init...\r\n");
     MX_FATFS_Init();
 
     /* f_mount(opt=1) forces immediate disk_initialize() → SD_SPI_Init().
      * Do NOT call SD_SPI_Init() here — that would double-init the card. */
-    if (f_mount(&USERFatFS, USERPath, 1) != FR_OK)
+    cdh_dbg("[CDH] f_mount...\r\n");
+    FRESULT _fr = f_mount(&USERFatFS, USERPath, 1);
+    if (_fr != FR_OK)
     {
+        char _buf[48];
+        snprintf(_buf, sizeof(_buf), "[CDH] f_mount FAILED: FR=%d\r\n", (int)_fr);
+        cdh_dbg(_buf);
         return;   /* s_sd_ready stays 0; sensor reads still run */
     }
+    cdh_dbg("[CDH] f_mount OK\r\n");
 
     /* Card came up at /256 (312 kHz) init speed — switch to /8 (10 MHz) */
     SD_SPI_SetHighSpeed();
+    cdh_dbg("[CDH] SetHighSpeed done\r\n");
 
     /* Open first log segment for this boot */
+    cdh_dbg("[CDH] Opening first log file...\r\n");
     if (!CDH_SD_OpenNewFile())
     {
+        cdh_dbg("[CDH] CDH_SD_OpenNewFile FAILED\r\n");
         f_mount(NULL, USERPath, 0);
         return;
     }
+    cdh_dbg("[CDH] SD ready - logging started\r\n");
 
     s_sd_ready      = 1;
     s_fault_strikes = 0;
+    s_segment       = 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -295,7 +315,15 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
     /* ---- SD logging ---- */
     if (!s_sd_ready) { return; }
 
-    /* Build a complete snapshot of SensorData_t + SCV_t */
+    /* Build a complete snapshot of SensorData_t + SCV_t.
+     *
+     * IMPORTANT — FLOAT PRINTF:
+     * STM32CubeIDE with newlib-nano omits %f support by default.
+     * Without it every float column prints as empty and data is silently lost.
+     * Fix: Project → Properties → C/C++ Build → Settings →
+     *      MCU GCC Linker → Miscellaneous → Other flags → add:
+     *          -u _printf_float
+     * This adds ~11 kB to the binary but enables correct float output. */
     char row[512];
     snprintf(row, sizeof(row),
         /* timing */
