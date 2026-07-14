@@ -33,17 +33,23 @@ static float                    s_ground_baro_alt_m = 0.0f;
 /*  SD logging — configuration                                         */
 /* ------------------------------------------------------------------ */
 /*
- * File rolling strategy:
+ * File rolling strategy (8.3 filenames — LFN disabled in ffconf.h):
  *   A new file is opened every LOG_ROWS_PER_FILE rows (~5 min at 1 Hz).
- *   When a file is closed it is renamed to include its actual duration:
+ *   While open the file has a .LOG extension; on clean close it is renamed
+ *   to .CSV so partial (power-cut) files are distinguishable:
  *
- *     L000060.CSV          <- currently open  (started at t=60 s since boot)
- *     L000060D0300.CSV     <- cleanly closed, ran for 300 s
- *     L000360D0300.CSV     <- next segment
- *     L000660.CSV          <- no duration = STM rebooted mid-segment (partial)
+ *     B01S0000.LOG   <- currently open  (boot 1, segment 0)
+ *     B01S0000.CSV   <- cleanly closed and renamed
+ *     B01S0001.LOG   <- next segment (open)
+ *     B01S0002.LOG   <- segment that survived a remount fault (no rename)
  *
  *   Mid-segment f_sync() every LOG_SYNC_ROWS limits worst-case data loss
- *   to ~64 rows if power is cut between rolls.
+ *   to ~64 rows if power is cut between syncs.
+ *
+ *   NOTE: boot_count persists only in RAM (no flash NVM yet). A reset
+ *   during flight restarts boot_count at 1 and s_segment at 0, which
+ *   overwrites files from the previous boot. Implement SCV flash write
+ *   before relying on boot_count for multi-boot uniqueness.
  */
 #define LOG_ROWS_PER_FILE         300U   /* rows before rolling (~5 min)   */
 #define LOG_SYNC_ROWS              64U   /* f_sync() within a file segment  */
@@ -176,7 +182,8 @@ static uint8_t CDH_SD_RollFile(void)
 }
 
 /* Unmount, remount, restore high-speed clock, open a fresh segment.
- * A gap in filenames makes the reboot visible in post-flight analysis. */
+ * s_segment is incremented so the new file gets a different name and
+ * does NOT overwrite the (partial) file that was open during the fault. */
 static uint8_t CDH_SD_Remount(void)
 {
     f_close(&s_log_file);
@@ -190,6 +197,7 @@ static uint8_t CDH_SD_Remount(void)
 
     s_log_used      = 0;
     s_fault_strikes = 0;
+    s_segment++;          /* advance segment so we never clobber the fault file */
 
     return CDH_SD_OpenNewFile();
 }
@@ -231,6 +239,8 @@ void CDH_Init(void)
     cdh_dbg("[CDH] SetHighSpeed done\r\n");
 
     /* Open first log segment for this boot */
+    s_segment       = 0;
+    s_fault_strikes = 0;
     cdh_dbg("[CDH] Opening first log file...\r\n");
     if (!CDH_SD_OpenNewFile())
     {
@@ -240,9 +250,7 @@ void CDH_Init(void)
     }
     cdh_dbg("[CDH] SD ready - logging started\r\n");
 
-    s_sd_ready      = 1;
-    s_fault_strikes = 0;
-    s_segment       = 0;
+    s_sd_ready = 1;
 }
 
 /* ------------------------------------------------------------------ */
