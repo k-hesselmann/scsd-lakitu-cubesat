@@ -18,9 +18,14 @@ static float s_cruise_baro_ref_m = 0.0f;
 static float s_float_accel_baseline_g = 1.0f;
 static uint16_t s_telemetry_sequence = 0U;
 
+/* Equipment feeds phase decisions only when it is enabled (policy plane:
+ * reduced mode, future give-up isolation) AND not currently faulted
+ * (detection plane). An isolated device whose data happens to look valid
+ * must not steer phase transitions. */
 static uint8_t FSW_EquipmentUsable(uint16_t equipment)
 {
-    return (g_scv.equipment_faults & equipment) == 0U;
+    return ((g_scv.equipment_enabled & equipment) == equipment) &&
+           ((g_scv.equipment_faults & equipment) == 0U);
 }
 
 static uint8_t FSW_GpsUsable(const SensorData_t *dp)
