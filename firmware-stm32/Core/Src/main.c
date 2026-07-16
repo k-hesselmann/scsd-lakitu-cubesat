@@ -27,6 +27,7 @@
 #include "cdh/baro_diag.h"
 #include "datapool.h"
 #include "fdir/fdir.h"
+#include "fdir/scv.h"
 #include "fsw/fsm.h"
 #include "sd_logger.h"
 #include "ttc/ttc.h"
@@ -61,6 +62,9 @@ UART_HandleTypeDef huart3;
  * so these stay here to keep the pre-regen sources buildable. */
 SPI_HandleTypeDef hspi1;
 SPI_HandleTypeDef hspi2;
+/* IWDG (FMECA F1) is configured in the .ioc; like the SPI handles above,
+ * this duplicate tentative definition keeps pre-regen sources buildable. */
+IWDG_HandleTypeDef hiwdg;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -75,6 +79,7 @@ static void MX_UART4_Init(void);
 /* Hand-added SPI init functions; see bodies in the USER CODE 4 block. */
 static void SPI1_UserInit(void);
 static void SPI2_UserInit(void);
+static void IWDG_UserInit(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -120,13 +125,27 @@ int main(void)
   /* USER CODE BEGIN 2 */
   SPI2_UserInit();   /* hand-added SPI2 for the SD card (must precede CDH_Init) */
   SPI1_UserInit();   /* hand-added SPI1 for the LoRa radio */
+
+  /* FDIR first: restores the SCV from flash and evaluates staged reduced
+   * mode (FMECA F2) — the gates below skip subsystems disabled after
+   * repeated watchdog resets. FDIR and the IWDG kick always run. */
   FDIR_Init(&g_scv);
-  CDH_Init();
-  FSW_Init();
-  TTC_Init();
-  SD_Logger_Init(&g_scv);
-  GPS_Diag_Test(&hi2c1);
-  Baro_Diag_Test(&hi2c1);
+  if (FDIR_SubsystemEnabled(FDIR_SUBSYS_CDH))
+  {
+    CDH_Init();
+    GPS_Diag_Test(&hi2c1);
+    Baro_Diag_Test(&hi2c1);
+  }
+  if (FDIR_SubsystemEnabled(FDIR_SUBSYS_FSW))
+    FSW_Init();
+  if (FDIR_SubsystemEnabled(FDIR_SUBSYS_TTC))
+    TTC_Init();
+  if (FDIR_SubsystemEnabled(FDIR_SUBSYS_SD))
+    SD_Logger_Init(&g_scv);
+
+  /* Arm the watchdog only after init completes; once started it can never
+   * be stopped (FMECA F1). */
+  IWDG_UserInit();
 
   TelemetryPacket_t tx_packet = {0};
   /* USER CODE END 2 */
@@ -138,16 +157,24 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    CDH_Update(&g_datapool, &g_scv);
+    if (FDIR_SubsystemEnabled(FDIR_SUBSYS_CDH))
+      CDH_Update(&g_datapool, &g_scv);
     FDIR_Update(&g_datapool, &g_scv);
-    FSW_Update(&g_datapool);
-    SD_Logger_Update(&g_datapool, &g_scv);
-    if (TTC_TelemetryDue())
+    if (FDIR_SubsystemEnabled(FDIR_SUBSYS_FSW))
+      FSW_Update(&g_datapool);
+    if (FDIR_SubsystemEnabled(FDIR_SUBSYS_SD))
+      SD_Logger_Update(&g_datapool, &g_scv);
+    if (FDIR_SubsystemEnabled(FDIR_SUBSYS_TTC) && TTC_TelemetryDue())
     {
       FSW_BuildTelemetryPacket(&g_datapool, &g_scv, &tx_packet);
       TTC_Transmit(&tx_packet);
     }
-    /* TODO: refresh IWDG here if FDIR_SystemHealthyEnoughToKickWatchdog(). */
+    SCV_Update(&g_scv);   /* periodic + event-driven flash backup */
+
+    /* Kick at the END of the loop, so a blocked task above is recovered by
+     * reset; FDIR withholds the kick to escalate a stuck datapool (C10). */
+    if (FDIR_SystemHealthyEnoughToKickWatchdog())
+      (void)HAL_IWDG_Refresh(&hiwdg);
     HAL_Delay(1000);
   }
   /* USER CODE END 3 */
@@ -540,6 +567,27 @@ static void SPI2_UserInit(void)
   hspi2.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
   if (HAL_SPI_Init(&hspi2) != HAL_OK)
         Error_Handler();
+}
+
+/* Independent watchdog. Also configured in the .ioc (IWDG_PRESCALER_256,
+ * reload 3750 — keep BOTH in sync!), so a CubeMX regen emits an identical
+ * MX_IWDG_Init(); this user-code copy keeps pre-regen sources self-contained
+ * and is idempotent alongside it, same pattern as SPIx_UserInit above.
+ * LSI ~32 kHz / 256 = 125 Hz; reload 3750 gives a ~30 s timeout —
+ * comfortably above the worst-case superloop tick (1 s delay + 5 s LoRa
+ * TxDone wait + SD retries). */
+static void IWDG_UserInit(void)
+{
+  hiwdg.Instance = IWDG;
+  hiwdg.Init.Prescaler = IWDG_PRESCALER_256;
+  hiwdg.Init.Reload = 3750U;
+  hiwdg.Init.Window = IWDG_WINDOW_DISABLE;
+  if (HAL_IWDG_Init(&hiwdg) != HAL_OK)
+    Error_Handler();
+
+  /* Freeze the IWDG while the core is halted by a debugger, so breakpoint
+   * sessions don't reset mid-inspection. No effect in flight. */
+  __HAL_DBGMCU_FREEZE_IWDG();
 }
 /* USER CODE END 4 */
 
