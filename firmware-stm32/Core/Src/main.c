@@ -55,8 +55,9 @@ UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
-/* SPI1 and SPI2 are hand-added (not in the .ioc). Kept in USER-CODE
- * block so a CubeMX regeneration does not delete it. */
+/* SPI1/SPI2 are now in the .ioc; a CubeMX regen also declares these handles
+ * in the generated section above. Duplicate tentative definitions are legal C,
+ * so these stay here to keep the pre-regen sources buildable. */
 SPI_HandleTypeDef hspi1;
 SPI_HandleTypeDef hspi2;
 /* USER CODE END PV */
@@ -501,11 +502,10 @@ static void SPI1_UserInit(void)
         Error_Handler();
 }
 
-/* Hand-added SPI2 initialisation for the SD card. Lives in a USER-CODE block
- * (not the CubeMX-generated MX_* section) so a .ioc regeneration cannot delete
- * it. SPI2 is intentionally absent from the .ioc, so this also does the clock +
- * GPIO setup itself rather than relying on HAL_SPI_MspInit() (which regen would
- * drop). The manual config is idempotent if that MSP branch is still present. */
+/* SPI2 initialisation for the SD card. SPI2 is also configured in the .ioc,
+ * so after a CubeMX regen MX_SPI2_Init() performs the same setup; this
+ * user-code copy keeps the pre-regen sources self-contained and is idempotent,
+ * doing its own clock + GPIO setup. */
 static void SPI2_UserInit(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
