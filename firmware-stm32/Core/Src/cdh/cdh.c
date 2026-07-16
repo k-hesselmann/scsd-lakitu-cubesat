@@ -6,6 +6,7 @@
 #include "cdh/cdh_debug.h"
 #include "cdh/cdh_fdir.h"
 #include "cdh/coral.h"
+#include "cdh/sensor_validation.h"
 
 #include "main.h"
 #include <math.h>
@@ -26,6 +27,7 @@ void CDH_Init(void)
     s_baro = MS5607_EquipmentHandler_Init(&hi2c1);
     s_gps  = GPS_EquipmentHandler_Init(&hi2c1);
     CDH_FDIR_Init(&s_fdir);
+    SensorValidation_Init();
 
     if (s_baro.baro_valid)
         s_ground_baro_alt_m = s_baro.data.altitude;
@@ -90,7 +92,11 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
     CDH_Debug_PrintDatapool(dp);
     CDH_Debug_PrintBaro(&s_baro);
 
-    /* CDH owns I2C bus: advance any pending FDIR restart */
+    /* Validate sensor data and handle faults */
+    SensorValidation_Update(dp, scv);
+
+    /* CDH owns the I2C bus: advance any pending restart requested by FDIR and
+     * publish the resulting bus state. CDH is the sole writer of i2c_bus_state. */
     CDH_FDIR_BusRestart_Process(&s_fdir, &hi2c1);
     dp->i2c_bus_state = s_fdir.bus_state;
 

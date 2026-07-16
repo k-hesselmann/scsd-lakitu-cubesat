@@ -18,6 +18,10 @@
 
 extern UART_HandleTypeDef huart2;
 
+/* Forward declarations for helpers used before their definitions */
+static uint8_t M10S_GetBytesAvailable(I2C_HandleTypeDef *hi2c, uint8_t *bytes_avail);
+static uint8_t M10S_ReadDataStream(I2C_HandleTypeDef *hi2c, uint8_t *buffer, uint16_t len);
+
 /* ========================================================================== */
 /* UBX Protocol Constants                                                    */
 /* ========================================================================== */
@@ -27,12 +31,16 @@ extern UART_HandleTypeDef huart2;
 
 #define UBX_CLASS_NAV          0x01
 #define UBX_CLASS_CFG          0x06
+#define UBX_CLASS_ACK_NAK      0x05
 
 #define UBX_ID_NAV_PVT         0x07
 
 #define UBX_ID_CFG_PRT         0x00  /* Port configuration */
 #define UBX_ID_CFG_MSG         0x01  /* Message output rate */
 #define UBX_ID_CFG_CFG         0x09  /* Save configuration */
+
+#define UBX_ID_ACK             0x01  /* Acknowledgment */
+#define UBX_ID_NAK             0x00  /* Negative acknowledgment */
 
 /* NAV-PVT Payload is exactly 92 bytes */
 #define UBX_NAV_PVT_PAYLOAD_LEN  92
@@ -113,6 +121,46 @@ static uint8_t M10S_VerifyChecksum(const uint8_t *data, uint16_t len,
     uint8_t calc_a = 0, calc_b = 0;
     M10S_CalculateChecksum(data, len, &calc_a, &calc_b);
     return (calc_a == ck_a) && (calc_b == ck_b);
+}
+
+static uint8_t M10S_WaitForACK(I2C_HandleTypeDef *hi2c, uint8_t cmd_class, uint8_t cmd_id, uint32_t timeout_ms)
+{
+    uint32_t start_time = HAL_GetTick();
+    uint8_t chunk[32];
+    uint8_t bytes_avail;
+
+    while ((HAL_GetTick() - start_time) < timeout_ms) {
+        if (M10S_GetBytesAvailable(hi2c, &bytes_avail) && bytes_avail > 0 && bytes_avail != 0xFF) {
+            if (bytes_avail > 32) bytes_avail = 32;
+            if (M10S_ReadDataStream(hi2c, chunk, bytes_avail)) {
+                for (uint8_t i = 0; i < bytes_avail - 9; i++) {
+                    if (chunk[i] == 0xB5 && chunk[i+1] == 0x62 && chunk[i+2] == 0x05) {
+                        uint8_t msg_id = chunk[i+3];
+                        uint8_t ack_class = chunk[i+6];
+                        uint8_t ack_id = chunk[i+7];
+                        if (ack_class == cmd_class && ack_id == cmd_id) {
+                            if (msg_id == UBX_ID_ACK) {
+                                char dbg[64];
+                                int len = snprintf(dbg, sizeof(dbg), "[M10S] ACK for 0x%02X 0x%02X\r\n", cmd_class, cmd_id);
+                                HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+                                return 1;
+                            } else if (msg_id == UBX_ID_NAK) {
+                                char dbg[64];
+                                int len = snprintf(dbg, sizeof(dbg), "[M10S] NAK for 0x%02X 0x%02X\r\n", cmd_class, cmd_id);
+                                HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+                                return 0;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        HAL_Delay(10);
+    }
+    char dbg[64];
+    int len = snprintf(dbg, sizeof(dbg), "[M10S] ACK timeout for 0x%02X 0x%02X\r\n", cmd_class, cmd_id);
+    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    return 0;
 }
 
 /* ========================================================================== */
@@ -474,9 +522,16 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
         return 0;
     }
 
-    len = snprintf(dbg, sizeof(dbg), "[M10S] CFG-PRT sent (CK=%02X %02X)\r\n", ck_a, ck_b);
+    len = snprintf(dbg, sizeof(dbg), "[M10S] CFG-PRT sent, waiting for ACK...\r\n");
     HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-    HAL_Delay(300);
+
+    if (!M10S_WaitForACK(hi2c, UBX_CLASS_CFG, UBX_ID_CFG_PRT, 1000)) {
+        len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: CFG-PRT ACK not received\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        return 0;
+    }
+
+    HAL_Delay(100);
 
     /* Step 2: Enable NAV-PVT messages at 1 Hz
      * UBX-CFG-MSG (0x06 0x01)
@@ -506,9 +561,16 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
         return 0;
     }
 
-    len = snprintf(dbg, sizeof(dbg), "[M10S] CFG-MSG (NAV-PVT) sent (CK=%02X %02X)\r\n", ck_a, ck_b);
+    len = snprintf(dbg, sizeof(dbg), "[M10S] CFG-MSG (NAV-PVT) sent, waiting for ACK...\r\n");
     HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-    HAL_Delay(300);
+
+    if (!M10S_WaitForACK(hi2c, UBX_CLASS_CFG, UBX_ID_CFG_MSG, 1000)) {
+        len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: CFG-MSG ACK not received\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        return 0;
+    }
+
+    HAL_Delay(100);
 
     /* Step 3: Save configuration to flash
      * UBX-CFG-CFG (0x06 0x09)
@@ -540,9 +602,16 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
         return 0;
     }
 
-    len = snprintf(dbg, sizeof(dbg), "[M10S] CFG-CFG (SAVE) sent (CK=%02X %02X)\r\n", ck_a, ck_b);
+    len = snprintf(dbg, sizeof(dbg), "[M10S] CFG-CFG (SAVE) sent, waiting for ACK...\r\n");
     HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-    HAL_Delay(300);
+
+    if (!M10S_WaitForACK(hi2c, UBX_CLASS_CFG, UBX_ID_CFG_CFG, 1000)) {
+        len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: CFG-CFG ACK not received\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        return 0;
+    }
+
+    HAL_Delay(100);
 
     /* Clear buffer and mark as initialized */
     M10S_ClearBuffer();
