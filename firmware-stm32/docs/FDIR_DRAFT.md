@@ -1,5 +1,9 @@
 # FDIR Draft
 
+> **Superseded:** fault policy, monitors, and verification now live in
+> [FMECA.md](FMECA.md). This draft is kept for the original design rationale
+> (watchdog sketch, mission time sketch, open items).
+
 This document sketches the Failure Detection, Isolation and Recovery subsystem.
 It is intentionally not integrated into CDH, FSW, TT&C, or the shared datapool yet.
 Those subsystem interfaces should be updated by their owners before this becomes
