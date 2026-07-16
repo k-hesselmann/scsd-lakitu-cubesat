@@ -1,5 +1,6 @@
 #include "fsw/fsm.h"
 #include "fsw/fsm_thresholds.h"
+#include "fdir/crc16.h"
 #include "main.h"
 
 #include <math.h>
@@ -82,25 +83,6 @@ static uint8_t FSW_CountCondition(uint8_t condition, uint8_t *counter, uint8_t l
     return *counter >= limit;
 }
 
-static uint16_t FSW_Crc16Ccitt(const uint8_t *data, size_t length)
-{
-    uint16_t crc = 0xFFFFU;
-
-    for (size_t i = 0U; i < length; i++)
-    {
-        crc ^= (uint16_t)data[i] << 8;
-        for (uint8_t bit = 0U; bit < 8U; bit++)
-        {
-            if ((crc & 0x8000U) != 0U)
-                crc = (uint16_t)((crc << 1) ^ 0x1021U);
-            else
-                crc <<= 1;
-        }
-    }
-
-    return crc;
-}
-
 void FSW_Init(void)
 {
     if (FSW_IsValidPhase(g_scv.flight_phase))
@@ -108,7 +90,6 @@ void FSW_Init(void)
     else
         FSW_SetPhase(PHASE_STANDBY);
 
-    /* TODO: enable IWDG */
 }
 
 void FSW_Update(const SensorData_t *dp)
@@ -253,5 +234,5 @@ void FSW_BuildTelemetryPacket(const SensorData_t *dp, const SCV_t *scv,
     pkt->scv_baro_ground_alt_cm = scv->baro_ground_alt_cm;
     pkt->scv_crc16 = scv->crc16;
 
-    pkt->crc16 = FSW_Crc16Ccitt((const uint8_t *)pkt, offsetof(TelemetryPacket_t, crc16));
+    pkt->crc16 = CRC16_Ccitt((const uint8_t *)pkt, offsetof(TelemetryPacket_t, crc16));
 }
