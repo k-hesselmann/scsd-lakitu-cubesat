@@ -1,0 +1,9 @@
+../Core/Src/cdh/coral.c:53:13:dbg	1
+../Core/Src/cdh/coral.c:59:13:dbg_hex	2
+../Core/Src/cdh/coral.c:98:17:crc16_update	3
+../Core/Src/cdh/coral.c:110:17:crc16_buf	2
+../Core/Src/cdh/coral.c:122:16:coral_receive_frame	16
+../Core/Src/cdh/coral.c:328:6:Coral_Init	1
+../Core/Src/cdh/coral.c:342:6:Coral_Update	6
+../Core/Src/cdh/coral.c:382:6:Coral_SendTrigger	2
+../Core/Src/cdh/coral.c:396:6:Coral_SendSetInterval	3
