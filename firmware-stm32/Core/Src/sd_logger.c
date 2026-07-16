@@ -190,8 +190,8 @@ void SD_Logger_Init(SCV_t *scv)
 
 void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
 {
-    char coral_hex[33];
-    char line[SD_LOG_LINE_SIZE];
+    static char coral_hex[33];
+    static char line[SD_LOG_LINE_SIZE];
     int length;
     FRESULT result;
     uint32_t now_ms = HAL_GetTick();

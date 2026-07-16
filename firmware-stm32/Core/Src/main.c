@@ -28,6 +28,7 @@
 #include "datapool.h"
 #include "fdir/fdir.h"
 #include "fsw/fsm.h"
+#include "sd_logger.h"
 #include "ttc/ttc.h"
 /* USER CODE END Includes */
 
@@ -123,6 +124,7 @@ int main(void)
   CDH_Init();
   FSW_Init();
   TTC_Init();
+  SD_Logger_Init(&g_scv);
   GPS_Diag_Test(&hi2c1);
   Baro_Diag_Test(&hi2c1);
 
@@ -139,6 +141,7 @@ int main(void)
     CDH_Update(&g_datapool, &g_scv);
     FDIR_Update(&g_datapool, &g_scv);
     FSW_Update(&g_datapool);
+    SD_Logger_Update(&g_datapool, &g_scv);
     if (TTC_TelemetryDue())
     {
       FSW_BuildTelemetryPacket(&g_datapool, &g_scv, &tx_packet);

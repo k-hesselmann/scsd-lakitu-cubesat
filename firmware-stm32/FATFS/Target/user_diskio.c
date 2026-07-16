@@ -27,6 +27,11 @@
 
 static volatile DSTATUS Stat = STA_NOINIT;
 
+void USER_force_reinitialize(void)
+{
+  Stat = STA_NOINIT;
+}
+
 DSTATUS USER_initialize(BYTE pdrv);
 DSTATUS USER_status(BYTE pdrv);
 DRESULT USER_read(BYTE pdrv, BYTE *buff, DWORD sector, UINT count);
@@ -65,9 +70,6 @@ DRESULT USER_read (BYTE pdrv, BYTE *buff, DWORD sector, UINT count);
 #if _USE_IOCTL == 1
   DRESULT USER_ioctl (BYTE pdrv, BYTE cmd, void *buff);
 #endif /* _USE_IOCTL == 1 */
-
-
-
 /* Private functions ---------------------------------------------------------*/
 
 /**
@@ -196,13 +198,8 @@ DRESULT USER_ioctl (
         return SD_SPI_Sync() ? RES_OK : RES_ERROR;
 
       case GET_SECTOR_COUNT:
-      {
         if (buff == 0) { return RES_PARERR; }
-        uint32_t sectors = SD_SPI_GetSectorCount();
-        if (sectors == 0) { return RES_ERROR; }
-        *(DWORD *)buff = (DWORD)sectors;
-        return RES_OK;
-      }
+        return (SD_SPI_GetSectorCount((uint32_t *)buff) == 0U) ? RES_OK : RES_ERROR;
 
       case GET_SECTOR_SIZE:
         if (buff == 0) { return RES_PARERR; }
