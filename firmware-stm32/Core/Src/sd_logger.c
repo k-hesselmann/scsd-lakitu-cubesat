@@ -234,7 +234,7 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
     length = snprintf(
         line, sizeof(line),
         "%lu,%lu,"
-        "%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%u,%u,%u,"
+        "%ld,%ld,%ld,%ld,%ld,%ld,%u,%u,%u,"
         "%ld,%ld,%ld,%ld,%ld,%ld,%ld,%u,"
         "%ld,%ld,%ld,%u,%u,%u,%u,%s,%u,"
         "%u,%lu,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%ld,%u\r\n",
@@ -244,8 +244,6 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
         (long)scale_float(dp->gps_lon_deg, 10000000.0f),
         (long)scale_float(dp->gps_alt_m, 100.0f),
         (long)scale_float(dp->gps_speed_mps, 100.0f),
-        (long)scale_float(dp->gps_vel_north_mps, 100.0f),
-        (long)scale_float(dp->gps_vel_east_mps, 100.0f),
         (long)scale_float(dp->gps_vel_down_mps, 100.0f),
         (long)scale_float(dp->gps_heading_deg, 100.0f),
         (unsigned int)dp->gps_num_satellites,
