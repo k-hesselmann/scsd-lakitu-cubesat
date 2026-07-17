@@ -3,19 +3,22 @@
 
 #include "datapool.h"
 
-/* Debounce limits (superloop cycles) — see docs/FMECA.md Section 4.
- * All SCV timeout counters saturate at UINT8_MAX during a continuous fault
- * (never wrap — a wrap would clear the fault spuriously) and reset to zero
- * as soon as valid data returns. */
-#define FDIR_GPS_TIMEOUT_LIMIT        30U
-#define FDIR_IMU_TIMEOUT_LIMIT        3U
-#define FDIR_BARO_TIMEOUT_LIMIT       3U
-#define FDIR_CORAL_TIMEOUT_LIMIT      5U
-#define FDIR_BATT_TIMEOUT_LIMIT       3U
-#define FDIR_LORA_TX_FAILURE_LIMIT    3U
-#define FDIR_FRESHNESS_LIMIT          2U
-#define FDIR_SD_FAULT_LIMIT           3U
-#define FDIR_WATCHDOG_RESET_LIMIT     3U
+/* Data-staleness fault thresholds, in elapsed milliseconds since the last
+ * valid sample — see docs/FMECA.md Section 4. Rate-independent: the superloop
+ * runs FDIR_Update every iteration (no fixed tick), so a cycle-count debounce
+ * would trip at whatever rate the loop happens to spin at. The persisted SCV
+ * timeout_count fields report elapsed seconds instead (saturated at
+ * UINT8_MAX) purely for telemetry/SD-log compatibility; they are not compared
+ * against these thresholds directly. */
+#define FDIR_GPS_TIMEOUT_MS           30000U
+#define FDIR_IMU_TIMEOUT_MS           3000U
+#define FDIR_BARO_TIMEOUT_MS          3000U
+#define FDIR_CORAL_TIMEOUT_MS         5000U
+#define FDIR_BATT_TIMEOUT_MS          3000U
+#define FDIR_LORA_TX_FAILURE_LIMIT    3U      /* consecutive TX attempts, not time */
+#define FDIR_FRESHNESS_MS             2000U
+#define FDIR_SD_FAULT_LIMIT           3U      /* consecutive failed writes, not time */
+#define FDIR_WATCHDOG_RESET_LIMIT     3U      /* consecutive boots, not time */
 
 /* Cooldowns between recovery requests for the same equipment. GPS gets a
  * longer one: re-initialising the module too often disturbs fix acquisition
@@ -24,8 +27,8 @@
 #define FDIR_GPS_REINIT_PERIOD_MS     60000U
 
 /* Withhold the IWDG kick (forcing a reset) once the datapool has been stale
- * this many cycles despite bus-restart attempts — L3 escalation of FMECA C10. */
-#define FDIR_FRESHNESS_KICK_LIMIT     30U
+ * this long despite bus-restart attempts — L3 escalation of FMECA C10. */
+#define FDIR_FRESHNESS_KICK_MS        30000U
 
 /* Reduced-mode order (FMECA F2/L4): each watchdog reset beyond
  * FDIR_WATCHDOG_RESET_LIMIT disables the next subsystem's update call. */

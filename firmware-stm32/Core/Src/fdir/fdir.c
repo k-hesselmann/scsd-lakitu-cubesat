@@ -12,11 +12,12 @@
 
 typedef struct {
     uint16_t mask;                      /* EQUIPMENT_x fault/request bit    */
-    uint8_t  limit;                     /* cycles of invalid data -> fault  */
+    uint32_t timeout_ms;                /* elapsed ms of invalid data -> fault */
     const uint8_t *valid_flag;          /* into g_datapool                  */
-    uint8_t *timeout_count;             /* into g_scv, or RAM-only          */
+    uint8_t *timeout_count;             /* into g_scv, or RAM-only (seconds stale, telemetry only) */
     uint32_t reinit_period_ms;          /* 0 = detection only, no recovery  */
     uint32_t last_request_ms;
+    uint32_t last_ok_ms;                /* tick of last valid sample        */
 } FDIR_Monitor_t;
 
 static uint16_t s_reinit_requests;
@@ -24,23 +25,23 @@ static uint8_t  s_batt_timeout_count;   /* RAM-only: no SCV field for batt  */
 static uint8_t  s_subsys_enabled[FDIR_SUBSYS_COUNT];
 static uint32_t s_last_bus_restart_ms;
 static uint32_t s_prev_datapool_timestamp_ms;
-static uint32_t s_stale_cycles;
+static uint32_t s_stale_since_ms;       /* 0 = datapool timestamp currently advancing */
 
 /* One row per FMECA Section 4 debounce monitor. Escalation rules
  * (IMU ∧ baro -> bus restart, freshness, LoRa) stay explicit below.
  * TODO(FMECA C4/C6): IMU plausibility and GPS/baro altitude cross-check
  * monitors pending threshold agreement with the CDH owner. */
 static FDIR_Monitor_t s_monitors[] = {
-    { EQUIPMENT_GPS,     FDIR_GPS_TIMEOUT_LIMIT,   &g_datapool.gps_valid,
-      &g_scv.gps_timeout_count,   FDIR_GPS_REINIT_PERIOD_MS, 0U },
-    { EQUIPMENT_IMU,     FDIR_IMU_TIMEOUT_LIMIT,   &g_datapool.imu_valid,
-      &g_scv.imu_timeout_count,   FDIR_REINIT_PERIOD_MS,     0U },
-    { EQUIPMENT_BARO,    FDIR_BARO_TIMEOUT_LIMIT,  &g_datapool.baro_valid,
-      &g_scv.baro_timeout_count,  FDIR_REINIT_PERIOD_MS,     0U },
-    { EQUIPMENT_CORAL,   FDIR_CORAL_TIMEOUT_LIMIT, &g_datapool.coral_valid,
-      &g_scv.coral_timeout_count, 0U,                        0U },
-    { EQUIPMENT_EPS_ADC, FDIR_BATT_TIMEOUT_LIMIT,  &g_datapool.batt_valid,
-      &s_batt_timeout_count,      0U,                        0U },
+    { EQUIPMENT_GPS,     FDIR_GPS_TIMEOUT_MS,   &g_datapool.gps_valid,
+      &g_scv.gps_timeout_count,   FDIR_GPS_REINIT_PERIOD_MS, 0U, 0U },
+    { EQUIPMENT_IMU,     FDIR_IMU_TIMEOUT_MS,   &g_datapool.imu_valid,
+      &g_scv.imu_timeout_count,   FDIR_REINIT_PERIOD_MS,     0U, 0U },
+    { EQUIPMENT_BARO,    FDIR_BARO_TIMEOUT_MS,  &g_datapool.baro_valid,
+      &g_scv.baro_timeout_count,  FDIR_REINIT_PERIOD_MS,     0U, 0U },
+    { EQUIPMENT_CORAL,   FDIR_CORAL_TIMEOUT_MS, &g_datapool.coral_valid,
+      &g_scv.coral_timeout_count, 0U,                        0U, 0U },
+    { EQUIPMENT_EPS_ADC, FDIR_BATT_TIMEOUT_MS,  &g_datapool.batt_valid,
+      &s_batt_timeout_count,      0U,                        0U, 0U },
 };
 
 #define FDIR_MONITOR_COUNT (sizeof(s_monitors) / sizeof(s_monitors[0]))
@@ -81,6 +82,15 @@ static uint8_t FDIR_CooldownElapsed(uint32_t now_ms, uint32_t *last_ms,
     }
 
     return 0U;
+}
+
+/* Staleness expressed in whole seconds, saturated to fit the uint8_t SCV
+ * counters (kept for SD-log/telemetry compatibility). */
+static uint8_t FDIR_StaleSeconds(uint32_t now_ms, uint32_t last_ok_ms)
+{
+    uint32_t seconds = (now_ms - last_ok_ms) / 1000U;
+
+    return (seconds > UINT8_MAX) ? UINT8_MAX : (uint8_t)seconds;
 }
 
 static void FDIR_InitDefaults(SCV_t *scv)
@@ -187,9 +197,12 @@ void FDIR_Init(SCV_t *scv)
     s_batt_timeout_count = 0U;
     s_last_bus_restart_ms = 0U;
     s_prev_datapool_timestamp_ms = 0U;
-    s_stale_cycles = 0U;
+    s_stale_since_ms = 0U;
     for (uint32_t i = 0U; i < FDIR_MONITOR_COUNT; i++)
+    {
         s_monitors[i].last_request_ms = 0U;
+        s_monitors[i].last_ok_ms = HAL_GetTick();
+    }
 
     __HAL_RCC_CLEAR_RESET_FLAGS();
 
@@ -202,15 +215,15 @@ static void FDIR_RunMonitor(FDIR_Monitor_t *m, const SCV_t *scv,
 {
     if (*m->valid_flag)
     {
+        m->last_ok_ms = now_ms;
         *m->timeout_count = 0U;
         FDIR_SetEquipmentFault(m->mask, 0U);
         return;
     }
 
-    if (*m->timeout_count < UINT8_MAX)
-        (*m->timeout_count)++;
+    *m->timeout_count = FDIR_StaleSeconds(now_ms, m->last_ok_ms);
 
-    if (*m->timeout_count < m->limit)
+    if ((now_ms - m->last_ok_ms) < m->timeout_ms)
         return;
 
     FDIR_SetEquipmentFault(m->mask, 1U);
@@ -283,16 +296,17 @@ void FDIR_Update(SensorData_t *dp, SCV_t *scv)
     {
         if (dp->timestamp_ms == s_prev_datapool_timestamp_ms)
         {
-            if (s_stale_cycles < UINT32_MAX)
-                s_stale_cycles++;
+            if (s_stale_since_ms == 0U)
+                s_stale_since_ms = (now_ms != 0U) ? now_ms : 1U; /* keep 0 = "not stale" */
         }
         else
         {
-            s_stale_cycles = 0U;
+            s_stale_since_ms = 0U;
         }
         s_prev_datapool_timestamp_ms = dp->timestamp_ms;
 
-        if (s_stale_cycles >= FDIR_FRESHNESS_LIMIT)
+        if ((s_stale_since_ms != 0U) &&
+            ((now_ms - s_stale_since_ms) >= FDIR_FRESHNESS_MS))
         {
             FDIR_SetEquipmentFault(EQUIPMENT_CDH, 1U);
             if (FDIR_CooldownElapsed(now_ms, &s_last_bus_restart_ms,
@@ -314,5 +328,8 @@ uint8_t FDIR_SystemHealthyEnoughToKickWatchdog(void)
 
     /* Datapool stale for this long despite bus restarts: let the IWDG fire
      * (L3) — reset plus SCV restore is the remaining recovery (FMECA C10). */
-    return (s_stale_cycles < FDIR_FRESHNESS_KICK_LIMIT) ? 1U : 0U;
+    if (s_stale_since_ms == 0U)
+        return 1U;
+
+    return ((HAL_GetTick() - s_stale_since_ms) < FDIR_FRESHNESS_KICK_MS) ? 1U : 0U;
 }

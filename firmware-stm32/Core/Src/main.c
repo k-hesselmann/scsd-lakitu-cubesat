@@ -40,7 +40,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+/* Superloop scheduling periods. FDIR runs every iteration (ungated). */
+#define LOOP_CDH_FSW_PERIOD_MS  100U   /* CDH + FSW at 10 Hz */
+#define LOOP_SD_PERIOD_MS       1000U  /* SD logging at 1 Hz */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -148,6 +150,12 @@ int main(void)
   IWDG_UserInit();
 
   TelemetryPacket_t tx_packet = {0};
+
+  /* Superloop schedule: the loop free-runs (no delay) so FDIR executes at the
+   * maximum rate; CDH/FSW and SD are gated by elapsed-time slots below. TTC
+   * additionally rate-limits itself via TTC_TelemetryDue(). */
+  uint32_t last_cdh_fsw_ms = 0U;
+  uint32_t last_sd_ms = 0U;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -157,13 +165,26 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (FDIR_SubsystemEnabled(FDIR_SUBSYS_CDH))
-      CDH_Update(&g_datapool, &g_scv);
+    uint32_t now_ms = HAL_GetTick();
+
+    if ((now_ms - last_cdh_fsw_ms) >= LOOP_CDH_FSW_PERIOD_MS)
+    {
+      last_cdh_fsw_ms = now_ms;
+      if (FDIR_SubsystemEnabled(FDIR_SUBSYS_CDH))
+        CDH_Update(&g_datapool, &g_scv);
+      if (FDIR_SubsystemEnabled(FDIR_SUBSYS_FSW))
+        FSW_Update(&g_datapool);
+    }
+
     FDIR_Update(&g_datapool, &g_scv);
-    if (FDIR_SubsystemEnabled(FDIR_SUBSYS_FSW))
-      FSW_Update(&g_datapool);
-    if (FDIR_SubsystemEnabled(FDIR_SUBSYS_SD))
-      SD_Logger_Update(&g_datapool, &g_scv);
+
+    if ((now_ms - last_sd_ms) >= LOOP_SD_PERIOD_MS)
+    {
+      last_sd_ms = now_ms;
+      if (FDIR_SubsystemEnabled(FDIR_SUBSYS_SD))
+        SD_Logger_Update(&g_datapool, &g_scv);
+    }
+
     if (FDIR_SubsystemEnabled(FDIR_SUBSYS_TTC) && TTC_TelemetryDue())
     {
       FSW_BuildTelemetryPacket(&g_datapool, &g_scv, &tx_packet);
@@ -172,10 +193,11 @@ int main(void)
     SCV_Update(&g_scv);   /* periodic + event-driven flash backup */
 
     /* Kick at the END of the loop, so a blocked task above is recovered by
-     * reset; FDIR withholds the kick to escalate a stuck datapool (C10). */
+     * reset; FDIR withholds the kick to escalate a stuck datapool (C10).
+     * IWDG timeout must be < 10 s (FR-011) yet tolerate the worst-case ~5 s
+     * blocking LoRa transmit inside TTC_Transmit. */
     if (FDIR_SystemHealthyEnoughToKickWatchdog())
       (void)HAL_IWDG_Refresh(&hiwdg);
-    HAL_Delay(1000);
   }
   /* USER CODE END 3 */
 }

@@ -81,7 +81,7 @@ send failure is currently permanent.
 | F1 | MCU | superloop hangs | blocking call, logic bug | everything stops | mission loss if unrecovered | IWDG — **not enabled yet (main.c TODO)**; kick at end of loop only | — | watchdog reset; SCV restores phase/state | any | 4 | L3 |
 | F2 | MCU | repeated watchdog resets (boot loop) | persistent fault re-triggered each boot | reset storm | mission loss | `watchdog_reset_count >= 3` (counted today, **not acted on**) | staged: each further reset disables the next subsystem update (SD → CDH → TTC → FSW) | reduced mode; FDIR + watchdog kick stay alive at every stage | any | 4 | L4 |
 | F3 | SCV/flash | SCV corrupt or erased | reset during flash write, wear | state lost | phase/counters reset | magic + CRC16 check (exists) | — | reinit defaults; log the event | any | 2 | L1 |
-| F4 | FSW time | `mission_elapsed_ms` resets on reboot | boot-relative tick stored as mission time (fdir.c:183) | wrong mission time after any reset | phase logic errors if time-dependent | code review finding — fix, not monitor | — | boot-offset reconstruction from SCV (FDIR_DRAFT sketch) | any | 2 | — |
+| F4 | FSW time | `mission_elapsed_ms` resets on reboot | boot-relative tick stored as mission time (fdir.c:183) | wrong mission time after any reset | phase logic errors if time-dependent | code review finding — fix, not monitor | — | boot-offset reconstruction from SCV | any | 2 | — |
 
 ## 4. Derived monitor specification
 

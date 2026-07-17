@@ -30,9 +30,10 @@
  * releases. Adjust if false triggers occur near windy ground conditions. */
 #define FSM_LAUNCH_BARO_RISE_M    3.0f   /* m over window — TBD from bench test */
 
-/* Persistence window: both OR conditions evaluated over this many consecutive
- * 1 Hz samples. FR-005 specifies 2 s. Short because the launch jerk is brief. */
-#define FSM_LAUNCH_WINDOW_S       2      /* seconds */
+/* Persistence window: the OR condition must hold continuously for this long
+ * (elapsed-time debounce, sample-rate independent). FR-005 specifies 2 s.
+ * Short because the launch jerk is brief. */
+#define FSM_LAUNCH_WINDOW_MS      2000U  /* ms */
 
 
 /* ── Launch → Ascent ──────────────────────────────────────────────────────── */
@@ -48,7 +49,7 @@
 
 /* Persistence window. No hard requirement in FR-006 beyond both conditions met.
  * A few seconds avoids triggering on a momentary GPS spike. TBD from test. */
-#define FSM_ASCENT_WINDOW_S       3      /* seconds — TBD */
+#define FSM_ASCENT_WINDOW_MS      3000U  /* ms — TBD */
 
 
 /* ── Ascent → Cruise ──────────────────────────────────────────────────────── */
@@ -66,7 +67,7 @@
 
 /* Persistence window. FR-007 specifies 30 s. Float develops gradually;
  * long window avoids premature trigger during ascent slowdowns. */
-#define FSM_CRUISE_WINDOW_S       30     /* seconds */
+#define FSM_CRUISE_WINDOW_MS      30000U /* ms */
 
 
 /* ── Ascent/Cruise → Descent (burst detection) ───────────────────────────── */
@@ -84,7 +85,7 @@
 
 /* Persistence window. FR-008 specifies 10 s. Burst is sharp but parachute
  * deployment may temporarily slow descent. 10 s confirms sustained fall. */
-#define FSM_DESCENT_WINDOW_S      10     /* seconds */
+#define FSM_DESCENT_WINDOW_MS     10000U /* ms */
 
 
 /* ── Descent → Landing ────────────────────────────────────────────────────── */
@@ -102,7 +103,7 @@
 
 /* Persistence window. FR-009 specifies 5 s. Touchdown is unambiguous;
  * short window is sufficient. */
-#define FSM_LANDING_WINDOW_S      5      /* seconds */
+#define FSM_LANDING_WINDOW_MS     5000U  /* ms */
 
 
 /* ── Cross-cutting ────────────────────────────────────────────────────────── */
@@ -112,7 +113,9 @@
  * Increase if noise is worse than expected; decrease if phase detection is sluggish. */
 #define FSM_MEDIAN_WINDOW         5      /* samples */
 
-/* Watchdog kick period. Must be < 10 s (FR-011). Kicked in the main superloop. */
-#define FSM_WATCHDOG_KICK_S       1      /* seconds — once per superloop tick */
+/* Watchdog kick period. Must be < 10 s (FR-011). The main superloop free-runs
+ * (no fixed tick) and the IWDG is kicked once per iteration when FDIR reports
+ * the system healthy; this constant is not currently read in code. */
+#define FSM_WATCHDOG_KICK_S       1      /* seconds */
 
 #endif /* FSW_FSM_THRESHOLDS_H */

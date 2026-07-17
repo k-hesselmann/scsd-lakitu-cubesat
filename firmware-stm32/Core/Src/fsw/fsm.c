@@ -8,11 +8,13 @@
 #include <string.h>
 
 static FlightPhase_t s_phase = PHASE_STANDBY;
-static uint8_t s_standby_to_launch_count = 0U;
-static uint8_t s_launch_to_ascent_count = 0U;
-static uint8_t s_ascent_to_cruise_count = 0U;
-static uint8_t s_descent_count = 0U;
-static uint8_t s_landing_count = 0U;
+/* Tick at which each transition condition first became (and stayed) true;
+ * 0 = condition not currently held. */
+static uint32_t s_standby_to_launch_since_ms = 0U;
+static uint32_t s_launch_to_ascent_since_ms = 0U;
+static uint32_t s_ascent_to_cruise_since_ms = 0U;
+static uint32_t s_descent_since_ms = 0U;
+static uint32_t s_landing_since_ms = 0U;
 static uint8_t s_cruise_baro_ref_valid = 0U;
 static float s_cruise_baro_ref_m = 0.0f;
 static float s_float_accel_baseline_g = 1.0f;
@@ -55,11 +57,11 @@ static uint8_t FSW_IsValidPhase(uint8_t phase)
 
 static void FSW_ResetTransitionCounters(void)
 {
-    s_standby_to_launch_count = 0U;
-    s_launch_to_ascent_count = 0U;
-    s_ascent_to_cruise_count = 0U;
-    s_descent_count = 0U;
-    s_landing_count = 0U;
+    s_standby_to_launch_since_ms = 0U;
+    s_launch_to_ascent_since_ms = 0U;
+    s_ascent_to_cruise_since_ms = 0U;
+    s_descent_since_ms = 0U;
+    s_landing_since_ms = 0U;
     s_cruise_baro_ref_valid = 0U;
 }
 
@@ -73,19 +75,23 @@ static void FSW_SetPhase(FlightPhase_t phase)
     FSW_ResetTransitionCounters();
 }
 
-static uint8_t FSW_CountCondition(uint8_t condition, uint8_t *counter, uint8_t limit)
+/* Elapsed-time debounce: returns 1 once `condition` has held continuously for
+ * `window_ms`. Rate-independent — FSW_Update may be called at any frequency.
+ * A single false sample releases the latch and restarts the window. */
+static uint8_t FSW_ConditionHeld(uint8_t condition, uint32_t *since_ms, uint32_t window_ms)
 {
-    if (condition)
+    uint32_t now_ms = HAL_GetTick();
+
+    if (!condition)
     {
-        if (*counter < UINT8_MAX)
-            (*counter)++;
-    }
-    else
-    {
-        *counter = 0U;
+        *since_ms = 0U;
+        return 0U;
     }
 
-    return *counter >= limit;
+    if (*since_ms == 0U)
+        *since_ms = (now_ms != 0U) ? now_ms : 1U; /* keep 0 = "not held" */
+
+    return (now_ms - *since_ms) >= window_ms;
 }
 
 void FSW_Init(void)
@@ -121,14 +127,14 @@ void FSW_Update(const SensorData_t *dp)
     case PHASE_STANDBY:
         launch_condition = ((imu_usable && dp->imu_accel_mag_g > FSM_LAUNCH_ACCEL_G) ||
                             (baro_usable && dp->baro_alt_m > FSM_LAUNCH_BARO_RISE_M));
-        if (FSW_CountCondition(launch_condition, &s_standby_to_launch_count, FSM_LAUNCH_WINDOW_S))
+        if (FSW_ConditionHeld(launch_condition, &s_standby_to_launch_since_ms, FSM_LAUNCH_WINDOW_MS))
             FSW_SetPhase(PHASE_LAUNCH);
         break;
 
     case PHASE_LAUNCH:
         ascent_condition = ((baro_usable && dp->baro_alt_m > FSM_ASCENT_ALT_M) ||
                             (gps_usable && dp->gps_vel_down_mps < FSM_ASCENT_VEL_DOWN_MPS));
-        if (FSW_CountCondition(ascent_condition, &s_launch_to_ascent_count, FSM_ASCENT_WINDOW_S))
+        if (FSW_ConditionHeld(ascent_condition, &s_launch_to_ascent_since_ms, FSM_ASCENT_WINDOW_MS))
             FSW_SetPhase(PHASE_ASCENT);
         break;
 
@@ -136,7 +142,7 @@ void FSW_Update(const SensorData_t *dp)
         accel_delta_g = imu_usable ? fabsf(dp->imu_accel_mag_g - s_float_accel_baseline_g) : 0.0f;
         descent_condition = ((imu_usable && accel_delta_g > FSM_DESCENT_ACCEL_DELTA_G) ||
                              (gps_usable && dp->gps_vel_down_mps > FSM_DESCENT_VEL_DOWN_MPS));
-        if (FSW_CountCondition(descent_condition, &s_descent_count, FSM_DESCENT_WINDOW_S))
+        if (FSW_ConditionHeld(descent_condition, &s_descent_since_ms, FSM_DESCENT_WINDOW_MS))
         {
             FSW_SetPhase(PHASE_DESCENT);
             break;
@@ -151,7 +157,7 @@ void FSW_Update(const SensorData_t *dp)
         cruise_condition = ((gps_usable && dp->gps_vel_down_mps > FSM_CRUISE_VEL_DOWN_MPS) ||
                             (baro_usable && s_cruise_baro_ref_valid &&
                              fabsf(dp->baro_alt_m - s_cruise_baro_ref_m) < FSM_CRUISE_ALT_BAND_M));
-        if (FSW_CountCondition(cruise_condition, &s_ascent_to_cruise_count, FSM_CRUISE_WINDOW_S))
+        if (FSW_ConditionHeld(cruise_condition, &s_ascent_to_cruise_since_ms, FSM_CRUISE_WINDOW_MS))
             FSW_SetPhase(PHASE_CRUISE);
         break;
 
@@ -162,14 +168,14 @@ void FSW_Update(const SensorData_t *dp)
         accel_delta_g = imu_usable ? fabsf(dp->imu_accel_mag_g - s_float_accel_baseline_g) : 0.0f;
         descent_condition = ((imu_usable && accel_delta_g > FSM_DESCENT_ACCEL_DELTA_G) ||
                              (gps_usable && dp->gps_vel_down_mps > FSM_DESCENT_VEL_DOWN_MPS));
-        if (FSW_CountCondition(descent_condition, &s_descent_count, FSM_DESCENT_WINDOW_S))
+        if (FSW_ConditionHeld(descent_condition, &s_descent_since_ms, FSM_DESCENT_WINDOW_MS))
             FSW_SetPhase(PHASE_DESCENT);
         break;
 
     case PHASE_DESCENT:
         landing_condition = ((gps_usable && dp->gps_speed_mps < FSM_LANDING_SPEED_MPS) ||
                              (baro_usable && dp->baro_alt_m < FSM_LANDING_ALT_M));
-        if (FSW_CountCondition(landing_condition, &s_landing_count, FSM_LANDING_WINDOW_S))
+        if (FSW_ConditionHeld(landing_condition, &s_landing_since_ms, FSM_LANDING_WINDOW_MS))
             FSW_SetPhase(PHASE_LANDING);
         break;
 
