@@ -195,12 +195,52 @@ Offset  Size  Field     Value
 
 Total: **7 bytes**
 
-### 4.3 Reserved / planned commands
+### 4.3 SLEEP  (0x17)
 
-The firmware currently implements only `TRIGGER` (0x10) and `SET_INTERVAL`
-(0x11); the opcodes below are **reserved** for planned commands so the OBC team
-can design around them and the command space is not reused. Each will follow the
-same framing (CMD + payload + CRC-16/CCITT-FALSE, ACK/NAK reply) when added.
+Suspend inference. The payload stops all captures — periodic, `TRIGGER`, and the
+bench button — and blocks until a `WAKE`. The camera and Edge TPU stay powered
+(this suspends the inference work, the dominant draw, not a full power-down), and
+the command receiver stays live so `WAKE` still gets through. A `TRIGGER` or
+button press while asleep is accepted but produces no capture.
+
+**Dead-man auto-wake (important):** a `SLEEP` only suspends for **at most 5
+minutes**. If no `WAKE` arrives in that window the payload **resumes inference on
+its own** — so a crashed or reset OBC can never leave the payload dark for the
+rest of the flight. Each `SLEEP` re-arms the 5-minute timer, so to keep the
+payload asleep the OBC must either (a) re-send `SLEEP` after each auto-wake, or
+(b) send `SLEEP` as a heartbeat more often than every 5 minutes. After an
+auto-wake the payload is fully awake and inferring until told to `SLEEP` again.
+
+```
+Offset  Size  Field   Value
+──────  ────  ──────  ─────────────────────────────
+0       1     CMD     0x17
+1       2     CRC16   CRC-16/CCITT-FALSE over byte 0 only
+```
+
+Total: **3 bytes**
+
+### 4.4 WAKE  (0x18)
+
+Resume inference after `SLEEP`. The payload captures one frame immediately, then
+returns to the periodic schedule at the current interval. No-op (ACK) if already
+awake.
+
+```
+Offset  Size  Field   Value
+──────  ────  ──────  ─────────────────────────────
+0       1     CMD     0x18
+1       2     CRC16   CRC-16/CCITT-FALSE over byte 0 only
+```
+
+Total: **3 bytes**
+
+### 4.5 Reserved / planned commands
+
+Implemented today: `TRIGGER` (0x10), `SET_INTERVAL` (0x11), `SLEEP` (0x17),
+`WAKE` (0x18). The opcodes below are **reserved** for planned commands so the OBC
+team can design around them and the command space is not reused. Each will follow
+the same framing (CMD + payload + CRC-16/CCITT-FALSE, ACK/NAK reply) when added.
 Tracked payload-side in [`payload/coral/docs/TODO.md`](../payload/coral/docs/TODO.md) §3.
 
 | CMD  | Name              | Purpose                                                       |
@@ -210,11 +250,12 @@ Tracked payload-side in [`payload/coral/docs/TODO.md`](../payload/coral/docs/TOD
 | 0x14 | `SOFT_RESET`      | Commanded reboot                                              |
 | 0x16 | `SET_EXPOSURE`    | Adjust camera params (e.g. motion-blur tuning in flight)      |
 
-> 0x15 is intentionally skipped — it is the NAK response byte (§5).
-> These opcodes are not yet implemented: sending one today yields a single
-> **NAK** (per §5). Behaviour for unknown/garbage commands beyond that single
-> NAK (e.g. a resync window so line noise can't wedge the parser) is itself an
-> open item.
+> 0x15 is intentionally skipped — it is the NAK response byte (§5). 0x17/0x18
+> are now taken by SLEEP/WAKE, so the next free opcode is 0x19.
+> These reserved opcodes are not yet implemented: sending one today yields a
+> single **NAK** (per §5). Behaviour for unknown/garbage commands beyond that
+> single NAK (e.g. a resync window so line noise can't wedge the parser) is
+> itself an open item.
 
 ---
 

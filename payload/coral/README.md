@@ -58,7 +58,16 @@ git push -u origin board-h-uart7
 git clone --recurse-submodules git@github.com:k-hesselmann/scsd-lakitu-cubesat.git
 cd scsd-lakitu-cubesat/payload/coral
 
-cmake -B out -S .
+cmake -B out -S .                 # flight build — debug tooling compiled out
+make -C out -j$(nproc)
+```
+
+The bench debug tooling (last-image / burst RPC endpoints + button-hold burst
+capture) is off by default. To build the bench firmware that keeps it, configure
+with `-DCLOUD_DEBUG=ON`:
+
+```bash
+cmake -B out -S . -DCLOUD_DEBUG=ON
 make -C out -j$(nproc)
 ```
 
@@ -76,6 +85,9 @@ then unplug/replug.
 
 ## Debug image client (host)
 
+Requires a firmware built with `-DCLOUD_DEBUG=ON` (see Build) — the flight image
+does not export these RPC endpoints.
+
 ```bash
 pip install -r requirements.txt
 python3 tools/cloud_regressor_client.py            # last frame, preview
@@ -83,5 +95,5 @@ python3 tools/cloud_regressor_client.py --save ./debug_frames/   # save clean PN
 python3 tools/cloud_regressor_client.py --burst --save ./burst_frames/  # button burst
 ```
 
-The `get_last_image` / burst RPC endpoints and this client are **debug-only**
-and marked for removal before flight (see `docs/TODO.md`).
+The `get_last_image` / burst RPC endpoints and this client are **bench-only**;
+they compile out of the default (flight) build via the `CLOUD_DEBUG` flag.

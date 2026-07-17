@@ -23,6 +23,12 @@ authoritative spec in [UART_PROTOCOL.md](UART_PROTOCOL.md); this is the integrat
 - **Link:** UART6, **115200 8N1**, no hardware flow control. TX = Coral→OBC, RX = OBC→Coral.
 - **Cadence:** one inference every N seconds (default 10 000 ms, min recommended 1 000 ms,
   settable by the OBC via `SET_INTERVAL`).
+- **Sleep control:** the OBC can suspend inference with `SLEEP` (0x17) and resume with
+  `WAKE` (0x18) — e.g. to save power during phases where cloud data isn't needed. While
+  asleep the payload sends nothing; `WAKE` triggers an immediate capture then resumes the
+  schedule. **`SLEEP` self-expires after 5 minutes (dead-man auto-wake)** so a dead/reset
+  OBC can't leave the payload dark — to stay asleep longer the OBC must re-send `SLEEP`
+  (each one re-arms the 5-minute timer). (UART_PROTOCOL.md §4.3–4.4.)
 - **Per inference, the payload sends one Image Packet** (UART_PROTOCOL.md §3):
   SOF `0xAA55`, TYPE, SEQ (uint32), LEN, FRAC, WIDTH, HEIGHT, FORMAT, raw pixels,
   **CRC-16/CCITT-FALSE** over TYPE…last-pixel.
