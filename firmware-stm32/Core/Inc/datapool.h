@@ -20,6 +20,9 @@
 #define EQUIPMENT_SD              (1U << 4)
 #define EQUIPMENT_LORA            (1U << 5)
 #define EQUIPMENT_EPS_ADC         (1U << 6)
+/* Pseudo-equipment: datapool freshness fault raised by FDIR when CDH stops
+ * advancing timestamp_ms (FMECA C10). Never part of EQUIPMENT_ALL_NOMINAL. */
+#define EQUIPMENT_CDH             (1U << 15)
 
 #define EQUIPMENT_ALL_NOMINAL     (EQUIPMENT_GPS | EQUIPMENT_IMU | EQUIPMENT_BARO | \
                                    EQUIPMENT_CORAL | EQUIPMENT_SD | EQUIPMENT_LORA | \
@@ -98,6 +101,10 @@ typedef struct __attribute__((packed)) {
     uint8_t  imu_timeout_count;
     uint8_t  baro_timeout_count;
     uint8_t  coral_timeout_count;
+    /* Mirror of TTC's consecutive TX failure count (FMECA T1). Persisted in
+     * the SCV; NOT yet in TelemetryPacket_t (v3) or the CSV — add both at
+     * the next coordinated format revision (v4). */
+    uint8_t  lora_timeout_count;
     uint8_t  sd_fault_count;
     uint8_t  watchdog_reset_count;
 
