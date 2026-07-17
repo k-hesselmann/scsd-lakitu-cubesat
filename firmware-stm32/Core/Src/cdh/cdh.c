@@ -3,6 +3,7 @@
 #include "cdh/mpu6050_equipment_handler.h"
 #include "cdh/ms5607_equipment_handler.h"
 #include "cdh/gps_equipment_handler.h"
+#include "cdh/battery_adc.h"
 #include "cdh/cdh_debug.h"
 #include "cdh/cdh_fdir.h"
 #include "cdh/coral.h"
@@ -12,6 +13,7 @@
 #include <math.h>
 
 extern I2C_HandleTypeDef hi2c1;
+extern ADC_HandleTypeDef hadc1;
 
 static MPU6050_EquipmentHandler s_imu;
 static MS5607_EquipmentHandler  s_baro;
@@ -100,7 +102,9 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
     CDH_FDIR_BusRestart_Process(&s_fdir, &hi2c1);
     dp->i2c_bus_state = s_fdir.bus_state;
 
-    /* TODO: read ADC for battery voltage — fill batt_voltage_mv, set batt_valid */
+    /* ---- Battery voltage (PA0 = ADC1_IN5, 22k/10k divider) ---- */
+    dp->batt_valid = BatteryADC_Read(&hadc1, &dp->batt_voltage_mv);
+
     Coral_Update(dp);
     /* TODO: write updated scv to NVM */
 
