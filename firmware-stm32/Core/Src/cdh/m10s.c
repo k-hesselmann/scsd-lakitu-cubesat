@@ -18,6 +18,10 @@
 
 extern UART_HandleTypeDef huart2;
 
+/* Forward declarations for helpers used before their definitions */
+static uint8_t M10S_GetBytesAvailable(I2C_HandleTypeDef *hi2c, uint8_t *bytes_avail);
+static uint8_t M10S_ReadDataStream(I2C_HandleTypeDef *hi2c, uint8_t *buffer, uint16_t len);
+
 /* ========================================================================== */
 /* UBX Protocol Constants                                                    */
 /* ========================================================================== */

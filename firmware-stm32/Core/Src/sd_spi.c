@@ -5,19 +5,28 @@
 #include "spi.h"
 #endif
 
-extern SPI_HandleTypeDef  hspi1;
+extern SPI_HandleTypeDef  hspi2;
 extern UART_HandleTypeDef huart2;   /* NUCLEO ST-LINK virtual COM port */
+
+#ifndef SD_SPI_DEBUG
+#define SD_SPI_DEBUG 0   /* set to 1 to enable the SD init trace on UART2 */
+#endif
 
 /* ------------------------------------------------------------------ */
 /*  Debug UART helper - reads on any 115200-8N1 serial terminal        */
 /* ------------------------------------------------------------------ */
 static void dbg(const char *msg)
 {
+#if SD_SPI_DEBUG
   HAL_UART_Transmit(&huart2, (const uint8_t *)msg, (uint16_t)strlen(msg), 100);
+#else
+  (void)msg;
+#endif
 }
 
 static void dbg_hex(const char *label, uint8_t val)
 {
+#if SD_SPI_DEBUG
   const char hex[] = "0123456789ABCDEF";
   char buf[64];
   uint8_t i = 0;
@@ -27,6 +36,10 @@ static void dbg_hex(const char *label, uint8_t val)
   buf[i++] = hex[val & 0xF];
   buf[i++] = '\r'; buf[i++] = '\n'; buf[i] = '\0';
   dbg(buf);
+#else
+  (void)label;
+  (void)val;
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -48,6 +61,24 @@ static void dbg_hex(const char *label, uint8_t val)
 #define CT_BLOCK 0x08
 
 static uint8_t card_type = 0;
+static void sd_cs_high(void);
+
+static void sd_spi_set_prescaler(uint32_t prescaler)
+{
+  sd_cs_high();
+  while (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_BSY)) { }
+  __HAL_SPI_DISABLE(&hspi2);
+  MODIFY_REG(hspi2.Instance->CR1, SPI_CR1_BR, prescaler);
+  hspi2.Init.BaudRatePrescaler = prescaler;
+  __HAL_SPI_ENABLE(&hspi2);
+}
+
+static void sd_spi_set_high_speed(void)
+{
+  /* Initialization must stay below 400 kHz. After the card leaves idle,
+   * raise SPI2 from /256 (312.5 kHz) to /8 (10 MHz at 80 MHz PCLK1). */
+  sd_spi_set_prescaler(SPI_BAUDRATEPRESCALER_8);
+}
 
 static void sd_cs_high(void)
 {
@@ -69,18 +100,18 @@ static uint8_t spi_xchg(uint8_t data)
   uint8_t rx = 0xFF;
   HAL_StatusTypeDef status;
 
-  status = HAL_SPI_TransmitReceive(&hspi1, &data, &rx, 1, 1000);
+  status = HAL_SPI_TransmitReceive(&hspi2, &data, &rx, 1, 1000);
 
   spi_rx_last = rx;
 
   if (status != HAL_OK)
   {
     spi_error_count++;
-    spi_hal_error_last = HAL_SPI_GetError(&hspi1);
-    spi_hal_state_last = hspi1.State;
+    spi_hal_error_last = HAL_SPI_GetError(&hspi2);
+    spi_hal_state_last = hspi2.State;
     /* Force HAL state machine back to ready so next call can proceed */
-    hspi1.State = HAL_SPI_STATE_READY;
-    __HAL_SPI_CLEAR_OVRFLAG(&hspi1);
+    hspi2.State = HAL_SPI_STATE_READY;
+    __HAL_SPI_CLEAR_OVRFLAG(&hspi2);
     return 0xFF;
   }
 
@@ -195,7 +226,7 @@ uint8_t SD_SPI_Init(void)
   uint8_t  n, ty = 0, ocr[4], r;
   uint32_t start;
 
-  /* ---- Ensure CS pin (PB6) is configured as push-pull output. ---- */
+  /* ---- Ensure CS pin (PB1) is configured as push-pull output. ---- */
   {
     GPIO_InitTypeDef _cs = {0};
     __HAL_RCC_GPIOB_CLK_ENABLE();
@@ -206,6 +237,10 @@ uint8_t SD_SPI_Init(void)
     _cs.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(SD_CS_GPIO_Port, &_cs);
   }
+
+  /* Recovery can call this after normal I/O switched SPI2 to /8. Every
+   * initialization must return below 400 kHz before idle clocks and CMD0. */
+  sd_spi_set_prescaler(SPI_BAUDRATEPRESCALER_256);
 
   dbg("\r\n[SD] ===== Init start =====\r\n");
 
@@ -338,6 +373,7 @@ uint8_t SD_SPI_Init(void)
 
   if (card_type)
   {
+    sd_spi_set_high_speed();
     dbg("[SD] ===== Init SUCCESS =====\r\n");
     return 0;
   }
@@ -384,5 +420,47 @@ uint8_t SD_SPI_Sync(void)
   ok = wait_ready(500);
   deselect_card();
   return ok;
+}
+
+uint8_t SD_SPI_GetSectorCount(uint32_t *sector_count)
+{
+  uint8_t csd[16];
+  uint64_t sectors;
+
+  if (sector_count == NULL || card_type == 0U)
+    return 1U;
+
+  if (send_command(CMD9, 0U) != 0U || !receive_data_block(csd, sizeof(csd)))
+  {
+    deselect_card();
+    return 1U;
+  }
+  deselect_card();
+
+  if ((csd[0] & 0xC0U) == 0x40U)
+  {
+    uint32_t c_size = ((uint32_t)(csd[7] & 0x3FU) << 16) |
+                      ((uint32_t)csd[8] << 8) |
+                      (uint32_t)csd[9];
+    sectors = ((uint64_t)c_size + 1ULL) << 10;
+  }
+  else
+  {
+    uint32_t read_bl_len = csd[5] & 0x0FU;
+    uint32_t c_size = ((uint32_t)(csd[6] & 0x03U) << 10) |
+                      ((uint32_t)csd[7] << 2) |
+                      ((uint32_t)(csd[8] & 0xC0U) >> 6);
+    uint32_t c_size_mult = ((uint32_t)(csd[9] & 0x03U) << 1) |
+                           ((uint32_t)(csd[10] & 0x80U) >> 7);
+    uint64_t block_count = ((uint64_t)c_size + 1ULL) << (c_size_mult + 2U);
+    uint64_t block_length = 1ULL << read_bl_len;
+    sectors = (block_count * block_length) / 512ULL;
+  }
+
+  if (sectors == 0ULL || sectors > UINT32_MAX)
+    return 1U;
+
+  *sector_count = (uint32_t)sectors;
+  return 0U;
 }
 

@@ -95,9 +95,14 @@ void GPS_Diag_Test(I2C_HandleTypeDef *hi2c)
   }
 
   if (read_success) {
+    int lat = (int)(pvt.latitude * 1000000.0);
+    int lon = (int)(pvt.longitude * 1000000.0);
+
     len = snprintf((char*)debug_buffer, sizeof(debug_buffer),
-      "✓ GPS responding: Lat=%.6f Lon=%.6f Sats=%d Fix=%d\r\n",
-      pvt.latitude, pvt.longitude, pvt.num_satellites, pvt.fix_type);
+      "✓ GPS responding: Lat=%d.%06d Lon=%d.%06d Sats=%d Fix=%d\r\n",
+      lat / 1000000, (lat < 0 ? -lat : lat) % 1000000,
+      lon / 1000000, (lon < 0 ? -lon : lon) % 1000000,
+      pvt.num_satellites, pvt.fix_type);
     HAL_UART_Transmit(&huart2, debug_buffer, len, 100);
   } else {
     len = snprintf((char*)debug_buffer, sizeof(debug_buffer),

@@ -33,6 +33,7 @@
 /* Exported constants --------------------------------------------------------*/
 /* Exported functions ------------------------------------------------------- */
 extern Diskio_drvTypeDef  USER_Driver;
+void USER_force_reinitialize(void);
 
 /* USER CODE END 0 */
 

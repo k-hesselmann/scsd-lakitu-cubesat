@@ -28,6 +28,7 @@
 #include "datapool.h"
 #include "fdir/fdir.h"
 #include "fsw/fsm.h"
+#include "sd_logger.h"
 #include "ttc/ttc.h"
 /* USER CODE END Includes */
 
@@ -55,9 +56,11 @@ UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
-/* SPI1 is hand-added (not in the .ioc) for the SD card. Kept in a USER-CODE
- * block so a CubeMX regeneration does not delete it. */
+/* SPI1/SPI2 are now in the .ioc; a CubeMX regen also declares these handles
+ * in the generated section above. Duplicate tentative definitions are legal C,
+ * so these stay here to keep the pre-regen sources buildable. */
 SPI_HandleTypeDef hspi1;
+SPI_HandleTypeDef hspi2;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -69,8 +72,9 @@ static void MX_USART2_UART_Init(void);
 static void MX_UART5_Init(void);
 static void MX_UART4_Init(void);
 /* USER CODE BEGIN PFP */
-/* Hand-added SPI1 init for the SD card — see body in the USER CODE 4 block. */
+/* Hand-added SPI init functions; see bodies in the USER CODE 4 block. */
 static void SPI1_UserInit(void);
+static void SPI2_UserInit(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -114,11 +118,13 @@ int main(void)
   MX_UART5_Init();
   MX_UART4_Init();
   /* USER CODE BEGIN 2 */
-  SPI1_UserInit();   /* hand-added SPI1 for the SD card (must precede CDH_Init) */
+  SPI2_UserInit();   /* hand-added SPI2 for the SD card (must precede CDH_Init) */
+  SPI1_UserInit();   /* hand-added SPI1 for the LoRa radio */
   FDIR_Init(&g_scv);
   CDH_Init();
   FSW_Init();
   TTC_Init();
+  SD_Logger_Init(&g_scv);
   GPS_Diag_Test(&hi2c1);
   Baro_Diag_Test(&hi2c1);
 
@@ -135,8 +141,12 @@ int main(void)
     CDH_Update(&g_datapool, &g_scv);
     FDIR_Update(&g_datapool, &g_scv);
     FSW_Update(&g_datapool);
-    FSW_BuildTelemetryPacket(&g_datapool, &tx_packet);
-    TTC_Transmit(&tx_packet);
+    SD_Logger_Update(&g_datapool, &g_scv);
+    if (TTC_TelemetryDue())
+    {
+      FSW_BuildTelemetryPacket(&g_datapool, &g_scv, &tx_packet);
+      TTC_Transmit(&tx_packet);
+    }
     /* TODO: refresh IWDG here if FDIR_SystemHealthyEnoughToKickWatchdog(). */
     HAL_Delay(1000);
   }
@@ -445,22 +455,34 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-/* Hand-added SPI1 initialisation for the SD card. Lives in a USER-CODE block
- * (not the CubeMX-generated MX_* section) so a .ioc regeneration cannot delete
- * it. SPI1 is intentionally absent from the .ioc, so this also does the clock +
- * GPIO setup itself rather than relying on HAL_SPI_MspInit() (which regen would
- * drop). The manual config is idempotent if that MSP branch is still present. */
 static void SPI1_UserInit(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   __HAL_RCC_SPI1_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+
+  HAL_GPIO_WritePin(LORA_CS_GPIO_Port, LORA_CS_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(LORA_RST_GPIO_Port, LORA_RST_Pin, GPIO_PIN_SET);
+
+  GPIO_InitStruct.Pin = LORA_CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(LORA_CS_GPIO_Port, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = LORA_RST_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(LORA_RST_GPIO_Port, &GPIO_InitStruct);
 
   /* SPI1: PA5=SCK, PA6=MISO, PA7=MOSI */
   GPIO_InitStruct.Pin = GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_7;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   GPIO_InitStruct.Alternate = GPIO_AF5_SPI1;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
@@ -472,7 +494,7 @@ static void SPI1_UserInit(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_128;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -480,6 +502,43 @@ static void SPI1_UserInit(void)
   hspi1.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
   hspi1.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
   if (HAL_SPI_Init(&hspi1) != HAL_OK)
+        Error_Handler();
+}
+
+/* SPI2 initialisation for the SD card. SPI2 is also configured in the .ioc,
+ * so after a CubeMX regen MX_SPI2_Init() performs the same setup; this
+ * user-code copy keeps the pre-regen sources self-contained and is idempotent,
+ * doing its own clock + GPIO setup. */
+static void SPI2_UserInit(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  __HAL_RCC_SPI2_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /* SPI2: PB13=SCK, PB14=MISO, PB15=MOSI */
+  GPIO_InitStruct.Pin = GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  hspi2.Instance = SPI2;
+  hspi2.Init.Mode = SPI_MODE_MASTER;
+  hspi2.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi2.Init.NSS = SPI_NSS_SOFT;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
+  hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi2.Init.CRCPolynomial = 7;
+  hspi2.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
+  hspi2.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
+  if (HAL_SPI_Init(&hspi2) != HAL_OK)
         Error_Handler();
 }
 /* USER CODE END 4 */
