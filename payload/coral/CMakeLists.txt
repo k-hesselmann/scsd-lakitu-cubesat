@@ -12,6 +12,11 @@ project(cloud-payload)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
+# Bench-only debug tooling (last-image / burst RPC endpoints + button-hold burst
+# ring) is compiled out by default so the flight image is clean. Configure with
+# -DCLOUD_DEBUG=ON to build the bench firmware that keeps those hooks.
+option(CLOUD_DEBUG "Build bench debug tooling (RPC image/burst endpoints)" OFF)
+
 # So firmware includes like "libs/base/..." and "third_party/nxp/..." resolve
 # against the coralmicro submodule, and pull in its build.
 include_directories(coralmicro)
@@ -24,6 +29,10 @@ add_executable_m7(cloud_payload
     DATA
     ${CMAKE_CURRENT_LIST_DIR}/models/cloud_regressor_qat_int8_edgetpu.tflite
 )
+
+if (CLOUD_DEBUG)
+    target_compile_definitions(cloud_payload PRIVATE CLOUD_DEBUG=1)
+endif()
 
 target_link_libraries(cloud_payload
     libs_base-m7_freertos

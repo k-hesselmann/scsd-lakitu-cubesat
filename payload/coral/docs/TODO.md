@@ -3,16 +3,20 @@
 Tracking items intentionally left out of the PoC. None block the proof of
 concept; all matter before an actual flight build.
 
-## 1. Strip debug tooling before flight
-Everything marked `DEBUG ONLY — remove before flight` in `cloud_regressor.cc`:
-- The HTTP/RPC endpoints: `get_last_image`, `get_burst_count`, `get_burst_frame`.
-- The button-hold burst-capture path and the `kBurstRingSize` RAM ring (~400 KB).
-- `cloud_regressor_client.py` (host-side) goes with them.
+## 1. Strip debug tooling before flight — DONE (behind `CLOUD_DEBUG`)
+Resolved via a compile-time flag rather than deletion, so the tooling stays
+available for bench work:
+- The RPC endpoints (`get_last_image`, `get_burst_count`, `get_burst_frame`),
+  the button-hold burst path, and the `kBurstRingSize` RAM ring (~400 KB) are
+  now wrapped in `#if CLOUD_DEBUG`. Default build defines it to 0, so all of it
+  compiles out; `cmake -DCLOUD_DEBUG=ON` restores it for `cloud_regressor_client.py`.
+- `UseHttpServer(new JsonRpcHttpServer)` is kept **unconditionally** (it also
+  enumerates the USB CDC console printf relies on); flight builds just export no
+  RPC methods.
 
-Caveat: `UseHttpServer(new JsonRpcHttpServer)` also initializes the USB CDC
-console. If you drop it, confirm USB/serial still comes up — or keep the server
-but unexport the RPC methods. Decide whether any in-flight diagnostics endpoint
-is worth keeping behind a build flag.
+Follow-up (optional): verify USB serial still enumerates *without* the HTTP
+server. If it does, the flight build could drop `UseHttpServer` entirely instead
+of running a no-method server.
 
 ## 2. Thermal & power for vacuum (hardware/systems, not firmware)
 - Edge TPU runs at `PerformanceMode::kHigh` (~3 W peak); board gets hot and there
