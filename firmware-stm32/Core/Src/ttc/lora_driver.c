@@ -14,7 +14,9 @@ extern SPI_HandleTypeDef hspi1;
 #define REG_FIFO_ADDR_PTR     0x0DU
 #define REG_FIFO_TX_BASE_ADDR 0x0EU
 #define REG_FIFO_RX_BASE_ADDR 0x0FU
+#define REG_FIFO_RX_CURRENT_ADDR 0x10U
 #define REG_IRQ_FLAGS         0x12U
+#define REG_RX_NB_BYTES       0x13U
 #define REG_MODEM_CONFIG_1    0x1DU
 #define REG_MODEM_CONFIG_2    0x1EU
 #define REG_PREAMBLE_MSB      0x20U
@@ -29,7 +31,10 @@ extern SPI_HandleTypeDef hspi1;
 #define MODE_SLEEP            0x00U
 #define MODE_STANDBY          0x01U
 #define MODE_TX               0x03U
+#define MODE_RX_CONTINUOUS    0x05U
 #define IRQ_TX_DONE           0x08U
+#define IRQ_RX_DONE           0x40U
+#define IRQ_PAYLOAD_CRC_ERROR 0x20U
 
 #define LORA_FREQUENCY_HZ     868000000UL
 #define LORA_SPI_TIMEOUT_MS   100U
@@ -53,7 +58,7 @@ static uint8_t LoRa_ReadRegister(uint8_t address, LoRaStatus_t *status)
     if (HAL_SPI_TransmitReceive(&hspi1, tx, rx, sizeof(tx), LORA_SPI_TIMEOUT_MS) != HAL_OK)
     {
         LoRa_Deselect();
-        *status = LORA_ERROR;
+        *status = LORA_SPI_ERROR;
         return 0U;
     }
     LoRa_Deselect();
@@ -68,7 +73,7 @@ static LoRaStatus_t LoRa_WriteRegister(uint8_t address, uint8_t value)
     if (HAL_SPI_Transmit(&hspi1, tx, sizeof(tx), LORA_SPI_TIMEOUT_MS) != HAL_OK)
     {
         LoRa_Deselect();
-        return LORA_ERROR;
+        return LORA_SPI_ERROR;
     }
     LoRa_Deselect();
     return LORA_OK;
@@ -83,7 +88,7 @@ static LoRaStatus_t LoRa_BurstWrite(uint8_t address, const uint8_t *data, uint8_
         HAL_SPI_Transmit(&hspi1, (uint8_t *)data, length, LORA_SPI_TIMEOUT_MS) != HAL_OK)
     {
         LoRa_Deselect();
-        return LORA_ERROR;
+        return LORA_SPI_ERROR;
     }
     LoRa_Deselect();
     return LORA_OK;
@@ -92,6 +97,43 @@ static LoRaStatus_t LoRa_BurstWrite(uint8_t address, const uint8_t *data, uint8_
 static LoRaStatus_t LoRa_SetMode(uint8_t mode)
 {
     return LoRa_WriteRegister(REG_OP_MODE, (uint8_t)(MODE_LONG_RANGE | mode));
+}
+
+static LoRaStatus_t LoRa_VerifyRegister(uint8_t address, uint8_t expected)
+{
+    LoRaStatus_t status = LORA_OK;
+    uint8_t actual = LoRa_ReadRegister(address, &status);
+
+    if (status != LORA_OK)
+        return status;
+
+    return (actual == expected) ? LORA_OK : LORA_CONFIG_ERROR;
+}
+
+static LoRaStatus_t LoRa_VerifyConfiguration(uint64_t frf)
+{
+    LoRaStatus_t status;
+
+    status = LoRa_VerifyRegister(REG_FRF_MSB, (uint8_t)(frf >> 16));
+    if (status != LORA_OK)
+        return status;
+    status = LoRa_VerifyRegister(REG_FRF_MID, (uint8_t)(frf >> 8));
+    if (status != LORA_OK)
+        return status;
+    status = LoRa_VerifyRegister(REG_FRF_LSB, (uint8_t)frf);
+    if (status != LORA_OK)
+        return status;
+    status = LoRa_VerifyRegister(REG_MODEM_CONFIG_1, 0x72U);
+    if (status != LORA_OK)
+        return status;
+    status = LoRa_VerifyRegister(REG_MODEM_CONFIG_2, 0x94U);
+    if (status != LORA_OK)
+        return status;
+    status = LoRa_VerifyRegister(REG_MODEM_CONFIG_3, 0x04U);
+    if (status != LORA_OK)
+        return status;
+
+    return LoRa_VerifyRegister(REG_SYNC_WORD, 0x12U);
 }
 
 LoRaStatus_t LoRa_Init(void)
@@ -106,10 +148,14 @@ LoRaStatus_t LoRa_Init(void)
     HAL_Delay(20U);
 
     if (LoRa_ReadRegister(REG_VERSION, &status) != 0x12U)
-        return LORA_ERROR;
+    {
+        if (status != LORA_OK)
+            return status;
+        return LORA_VERSION_MISMATCH;
+    }
 
     if (LoRa_SetMode(MODE_SLEEP) != LORA_OK)
-        return LORA_ERROR;
+        return LORA_SPI_ERROR;
     HAL_Delay(10U);
 
     frf = ((uint64_t)LORA_FREQUENCY_HZ << 19) / 32000000ULL;
@@ -127,9 +173,12 @@ LoRaStatus_t LoRa_Init(void)
         LoRa_WriteRegister(REG_SYNC_WORD, 0x12U) != LORA_OK ||
         LoRa_WriteRegister(REG_PA_CONFIG, 0x8CU) != LORA_OK ||
         LoRa_WriteRegister(REG_IRQ_FLAGS, 0xFFU) != LORA_OK)
-        return LORA_ERROR;
+        return LORA_SPI_ERROR;
 
-    return LoRa_SetMode(MODE_STANDBY);
+    if (LoRa_SetMode(MODE_STANDBY) != LORA_OK)
+        return LORA_SPI_ERROR;
+
+    return LoRa_VerifyConfiguration(frf);
 }
 
 LoRaStatus_t LoRa_Send(const uint8_t *data, uint8_t length, uint32_t timeout_ms)
@@ -147,7 +196,7 @@ LoRaStatus_t LoRa_Send(const uint8_t *data, uint8_t length, uint32_t timeout_ms)
         LoRa_BurstWrite(REG_FIFO, data, length) != LORA_OK ||
         LoRa_WriteRegister(REG_PAYLOAD_LENGTH, length) != LORA_OK ||
         LoRa_SetMode(MODE_TX) != LORA_OK)
-        return LORA_ERROR;
+        return LORA_SPI_ERROR;
 
     start = HAL_GetTick();
     while ((uint32_t)(HAL_GetTick() - start) < timeout_ms)
@@ -164,4 +213,93 @@ LoRaStatus_t LoRa_Send(const uint8_t *data, uint8_t length, uint32_t timeout_ms)
 
     (void)LoRa_SetMode(MODE_STANDBY);
     return (status == LORA_OK) ? LORA_TIMEOUT : status;
+}
+
+LoRaStatus_t LoRa_StartReceive(void)
+{
+    LoRaStatus_t status;
+
+    status = LoRa_SetMode(MODE_STANDBY);
+    if (status != LORA_OK)
+        return status;
+    status = LoRa_WriteRegister(REG_DIO_MAPPING_1, 0x00U);
+    if (status != LORA_OK)
+        return status;
+    status = LoRa_WriteRegister(REG_IRQ_FLAGS, 0xFFU);
+    if (status != LORA_OK)
+        return status;
+    status = LoRa_WriteRegister(REG_FIFO_ADDR_PTR, 0x00U);
+    if (status != LORA_OK)
+        return status;
+    status = LoRa_SetMode(MODE_RX_CONTINUOUS);
+    if (status != LORA_OK)
+        return status;
+
+    status = LoRa_VerifyRegister(REG_OP_MODE,
+                                 (uint8_t)(MODE_LONG_RANGE | MODE_RX_CONTINUOUS));
+    if (status != LORA_OK)
+        return status;
+
+    return LoRa_VerifyRegister(REG_DIO_MAPPING_1, 0x00U);
+}
+
+LoRaStatus_t LoRa_Receive(uint8_t *data, uint8_t *length, uint8_t capacity)
+{
+    LoRaStatus_t status = LORA_OK;
+    uint8_t irq;
+    uint8_t received_length;
+    uint8_t current_address;
+    uint8_t command = REG_FIFO & 0x7FU;
+
+    if (data == NULL || length == NULL || capacity == 0U)
+        return LORA_LENGTH_ERROR;
+
+    irq = LoRa_ReadRegister(REG_IRQ_FLAGS, &status);
+    if (status != LORA_OK)
+        return status;
+    if ((irq & IRQ_RX_DONE) == 0U)
+        return LORA_NO_PACKET;
+    if ((irq & IRQ_PAYLOAD_CRC_ERROR) != 0U)
+    {
+        status = LoRa_WriteRegister(REG_IRQ_FLAGS, 0xFFU);
+        if (status == LORA_OK)
+            status = LoRa_StartReceive();
+        return (status == LORA_OK) ? LORA_RX_CRC_ERROR : status;
+    }
+
+    received_length = LoRa_ReadRegister(REG_RX_NB_BYTES, &status);
+    if (status != LORA_OK)
+        return status;
+    if (received_length == 0U || received_length > capacity)
+    {
+        status = LoRa_WriteRegister(REG_IRQ_FLAGS, 0xFFU);
+        if (status == LORA_OK)
+            status = LoRa_StartReceive();
+        return (status == LORA_OK) ? LORA_LENGTH_ERROR : status;
+    }
+
+    current_address = LoRa_ReadRegister(REG_FIFO_RX_CURRENT_ADDR, &status);
+    if (status != LORA_OK)
+        return status;
+    status = LoRa_WriteRegister(REG_FIFO_ADDR_PTR, current_address);
+    if (status != LORA_OK)
+        return status;
+
+    LoRa_Select();
+    if (HAL_SPI_Transmit(&hspi1, &command, 1U, LORA_SPI_TIMEOUT_MS) != HAL_OK ||
+        HAL_SPI_Receive(&hspi1, data, received_length, LORA_SPI_TIMEOUT_MS) != HAL_OK)
+    {
+        LoRa_Deselect();
+        return LORA_SPI_ERROR;
+    }
+    LoRa_Deselect();
+
+    status = LoRa_WriteRegister(REG_IRQ_FLAGS, 0xFFU);
+    if (status == LORA_OK)
+        status = LoRa_StartReceive();
+    if (status != LORA_OK)
+        return status;
+
+    *length = received_length;
+    return LORA_OK;
 }

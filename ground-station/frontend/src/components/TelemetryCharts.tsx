@@ -86,7 +86,7 @@ export function TelemetryCharts({
       <div className={gridClass}>
         <EmptyChart title="Battery Voltage" compact={compact} />
         <EmptyChart title="Altitude" compact={compact} />
-        <EmptyChart title="Barometer / Temperature" compact={compact} />
+        <EmptyChart title="Barometer" compact={compact} />
         <EmptyChart title="Acceleration" compact={compact} />
         <EmptyChart title="Link Quality" compact={compact} />
         <EmptyChart title="Speed" compact={compact} />
@@ -141,7 +141,7 @@ export function TelemetryCharts({
         </ResponsiveContainer>
       </ChartCard>
 
-      <ChartCard title="Barometer / Temperature" compact={compact}>
+      <ChartCard title="Barometer" compact={compact}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart {...commonChartProps(history)}>
             <CartesianGrid strokeDasharray="3 3" />
@@ -162,13 +162,6 @@ export function TelemetryCharts({
               name="Baro temp [°C]"
               dot={false}
               stroke="#dc2626"
-            />
-            <Line
-              type="monotone"
-              dataKey="mcu_temperature_c"
-              name="MCU temp [°C]"
-              dot={false}
-              stroke="#0891b2"
             />
           </LineChart>
         </ResponsiveContainer>

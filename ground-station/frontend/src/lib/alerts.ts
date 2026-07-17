@@ -1,6 +1,17 @@
 import type { BackendStatus, TelemetryRow } from "@/types/telemetry"
 import { packetAgeSeconds } from "@/lib/format"
 import {
+  EQUIPMENT_BARO,
+  EQUIPMENT_GPS,
+  EQUIPMENT_IMU,
+  EQUIPMENT_LORA,
+  EQUIPMENT_SD,
+  LORA_EVENT_CONFIG_FAIL,
+  hasEquipmentFault,
+  isLoraFailureEvent,
+  rawFlagIsValid,
+} from "@/lib/v4Telemetry"
+import {
   defaultAlertThresholds,
   type AlertThresholds,
 } from "@/lib/thresholds"
@@ -20,16 +31,17 @@ export function buildMissionAlerts({
   connected,
   frontendError,
   thresholds = defaultAlertThresholds,
+  nowMs = Date.now(),
 }: {
   latest: TelemetryRow | null
   backendStatus: BackendStatus | null
   connected: boolean
   frontendError: string | null
   thresholds?: AlertThresholds
+  nowMs?: number
 }): MissionAlert[] {
   const alerts: MissionAlert[] = []
   const receiver = backendStatus?.receiver
-  const stats = backendStatus?.stats
 
   if (!connected) {
     alerts.push({
@@ -58,12 +70,12 @@ export function buildMissionAlerts({
     })
   }
 
-  if (!receiver?.radio_initialized) {
+  if (receiver?.radio_enabled && !receiver.radio_initialized) {
     alerts.push({
       id: "radio-not-ready",
       level: "warning",
-      title: "Radio not initialized",
-      message: "The backend has not confirmed that the RFM95W radio is initialized.",
+      title: "Ground radio not initialized",
+      message: "The backend has not confirmed that the ground RFM95W is ready.",
     })
   }
 
@@ -71,15 +83,13 @@ export function buildMissionAlerts({
     alerts.push({
       id: "no-telemetry",
       level: "warning",
-      title: "No telemetry received",
-      message: "The backend is running, but no valid telemetry packet has been received yet.",
+      title: "No v7 telemetry received",
+      message: "The backend has not received a valid raw-v7 telemetry packet.",
     })
-
     return alerts
   }
 
-  const age = packetAgeSeconds(latest.pc_receive_time_unix)
-
+  const age = packetAgeSeconds(latest.pc_receive_time_unix, nowMs)
   if (age !== null) {
     if (age > thresholds.staleTelemetryCriticalS) {
       alerts.push({
@@ -107,159 +117,203 @@ export function buildMissionAlerts({
     })
   }
 
-  if (latest.packet_type_ok === false) {
+  if (latest.packet_type_ok === false || latest.protocol_version_ok === false) {
     alerts.push({
-      id: "packet-type",
-      level: "warning",
-      title: "Unexpected packet type",
-      message: `Packet type is ${latest.packet_type}.`,
+      id: "unsupported-packet",
+      level: "critical",
+      title: "Unsupported telemetry packet",
+      message: "The packet is not the expected raw-v7 telemetry layout.",
     })
   }
 
-  if (latest.protocol_version_ok === false) {
+  if (!rawFlagIsValid(latest.gps_valid_raw)) {
     alerts.push({
-      id: "protocol-version",
+      id: "gps-invalid",
       level: "warning",
-      title: "Unexpected protocol version",
-      message: `Protocol version is ${latest.protocol_version}.`,
+      title: "GPS data invalid",
+      message: "The raw-v7 GPS validity flag is not set.",
     })
   }
 
-  const battery = latest.battery_v
-
-  if (typeof battery === "number") {
-    if (battery < thresholds.batteryCriticalV) {
+  for (const [id, title, value] of [
+    ["imu-invalid", "IMU data invalid", latest.imu_valid_raw],
+    ["baro-invalid", "Barometer data invalid", latest.baro_valid_raw],
+    ["battery-invalid", "Battery measurement invalid", latest.batt_valid_raw],
+    ["coral-invalid", "Coral payload invalid", latest.coral_valid_raw],
+  ] as const) {
+    if (!rawFlagIsValid(value)) {
       alerts.push({
-        id: "battery-critical",
-        level: "critical",
-        title: "Battery critical",
-        message: `Battery voltage is ${battery.toFixed(2)} V.`,
-      })
-    } else if (battery < thresholds.batteryWarningV) {
-      alerts.push({
-        id: "battery-low",
+        id,
         level: "warning",
-        title: "Battery low",
-        message: `Battery voltage is ${battery.toFixed(2)} V.`,
+        title,
+        message: "The corresponding raw-v7 validity flag is not set.",
       })
     }
   }
 
-  if (!latest.GNSS_FIX_VALID) {
+  if (typeof latest.battery_v === "number") {
+    if (latest.battery_v < thresholds.batteryCriticalV) {
+      alerts.push({
+        id: "battery-critical",
+        level: "critical",
+        title: "Battery critical",
+        message: `Battery voltage is ${latest.battery_v.toFixed(2)} V.`,
+      })
+    } else if (latest.battery_v < thresholds.batteryWarningV) {
+      alerts.push({
+        id: "battery-low",
+        level: "warning",
+        title: "Battery low",
+        message: `Battery voltage is ${latest.battery_v.toFixed(2)} V.`,
+      })
+    }
+  }
+
+  for (const [id, title, equipment] of [
+    ["gps-fault", "GPS equipment fault", EQUIPMENT_GPS],
+    ["imu-fault", "IMU equipment fault", EQUIPMENT_IMU],
+    ["baro-fault", "Barometer equipment fault", EQUIPMENT_BARO],
+    ["sd-fault", "SD equipment fault", EQUIPMENT_SD],
+  ] as const) {
+    if (hasEquipmentFault(latest, equipment)) {
+      alerts.push({
+        id,
+        level: "critical",
+        title,
+        message: "The raw-v7 SCV equipment-fault mask reports this subsystem fault.",
+      })
+    }
+  }
+
+  const loraFailures = latest.lora_consecutive_failures
+  const loraEventFailed = isLoraFailureEvent(latest.lora_last_event)
+  const loraConfigFailed = latest.lora_last_event === LORA_EVENT_CONFIG_FAIL
+  const loraFault = hasEquipmentFault(latest, EQUIPMENT_LORA)
+
+  if (loraConfigFailed) {
     alerts.push({
-      id: "gnss-fix",
+      id: "spacecraft-lora-config",
       level: "warning",
-      title: "GNSS fix invalid",
-      message: "GNSS fix valid flag is OFF.",
+      title: "Spacecraft LoRa configuration verification failed",
+      message: `The onboard readback found an unexpected essential RFM95W register value after initialization. This packet was received, but the pre-transmission snapshot reports ${loraFailures ?? "unknown"} consecutive failure(s) and ${latest.lora_recovery_count ?? "unknown"} recovery attempt(s).`,
+    })
+  } else if (loraFault) {
+    alerts.push({
+      id: "spacecraft-lora-fault",
+      level: "warning",
+      title: "Spacecraft LoRa fault flag reported",
+      message: `This packet arrived successfully, but its pre-transmission SCV snapshot has EQUIPMENT_LORA set. Last event: ${latest.lora_last_event_name ?? "UNKNOWN"}; consecutive failures: ${loraFailures ?? "unknown"}.`,
+    })
+  } else if (loraEventFailed || (typeof loraFailures === "number" && loraFailures > 0)) {
+    alerts.push({
+      id: "spacecraft-lora-history",
+      level: "info",
+      title: "Prior spacecraft LoRa failures",
+      message: `This packet arrived successfully. Its pre-transmission snapshot reports event ${latest.lora_last_event_name ?? "UNKNOWN"} and ${loraFailures ?? "unknown"} preceding consecutive failure(s).`,
     })
   }
 
-  if (latest.SD_LOGGING_OK === false) {
+  if (typeof latest.lora_ack_timeout_count === "number" && latest.lora_ack_timeout_count > 0) {
     alerts.push({
-      id: "sd-logging",
+      id: "telemetry-ack-timeouts",
       level: "warning",
-      title: "SD logging not OK",
-      message: "The SD_LOGGING_OK flag is OFF.",
+      title: "Telemetry acknowledgements missed",
+      message: `Flight exhausted its retry budget without receiving a matching ground ACK ${latest.lora_ack_timeout_count} time(s) since boot.`,
     })
   }
 
-  const lost = latest.lost_packets_since_previous
+  if (!rawFlagIsValid(latest.lora_rx_mode_active)) {
+    alerts.push({
+      id: "flight-rx-inactive",
+      level: "critical",
+      title: "Flight receiver is not in RX mode",
+      message: "The latest onboard readback says continuous LoRa RX mode was inactive before the downlink.",
+    })
+  } else if (latest.lora_last_rx_status === 5 || latest.lora_last_rx_status === 6) {
+    alerts.push({
+      id: "flight-rx-hardware",
+      level: "critical",
+      title: "Flight receiver hardware/configuration error",
+      message: `The onboard RX status is ${latest.lora_last_rx_status_name ?? "UNKNOWN"}.`,
+    })
+  } else if (latest.lora_last_rx_status === 3 || latest.lora_last_rx_status === 4) {
+    alerts.push({
+      id: "flight-rx-packet-error",
+      level: "warning",
+      title: "Flight receiver rejected an uplink packet",
+      message: `The latest onboard RX status is ${latest.lora_last_rx_status_name ?? "UNKNOWN"}.`,
+    })
+  }
+
+  if (latest.is_duplicate_packet === true) {
+    alerts.push({
+      id: "duplicate-telemetry",
+      level: "warning",
+      title: "Duplicate telemetry — ACK not confirmed by flight",
+      message: `Flight retransmitted sequence ${latest.sequence_number ?? "unknown"} because it did not receive or process the previous ground ACK before timeout. The ground station has automatically sent the ACK again.`,
+    })
+  }
+
+  if (latest.uplink_last_status_name === "UNEXPECTED_ACK") {
+    alerts.push({
+      id: "unexpected-telemetry-ack",
+      level: "warning",
+      title: "Flight received an unexpected telemetry ACK",
+      message: `The ACK did not match the outstanding flight telemetry sequence. Last ACK sequence: ${latest.uplink_last_ack_sequence ?? "unknown"}.`,
+    })
+  }
+
+  if (receiver?.last_telemetry_ack_ok === false) {
+    alerts.push({
+      id: "ground-ack-tx-failed",
+      level: "warning",
+      title: "Ground telemetry ACK transmission failed",
+      message: `The ground radio did not report TxDone for ACK sequence ${receiver.last_telemetry_ack_sequence ?? "unknown"}. Flight may retransmit that telemetry packet.`,
+    })
+  }
+
+  if (receiver?.last_command_outcome === "retrying") {
+    alerts.push({
+      id: "flight-command-retrying",
+      level: "warning",
+      title: "Flight command acknowledgement pending",
+      message: `Command ${receiver.last_command_id ?? "unknown"} was not confirmed after attempt ${receiver.last_command_attempt ?? "unknown"}; ground is retrying the same command ID.`,
+    })
+  } else if (receiver?.last_command_outcome === "unacknowledged") {
+    alerts.push({
+      id: "flight-command-unacknowledged",
+      level: "warning",
+      title: "Flight command was not acknowledged",
+      message: `Command ${receiver.last_command_id ?? "unknown"} was not confirmed after ${receiver.last_command_attempt ?? "unknown"} attempt(s). This indicates an unconfirmed uplink path or a lost telemetry response, not necessarily a proven RX hardware failure.`,
+    })
+  }
 
   if (
-    typeof lost === "number" &&
-    lost >= thresholds.packetLossWarningCount
+    typeof latest.lost_packets_since_previous === "number" &&
+    latest.lost_packets_since_previous >= thresholds.packetLossWarningCount
   ) {
     alerts.push({
       id: "packet-loss",
       level: "warning",
       title: "Packet loss detected",
-      message: `${lost} telemetry packet(s) were missed since the previous packet.`,
+      message: `${latest.lost_packets_since_previous} packet(s) were missed before the latest packet.`,
     })
   }
 
-  const rssi = latest.lora_downlink_rssi_dbm
-
-  if (typeof rssi === "number") {
-    if (rssi < thresholds.rssiCriticalDbm) {
-      alerts.push({
-        id: "rssi-critical",
-        level: "critical",
-        title: "Very weak downlink RSSI",
-        message: `Ground radio RSSI is ${rssi} dBm.`,
-      })
-    } else if (rssi < thresholds.rssiWarningDbm) {
-      alerts.push({
-        id: "rssi-warning",
-        level: "warning",
-        title: "Weak downlink RSSI",
-        message: `Ground radio RSSI is ${rssi} dBm.`,
-      })
+  if (typeof latest.lora_downlink_rssi_dbm === "number") {
+    if (latest.lora_downlink_rssi_dbm < thresholds.rssiCriticalDbm) {
+      alerts.push({ id: "rssi-critical", level: "critical", title: "Very weak downlink RSSI", message: `Ground radio RSSI is ${latest.lora_downlink_rssi_dbm} dBm.` })
+    } else if (latest.lora_downlink_rssi_dbm < thresholds.rssiWarningDbm) {
+      alerts.push({ id: "rssi-warning", level: "warning", title: "Weak downlink RSSI", message: `Ground radio RSSI is ${latest.lora_downlink_rssi_dbm} dBm.` })
     }
   }
 
-  const snr = latest.lora_downlink_snr_db
-
-  if (typeof snr === "number") {
-    if (snr < thresholds.snrCriticalDb) {
-      alerts.push({
-        id: "snr-critical",
-        level: "critical",
-        title: "Very low downlink SNR",
-        message: `Ground radio SNR is ${snr.toFixed(1)} dB.`,
-      })
-    } else if (snr < thresholds.snrWarningDb) {
-      alerts.push({
-        id: "snr-warning",
-        level: "warning",
-        title: "Low downlink SNR",
-        message: `Ground radio SNR is ${snr.toFixed(1)} dB.`,
-      })
+  if (typeof latest.lora_downlink_snr_db === "number") {
+    if (latest.lora_downlink_snr_db < thresholds.snrCriticalDb) {
+      alerts.push({ id: "snr-critical", level: "critical", title: "Very low downlink SNR", message: `Ground radio SNR is ${latest.lora_downlink_snr_db.toFixed(1)} dB.` })
+    } else if (latest.lora_downlink_snr_db < thresholds.snrWarningDb) {
+      alerts.push({ id: "snr-warning", level: "warning", title: "Low downlink SNR", message: `Ground radio SNR is ${latest.lora_downlink_snr_db.toFixed(1)} dB.` })
     }
-  }
-
-  const errorFlags = [
-    ["GPS_ERROR", latest.GPS_ERROR],
-    ["IMU_ERROR", latest.IMU_ERROR],
-    ["BARO_ERROR", latest.BARO_ERROR],
-    ["SD_ERROR", latest.SD_ERROR],
-  ] as const
-
-  for (const [name, active] of errorFlags) {
-    if (active) {
-      alerts.push({
-        id: name,
-        level: "critical",
-        title: `${name} active`,
-        message: `The ${name} status flag is active.`,
-      })
-    }
-  }
-
-  if (receiver && receiver.decode_errors > 0) {
-    alerts.push({
-      id: "decode-errors",
-      level: "warning",
-      title: "Telemetry decode errors",
-      message: `${receiver.decode_errors} telemetry decode error(s) reported by backend.`,
-    })
-  }
-
-  if (receiver && receiver.lora_crc_errors > 0) {
-    alerts.push({
-      id: "lora-crc-errors",
-      level: "warning",
-      title: "LoRa CRC errors",
-      message: `${receiver.lora_crc_errors} LoRa packet CRC error(s) reported by backend.`,
-    })
-  }
-
-  if (stats && stats.total_lost_packets > 0) {
-    alerts.push({
-      id: "total-lost",
-      level: "warning",
-      title: "Total packet loss",
-      message: `${stats.total_lost_packets} total packet(s) estimated lost.`,
-    })
   }
 
   return alerts

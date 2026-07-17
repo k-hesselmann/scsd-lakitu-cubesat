@@ -12,7 +12,10 @@ export function fmt(value: unknown, suffix = "", decimals?: number) {
   return `${value}${suffix}`
 }
 
-export function packetAgeSeconds(pcReceiveTimeUnix?: number | null) {
+export function packetAgeSeconds(
+  pcReceiveTimeUnix?: number | null,
+  nowMs = Date.now(),
+) {
   if (!pcReceiveTimeUnix) return null
-  return Date.now() / 1000 - pcReceiveTimeUnix
+  return Math.max(0, nowMs / 1000 - pcReceiveTimeUnix)
 }

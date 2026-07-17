@@ -1,6 +1,6 @@
 import {
   ArrowDownToLine,
-  ArrowUpFromLine,
+
   CircleAlert,
   Radio,
   Send,
@@ -11,8 +11,6 @@ import type { TimelineEvent } from "@/types/telemetry"
 
 function eventIcon(type: TimelineEvent["type"]) {
   switch (type) {
-    case "telemetry_tx":
-      return <ArrowUpFromLine className="h-4 w-4" />
     case "telemetry_rx":
       return <ArrowDownToLine className="h-4 w-4" />
     case "command_tx":

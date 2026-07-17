@@ -122,7 +122,7 @@ export function LinkAnalyticsPage({
 
         <Card className="min-h-0 overflow-hidden">
           <CardHeader className="px-4 py-3">
-            <CardTitle className="text-base">Packet Loss / Commands</CardTitle>
+            <CardTitle className="text-base">Packet Loss</CardTitle>
           </CardHeader>
           <CardContent className="h-[calc(100%-56px)] px-4 pb-4">
             <ResponsiveContainer width="100%" height="100%">
@@ -137,13 +137,6 @@ export function LinkAnalyticsPage({
                   name="Total lost packets"
                   dot={false}
                   stroke="#dc2626"
-                />
-                <Line
-                  type="stepAfter"
-                  dataKey="command_counter"
-                  name="Flight command counter"
-                  dot={false}
-                  stroke="#2563eb"
                 />
               </LineChart>
             </ResponsiveContainer>

@@ -11,38 +11,67 @@ function validUnixTime(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && value > 0
 }
 
-function eventId(prefix: string) {
+function eventId(prefix: string, source?: string | number) {
+  if (source !== undefined) return `${prefix}-${source}`
+
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function isTelemetryRow(row: TelemetryRow | null | undefined): row is TelemetryRow {
+  return typeof row?.sequence_number === "number"
+}
+
+function historyRowId(row: TelemetryRow) {
+  return `${row.pc_receive_time_unix ?? "unknown"}-${row.sequence_number ?? "radio-error"}`
+}
+
+function mergeHistory(
+  existing: TelemetryRow[],
+  incoming: TelemetryRow[],
+  limit: number,
+) {
+  const unique = new Map<string, TelemetryRow>()
+
+  for (const row of [...existing, ...incoming]) {
+    unique.set(historyRowId(row), row)
+  }
+
+  return [...unique.values()]
+    .sort(
+      (a, b) =>
+        (a.pc_receive_time_unix ?? 0) - (b.pc_receive_time_unix ?? 0),
+    )
+    .slice(-limit)
+}
+
+function newestTelemetryRow(rows: Array<TelemetryRow | null | undefined>) {
+  return rows
+    .filter(isTelemetryRow)
+    .reduce<TelemetryRow | null>(
+      (newest, row) =>
+        newest === null ||
+        (row.pc_receive_time_unix ?? 0) >= (newest.pc_receive_time_unix ?? 0)
+          ? row
+          : newest,
+      null,
+    )
 }
 
 function telemetryEventsFromRow(row: TelemetryRow): TimelineEvent[] {
   const events: TimelineEvent[] = []
 
-  if (validUnixTime(row.utc_timestamp)) {
-    const txUnix = Number(row.utc_timestamp)
-
-    events.push({
-      id: eventId("telemetry-tx"),
-      type: "telemetry_tx",
-      time_iso: new Date(txUnix * 1000).toISOString(),
-      time_unix: txUnix,
-      title: "Telemetry TX",
-      description: `Flight packet transmitted, seq ${row.sequence_number ?? "—"}`,
-      sequence_number: row.sequence_number,
-      severity: "info",
-    })
-  }
-
   if (validUnixTime(row.pc_receive_time_unix)) {
     events.push({
-      id: eventId("telemetry-rx"),
+      id: eventId("telemetry-rx", `${row.pc_receive_time_unix}-${row.sequence_number ?? "unknown"}`),
       type: "telemetry_rx",
       time_iso: row.pc_receive_time_iso ?? new Date(Number(row.pc_receive_time_unix) * 1000).toISOString(),
       time_unix: Number(row.pc_receive_time_unix),
-      title: "Telemetry RX",
-      description: `Ground station received packet, seq ${row.sequence_number ?? "—"}`,
+      title: row.is_duplicate_packet ? "Duplicate Telemetry RX" : "Telemetry RX",
+      description: row.is_duplicate_packet
+        ? `Flight retransmitted sequence ${row.sequence_number ?? "—"}; its previous ground ACK was not confirmed before timeout.`
+        : `Ground station received packet, seq ${row.sequence_number ?? "—"}`,
       sequence_number: row.sequence_number,
-      severity: row.crc_ok === false ? "critical" : "info",
+      severity: row.crc_ok === false ? "critical" : row.is_duplicate_packet ? "warning" : "info",
     })
   }
 
@@ -50,7 +79,13 @@ function telemetryEventsFromRow(row: TelemetryRow): TimelineEvent[] {
 }
 
 function sortAndLimitEvents(events: TimelineEvent[], limit: number) {
-  return [...events]
+  const unique = new Map<string, TimelineEvent>()
+
+  for (const event of events) {
+    unique.set(event.id, event)
+  }
+
+  return [...unique.values()]
     .sort((a, b) => b.time_unix - a.time_unix)
     .slice(0, limit)
 }
@@ -77,17 +112,31 @@ export function useTelemetryWebSocket(historyLimit = 500, eventLimit = 300) {
           fetch(`${API_BASE_URL}/api/status`),
         ])
 
-        const historyJson = await historyResponse.json()
-        const statusJson = await statusResponse.json()
+        if (!historyResponse.ok || !statusResponse.ok) {
+          throw new Error(
+            `Initial API request failed (history ${historyResponse.status}, status ${statusResponse.status})`,
+          )
+        }
+
+        const historyJson = (await historyResponse.json()) as { data?: TelemetryRow[] }
+        const statusJson = (await statusResponse.json()) as BackendStatus
 
         if (cancelled) return
 
-        const rows: TelemetryRow[] = historyJson.data ?? []
+        const rows = historyJson.data ?? []
+        const latestFromHistory = [...rows].reverse().find(isTelemetryRow) ?? null
 
-        setHistory(rows)
-        setLatest(rows.length > 0 ? rows[rows.length - 1] : statusJson.latest ?? null)
+        setHistory((previous) => mergeHistory(previous, rows, historyLimit))
+        setLatest((previous) =>
+          newestTelemetryRow([previous, statusJson.latest, latestFromHistory]),
+        )
         setBackendStatus(statusJson)
-        setEvents(sortAndLimitEvents(rows.flatMap(telemetryEventsFromRow), eventLimit))
+        setEvents((previous) =>
+          sortAndLimitEvents(
+            [...previous, ...rows.flatMap(telemetryEventsFromRow)],
+            eventLimit,
+          ),
+        )
         setError(null)
       } catch (err) {
         if (!cancelled) {
@@ -138,10 +187,7 @@ export function useTelemetryWebSocket(historyLimit = 500, eventLimit = 300) {
 
             setLatest(row)
 
-            setHistory((previous) => {
-              const next = [...previous, row]
-              return next.slice(-historyLimit)
-            })
+            setHistory((previous) => mergeHistory(previous, [row], historyLimit))
 
             appendEvents(telemetryEventsFromRow(row))
           }
@@ -196,7 +242,7 @@ export function useTelemetryWebSocket(historyLimit = 500, eventLimit = 300) {
                 time_iso: new Date(now * 1000).toISOString(),
                 time_unix: now,
                 title: "Non-telemetry packet",
-                description: "Ground radio received a packet that does not match the current raw-v3 telemetry length.",
+                description: "Ground radio received a packet that does not match the current raw-v7 telemetry length.",
                 severity: "warning",
               },
             ])

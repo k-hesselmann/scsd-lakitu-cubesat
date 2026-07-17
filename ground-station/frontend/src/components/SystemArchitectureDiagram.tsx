@@ -1,296 +1,175 @@
 import { Badge } from "@/components/ui/badge"
-import type { TelemetryRow } from "@/types/telemetry"
 import { fmt } from "@/lib/format"
+import {
+  EQUIPMENT_BARO,
+  EQUIPMENT_GPS,
+  EQUIPMENT_IMU,
+  EQUIPMENT_LORA,
+  EQUIPMENT_SD,
+  LORA_EVENT_CONFIG_FAIL,
+  LORA_EVENT_INIT_OK,
+  hasEquipmentFault,
+  rawFlagIsValid,
+} from "@/lib/v4Telemetry"
+import type { BackendStatus, TelemetryRow } from "@/types/telemetry"
 
-type NodeVariant = "nominal" | "warning" | "critical" | "unknown"
+type Variant = "nominal" | "warning" | "critical" | "unknown"
 
-type FlagItem = {
-  label: string
-  active?: boolean
-  badWhenActive?: boolean
+type StatusCardProps = { title: string; detail: string; variant: Variant; tags: string[] }
+
+function variantClass(variant: Variant) {
+  return {
+    nominal: "border-green-500 bg-green-50",
+    warning: "border-amber-500 bg-amber-50",
+    critical: "border-red-500 bg-red-50",
+    unknown: "border-slate-300 bg-white",
+  }[variant]
 }
 
-function variantClass(variant: NodeVariant) {
-  switch (variant) {
-    case "nominal":
-      return "border-green-500 bg-green-50 text-green-950"
-    case "warning":
-      return "border-amber-500 bg-amber-50 text-amber-950"
-    case "critical":
-      return "border-red-500 bg-red-50 text-red-950 animate-pulse"
-    default:
-      return "border-slate-300 bg-white text-slate-950"
-  }
+function badgeVariant(variant: Variant) {
+  return variant === "critical" ? "destructive" : variant === "nominal" ? "default" : "secondary"
 }
 
-function nodeStatusLabel(variant: NodeVariant) {
-  switch (variant) {
-    case "nominal":
-      return "NOMINAL"
-    case "warning":
-      return "WARNING"
-    case "critical":
-      return "FAULT"
-    default:
-      return "NO DATA"
-  }
+function statusFromValidity(valid: boolean, fault: boolean | undefined): Variant {
+  if (fault) return "critical"
+  return valid ? "nominal" : "warning"
 }
 
-function badgeVariant(active?: boolean, badWhenActive = false) {
-  if (active === undefined || active === null) return "outline"
-  if (badWhenActive && active) return "destructive"
-  if (!badWhenActive && active) return "default"
-  return "secondary"
-}
-
-function ArchitectureNode({
-  title,
-  subtitle,
-  flags,
-  variant,
-  className,
-}: {
-  title: string
-  subtitle?: string
-  flags: FlagItem[]
-  variant: NodeVariant
-  className: string
-}) {
+function StatusCard({ title, detail, variant, tags }: StatusCardProps) {
   return (
-    <div
-      className={[
-        "absolute z-10 w-[200px] rounded-xl border-2 p-3 shadow-sm",
-        variantClass(variant),
-        className,
-      ].join(" ")}
-    >
-      <div className="mb-1 flex items-start justify-between gap-2">
-        <div className="text-sm font-bold leading-tight">{title}</div>
-        <Badge variant={variant === "critical" ? "destructive" : "outline"} className="text-[9px]">
-          {nodeStatusLabel(variant)}
-        </Badge>
+    <section className={`rounded-xl border-2 p-3 ${variantClass(variant)}`}>
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="text-sm font-bold">{title}</h3>
+        <Badge variant={badgeVariant(variant)}>{variant.toUpperCase()}</Badge>
       </div>
-
-      {subtitle ? (
-        <div className="mb-2 text-xs text-muted-foreground">{subtitle}</div>
-      ) : null}
-
-      <div className="flex flex-wrap gap-1">
-        {flags.map((flag) => (
-          <Badge
-            key={flag.label}
-            variant={badgeVariant(flag.active, flag.badWhenActive)}
-            className="text-[10px]"
-          >
-            {flag.label}
-          </Badge>
-        ))}
+      <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {tags.map((tag) => <Badge key={tag} variant="outline" className="text-[10px]">{tag}</Badge>)}
       </div>
-    </div>
+    </section>
   )
-}
-
-function statusFromFlags(valid?: boolean, error?: boolean): NodeVariant {
-  if (error) return "critical"
-  if (valid === false) return "warning"
-  if (valid === true) return "nominal"
-  return "unknown"
-}
-
-function statusFromBattery(latest: TelemetryRow | null): NodeVariant {
-  if (!latest) return "unknown"
-
-  if (latest.BATTERY_VALID === false) return "warning"
-
-  if (typeof latest.battery_v === "number") {
-    if (latest.battery_v < 3.3) return "critical"
-    if (latest.battery_v < 3.5) return "warning"
-  }
-
-  if (latest.BATTERY_VALID === true) return "nominal"
-
-  return "unknown"
-}
-
-function statusFromRadio(latest: TelemetryRow | null): NodeVariant {
-  if (!latest) return "unknown"
-
-  if (latest.LAST_LORA_TX_OK === false) return "warning"
-
-  if (typeof latest.lora_downlink_rssi_dbm === "number") {
-    if (latest.lora_downlink_rssi_dbm < -120) return "critical"
-    if (latest.lora_downlink_rssi_dbm < -110) return "warning"
-  }
-
-  if (typeof latest.lora_downlink_snr_db === "number") {
-    if (latest.lora_downlink_snr_db < -10) return "critical"
-    if (latest.lora_downlink_snr_db < 0) return "warning"
-  }
-
-  return "nominal"
-}
-
-function statusFromObc(latest: TelemetryRow | null): NodeVariant {
-  if (!latest) return "unknown"
-
-  if (
-    latest.GPS_ERROR ||
-    latest.IMU_ERROR ||
-    latest.BARO_ERROR ||
-    latest.SD_ERROR ||
-    latest.crc_ok === false ||
-    latest.packet_type_ok === false ||
-    latest.protocol_version_ok === false
-  ) {
-    return "critical"
-  }
-
-  if (
-    latest.GNSS_FIX_VALID === false ||
-    latest.IMU_VALID === false ||
-    latest.BARO_VALID === false ||
-    latest.SD_LOGGING_OK === false
-  ) {
-    return "warning"
-  }
-
-  return "nominal"
 }
 
 export function SystemArchitectureDiagram({
   latest,
+  backendStatus,
 }: {
   latest: TelemetryRow | null
+  backendStatus?: BackendStatus | null
 }) {
-  const gnssStatus = statusFromFlags(
-    Boolean(latest?.GNSS_FIX_VALID || latest?.GNSS_TIME_VALID),
-    latest?.GPS_ERROR,
-  )
+  if (!latest) {
+    return <div className="flex h-full items-center justify-center rounded-xl border bg-slate-50 text-sm text-muted-foreground">Waiting for a raw-v7 telemetry packet.</div>
+  }
 
-  const imuStatus = statusFromFlags(latest?.IMU_VALID, latest?.IMU_ERROR)
-  const baroStatus = statusFromFlags(latest?.BARO_VALID, latest?.BARO_ERROR)
-  const sdStatus = statusFromFlags(latest?.SD_LOGGING_OK, latest?.SD_ERROR)
-  const batteryStatus = statusFromBattery(latest)
-  const coralStatus = statusFromFlags(latest?.CORAL_VALID, false)
-  const radioStatus = statusFromRadio(latest)
-  const obcStatus = statusFromObc(latest)
+  const receiver = backendStatus?.receiver
+  const stats = backendStatus?.stats
+  const gpsFault = hasEquipmentFault(latest, EQUIPMENT_GPS)
+  const imuFault = hasEquipmentFault(latest, EQUIPMENT_IMU)
+  const baroFault = hasEquipmentFault(latest, EQUIPMENT_BARO)
+  const sdFault = hasEquipmentFault(latest, EQUIPMENT_SD)
+  const loraFault = hasEquipmentFault(latest, EQUIPMENT_LORA)
+  const gps = statusFromValidity(rawFlagIsValid(latest.gps_valid_raw), gpsFault)
+  const imu = statusFromValidity(rawFlagIsValid(latest.imu_valid_raw), imuFault)
+  const baro = statusFromValidity(rawFlagIsValid(latest.baro_valid_raw), baroFault)
+  const battery = statusFromValidity(rawFlagIsValid(latest.batt_valid_raw), false)
+  const coral = statusFromValidity(rawFlagIsValid(latest.coral_valid_raw), false)
+
+  // This packet arriving proves a successful flight-to-ground transmission.
+  // The embedded values are the onboard snapshot taken before that transmission.
+  const loraConfigFailed = latest.lora_last_event === LORA_EVENT_CONFIG_FAIL
+  const loraConfigPassed = latest.lora_last_event === LORA_EVENT_INIT_OK
+  const priorRadioFailures = typeof latest.lora_consecutive_failures === "number" && latest.lora_consecutive_failures > 0
+  const flightTx: Variant = loraConfigFailed || loraFault || priorRadioFailures ? "warning" : "nominal"
+  const registerCheck = loraConfigFailed ? "FAILED" : loraConfigPassed ? "PASSED" : "NOT REPORTED"
+  const txDetail = loraConfigFailed
+    ? "Current downlink arrived, but the pre-TX register verification snapshot reports a failure."
+    : priorRadioFailures
+      ? "Current downlink arrived after one or more preceding onboard radio failures."
+      : "Current telemetry reception confirms the flight downlink transmitter completed this packet."
+
+  // Flight RX health combines onboard readback with end-to-end protocol evidence
+  // observed on the ground. A missing command response cannot identify which
+  // direction lost the packet, so it is reported as an unconfirmed uplink.
+  const rxModeActive = rawFlagIsValid(latest.lora_rx_mode_active)
+  const rxStatus = latest.lora_last_rx_status
+  const rxHardwareFailure = rxStatus === 5 || rxStatus === 6
+  const rxPacketWarning = rxStatus === 3 || rxStatus === 4
+  const duplicateTelemetry = latest.is_duplicate_packet === true
+  const commandOutcome = receiver?.last_command_outcome
+  const commandUnconfirmed = commandOutcome === "retrying" || commandOutcome === "unacknowledged"
+  const ackTxFailed = receiver?.last_telemetry_ack_ok === false
+  const unexpectedAck = latest.uplink_last_status_name === "UNEXPECTED_ACK"
+
+  let flightRx: Variant = "nominal"
+  if (!rxModeActive || rxHardwareFailure) flightRx = "critical"
+  else if (duplicateTelemetry || commandUnconfirmed || ackTxFailed || rxPacketWarning || unexpectedAck || loraFault) flightRx = "warning"
+
+  let rxDetail = "Flight RX is active; no current end-to-end uplink warning is present."
+  if (!rxModeActive) rxDetail = "The flight radio reported that continuous RX mode was inactive before this downlink."
+  else if (rxHardwareFailure) rxDetail = `The flight receiver reported ${latest.lora_last_rx_status_name ?? "a hardware/configuration error"}.`
+  else if (commandOutcome === "unacknowledged") rxDetail = `Command ${receiver?.last_command_id ?? "—"} was not confirmed after ${receiver?.last_command_attempt ?? "—"} attempt(s); the uplink or its telemetry response may have been lost.`
+  else if (duplicateTelemetry) rxDetail = `Telemetry sequence ${latest.sequence_number ?? "—"} was duplicated: flight did not confirm the previous ground ACK before its retry deadline. The ground ACK was sent again.`
+  else if (commandOutcome === "retrying") rxDetail = `Command ${receiver?.last_command_id ?? "—"} has not yet been confirmed; the ground station is retrying the same command ID.`
+  else if (ackTxFailed) rxDetail = `The ground radio did not complete ACK transmission for telemetry sequence ${receiver?.last_telemetry_ack_sequence ?? "—"}.`
+  else if (unexpectedAck) rxDetail = "Flight received an ACK that did not match its outstanding telemetry sequence."
+  else if (rxPacketWarning) rxDetail = `The latest onboard RX result was ${latest.lora_last_rx_status_name ?? "invalid"}.`
+
+  const sd: Variant = sdFault ? "critical" : "nominal"
+  const obc: Variant = latest.crc_ok === false || latest.protocol_version_ok === false || latest.packet_type_ok === false ? "critical" : "nominal"
 
   return (
-    <div className="relative h-full min-h-[560px] overflow-hidden rounded-xl border bg-slate-50">
-      <svg className="absolute inset-0 h-full w-full" aria-hidden="true">
-        <line x1="50%" y1="45%" x2="20%" y2="18%" stroke="#94a3b8" strokeWidth="2" />
-        <line x1="50%" y1="45%" x2="20%" y2="45%" stroke="#94a3b8" strokeWidth="2" />
-        <line x1="50%" y1="45%" x2="20%" y2="72%" stroke="#94a3b8" strokeWidth="2" />
-
-        <line x1="50%" y1="45%" x2="80%" y2="18%" stroke="#94a3b8" strokeWidth="2" />
-        <line x1="50%" y1="45%" x2="80%" y2="45%" stroke="#94a3b8" strokeWidth="2" />
-        <line x1="50%" y1="45%" x2="80%" y2="72%" stroke="#94a3b8" strokeWidth="2" />
-
-        <line x1="50%" y1="45%" x2="50%" y2="82%" stroke="#94a3b8" strokeWidth="2" />
-
-        <text x="31%" y="14%" fontSize="11" fill="#64748b">USART / I2C / SPI</text>
-        <text x="61%" y="14%" fontSize="11" fill="#64748b">SPI LoRa link</text>
-        <text x="46%" y="77%" fontSize="11" fill="#64748b">SDIO / logging</text>
-      </svg>
-
-      <ArchitectureNode
-        title="OBC / FSW"
-        subtitle={`State ${fmt(latest?.flight_state_name)} · Uptime ${fmt(latest?.obc_uptime_ms, " ms")}`}
-        variant={obcStatus}
-        className="left-[50%] top-[45%] -translate-x-1/2 -translate-y-1/2"
-        flags={[
-          { label: "CRC OK", active: latest?.crc_ok },
-          { label: "PKT OK", active: latest?.packet_type_ok },
-          { label: "PROTO OK", active: latest?.protocol_version_ok },
-          { label: "TIME FALLBACK", active: latest?.OBC_TIME_FALLBACK },
-        ]}
-      />
-
-      <ArchitectureNode
-        title="GNSS Receiver"
-        subtitle={`${fmt(latest?.gnss_satellites_used)} sats · HDOP ${fmt(latest?.gnss_hdop, "", 2)} · VDOP ${fmt(latest?.gnss_vdop, "", 2)}`}
-        variant={gnssStatus}
-        className="left-[5%] top-[9%]"
-        flags={[
-          { label: "FIX", active: latest?.GNSS_FIX_VALID },
-          { label: "TIME", active: latest?.GNSS_TIME_VALID },
-          { label: "ERR", active: latest?.GPS_ERROR, badWhenActive: true },
-        ]}
-      />
-
-      <ArchitectureNode
-        title="IMU"
-        subtitle={`aZ ${fmt(latest?.accel_z_ms2, " m/s²", 2)} · T ${fmt(latest?.imu_temperature_c, " °C", 1)}`}
-        variant={imuStatus}
-        className="left-[5%] top-[37%]"
-        flags={[
-          { label: "VALID", active: latest?.IMU_VALID },
-          { label: "ERR", active: latest?.IMU_ERROR, badWhenActive: true },
-        ]}
-      />
-
-      <ArchitectureNode
-        title="Barometer"
-        subtitle={`${fmt(latest?.baro_pressure_pa, " Pa")} · ${fmt(latest?.baro_altitude_m, " m", 1)}`}
-        variant={baroStatus}
-        className="left-[5%] top-[65%]"
-        flags={[
-          { label: "VALID", active: latest?.BARO_VALID },
-          { label: "RANGE", active: latest?.BARO_RANGE_VALID },
-          { label: "ERR", active: latest?.BARO_ERROR, badWhenActive: true },
-        ]}
-      />
-
-      <ArchitectureNode
-        title="LoRa Radio"
-        subtitle={`RSSI ${fmt(latest?.lora_downlink_rssi_dbm, " dBm")} · SNR ${fmt(latest?.lora_downlink_snr_db, " dB", 1)}`}
-        variant={radioStatus}
-        className="right-[5%] top-[9%]"
-        flags={[
-          { label: "TX OK", active: latest?.LAST_LORA_TX_OK },
-          { label: "CMD RX", active: latest?.COMMAND_RX_SINCE_LAST },
-        ]}
-      />
-
-      <ArchitectureNode
-        title="Battery / Power"
-        subtitle={`${fmt(latest?.battery_v, " V", 2)} · ${fmt(latest?.battery_mv, " mV")}`}
-        variant={batteryStatus}
-        className="right-[5%] top-[37%]"
-        flags={[
-          { label: "VALID", active: latest?.BATTERY_VALID },
-        ]}
-      />
-
-      <ArchitectureNode
-        title="Coral Payload"
-        subtitle={`Status ${fmt(latest?.coral_status)} · Age ${fmt(latest?.coral_result_age_s, " s")}`}
-        variant={coralStatus}
-        className="right-[5%] top-[65%]"
-        flags={[
-          { label: "VALID", active: latest?.CORAL_VALID },
-          { label: "NEW", active: latest?.CORAL_NEW },
-        ]}
-      />
-
-      <ArchitectureNode
-        title="SD Logger"
-        subtitle={`${fmt(latest?.sd_log_record_counter)} records · ${fmt(latest?.sd_error_counter)} errors`}
-        variant={sdStatus}
-        className="left-[50%] top-[78%] -translate-x-1/2"
-        flags={[
-          { label: "LOG OK", active: latest?.SD_LOGGING_OK },
-          { label: "ERR", active: latest?.SD_ERROR, badWhenActive: true },
-        ]}
-      />
-
-      <div className="absolute bottom-3 left-3 rounded-md bg-white/85 px-3 py-2 text-xs text-muted-foreground shadow-sm">
-        Green = nominal · Amber = warning · Red = critical · Gray = no data
+    <div className="h-full overflow-auto rounded-xl border bg-slate-50 p-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-sm font-bold">Raw-v7 subsystem status</h2>
+          <p className="text-xs text-muted-foreground">Flight radio TX and RX are evaluated separately using onboard telemetry and live protocol evidence.</p>
+        </div>
+        <Badge variant={badgeVariant(obc)}>OBC {obc.toUpperCase()}</Badge>
       </div>
-
-      <div className="absolute bottom-3 right-3 rounded-md bg-white/85 px-3 py-2 text-xs text-muted-foreground shadow-sm">
-        Seq {fmt(latest?.sequence_number)} · Boot {fmt(latest?.boot_count)} · Commands{" "}
-        {fmt(latest?.command_counter)}
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <StatusCard title="GPS" variant={gps} detail={`Altitude ${fmt(latest.gnss_altitude_m, " m", 1)} · Vertical speed ${fmt(latest.vertical_speed_ms, " m/s", 2)}`} tags={[`valid ${fmt(latest.gps_valid_raw)}`, `timeouts ${fmt(latest.scv_gps_timeout_count)}`]} />
+        <StatusCard title="IMU" variant={imu} detail={`Acceleration magnitude ${fmt(latest.imu_accel_mag_g, " g", 3)}`} tags={[`valid ${fmt(latest.imu_valid_raw)}`, `timeouts ${fmt(latest.scv_imu_timeout_count)}`]} />
+        <StatusCard title="Barometer" variant={baro} detail={`${fmt(latest.baro_pressure_pa, " Pa")} · ${fmt(latest.baro_altitude_m, " m", 1)}`} tags={[`valid ${fmt(latest.baro_valid_raw)}`, `timeouts ${fmt(latest.scv_baro_timeout_count)}`]} />
+        <StatusCard title="Battery" variant={battery} detail={`${fmt(latest.battery_v, " V", 2)} · SCV last ${fmt(latest.scv_last_batt_mv, " mV")}`} tags={[`valid ${fmt(latest.batt_valid_raw)}`]} />
+        <StatusCard title="Coral" variant={coral} detail={fmt(latest.coral_payload_text)} tags={[`valid ${fmt(latest.coral_valid_raw)}`, `timeouts ${fmt(latest.scv_coral_timeout_count)}`]} />
+        <StatusCard
+          title="Flight TX Health (Downlink)"
+          variant={flightTx}
+          detail={txDetail}
+          tags={[
+            `current packet RECEIVED`,
+            `register check ${registerCheck}`,
+            `event ${fmt(latest.lora_last_event_name)} (${fmt(latest.lora_last_event)})`,
+            `preceding failures ${fmt(latest.lora_consecutive_failures)}`,
+            `last TX success ${fmt(latest.lora_last_success_ms, " ms")}`,
+            `recoveries ${fmt(latest.lora_recovery_count)}`,
+          ]}
+        />
+        <StatusCard
+          title="Flight RX Health (Uplink)"
+          variant={flightRx}
+          detail={rxDetail}
+          tags={[
+            `RX mode ${rxModeActive ? "ACTIVE" : "INACTIVE"}`,
+            `RX status ${fmt(latest.lora_last_rx_status_name)}`,
+            `uplink packets ${fmt(latest.lora_rx_packet_count)}`,
+            `uplink CRC errors ${fmt(latest.lora_rx_crc_error_count)}`,
+            `telemetry ACK timeouts ${fmt(latest.lora_ack_timeout_count)}`,
+            `last onboard RX ${fmt(latest.lora_last_rx_ms, " ms")}`,
+            `last command ${receiver?.last_command_id ?? "—"}: ${commandOutcome ?? "NONE"}`,
+            `command attempt ${receiver?.last_command_attempt ?? "—"}`,
+            `flight command status ${fmt(latest.uplink_last_status_name)}`,
+            `flight confirmed ACK seq ${fmt(latest.uplink_last_ack_sequence)}`,
+            `ground ACK seq ${receiver?.last_telemetry_ack_sequence ?? "—"}: ${receiver?.last_telemetry_ack_ok === true ? "TX DONE" : receiver?.last_telemetry_ack_ok === false ? "FAILED" : "NONE"}`,
+            `ground ACK TxDone ${receiver?.telemetry_ack_tx_count ?? 0}`,
+            `ground ACK failures ${receiver?.telemetry_ack_tx_failures ?? 0}`,
+            `flight accepted commands ${fmt(latest.uplink_command_count)}`,
+            `duplicate streak ${fmt(latest.consecutive_duplicate_packets)}`,
+            `duplicates total ${stats?.total_duplicate_packets ?? latest.total_duplicate_packets ?? 0}`,
+          ]}
+        />
+        <StatusCard title="SD / SCV" variant={sd} detail={`SD faults ${fmt(latest.scv_sd_fault_count)} · watchdog resets ${fmt(latest.scv_watchdog_reset_count)}`} tags={[`fault ${sdFault === undefined ? "—" : sdFault ? "YES" : "NO"}`, `state ${fmt(latest.flight_state_name)}`]} />
+        <StatusCard title="Packet validation" variant={obc} detail={`Sequence ${fmt(latest.sequence_number)} · CRC ${fmt(latest.crc_ok)}`} tags={[`type ${fmt(latest.packet_type)}`, `version ${fmt(latest.protocol_version)}`, `fault mask ${fmt(latest.scv_equipment_faults)}`]} />
       </div>
     </div>
   )

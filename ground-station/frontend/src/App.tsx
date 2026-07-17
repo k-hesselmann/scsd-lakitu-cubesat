@@ -2,10 +2,10 @@ import { useState } from "react"
 import {
   Activity,
   AlertTriangle,
-  Command,
   Home,
   MapPinned,
   RadioTower,
+  Send,
   Settings,
   Table2,
 } from "lucide-react"
@@ -24,9 +24,9 @@ import { useTelemetryWebSocket } from "@/hooks/useTelemetryWebSocket"
 import { OverviewPage } from "@/pages/OverviewPage"
 import { HealthPage } from "@/pages/HealthPage"
 import { PositionPage } from "@/pages/PositionPage"
-import { CommandsPage } from "@/pages/CommandsPage"
 import { RawTelemetryPage } from "@/pages/RawTelemetryPage"
 import { LinkAnalyticsPage } from "@/pages/LinkAnalyticsPage"
+import { CommandsPage } from "@/pages/CommandsPage"
 
 function navClass({ isActive }: { isActive: boolean }) {
   return [
@@ -72,7 +72,7 @@ export default function App() {
               </NavLink>
 
               <NavLink to="/commands" className={navClass} title="Commands">
-                <Command className="h-5 w-5" />
+                <Send className="h-5 w-5" />
               </NavLink>
 
               <NavLink to="/raw" className={navClass} title="Raw telemetry">
@@ -104,8 +104,8 @@ export default function App() {
                 <Route path="/health" element={<HealthPage {...dashboardData} />} />
                 <Route path="/position" element={<PositionPage {...dashboardData} />} />
                 <Route path="/phase" element={<Navigate to="/position" replace />} />
+                <Route path="/commands" element={<CommandsPage latest={dashboardData.latest} />} />
                 <Route path="/link" element={<LinkAnalyticsPage {...dashboardData} />} />
-                <Route path="/commands" element={<CommandsPage />} />
                 <Route path="/raw" element={<RawTelemetryPage {...dashboardData} />} />
               </Routes>
             </div>

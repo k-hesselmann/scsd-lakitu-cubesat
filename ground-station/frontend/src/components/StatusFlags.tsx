@@ -1,58 +1,15 @@
 import { Badge } from "@/components/ui/badge"
+import { EQUIPMENT_BARO, EQUIPMENT_GPS, EQUIPMENT_IMU, EQUIPMENT_LORA, EQUIPMENT_SD, hasEquipmentFault, rawFlagIsValid } from "@/lib/v4Telemetry"
 import type { TelemetryRow } from "@/types/telemetry"
 
-const flagNames = [
-  "GNSS_FIX_VALID",
-  "GNSS_TIME_VALID",
-  "IMU_VALID",
-  "BARO_VALID",
-  "BATTERY_VALID",
-  "CORAL_VALID",
-  "CORAL_NEW",
-  "SD_LOGGING_OK",
-  "LAST_LORA_TX_OK",
-  "COMMAND_RX_SINCE_LAST",
-  "GPS_ERROR",
-  "IMU_ERROR",
-  "BARO_ERROR",
-  "SD_ERROR",
-]
-
-const badWhenActive = new Set([
-  "GPS_ERROR",
-  "IMU_ERROR",
-  "BARO_ERROR",
-  "SD_ERROR",
-])
-
 export function StatusFlags({ latest }: { latest: TelemetryRow | null }) {
-  if (!latest) {
-    return <p className="text-sm text-muted-foreground">No status flags yet.</p>
-  }
-
-  return (
-    <div className="flex flex-wrap gap-2">
-      {flagNames.map((name) => {
-        const value = Boolean(latest[name])
-        const isBadFlag = badWhenActive.has(name)
-
-        let variant: "default" | "secondary" | "destructive" | "outline" =
-          "secondary"
-
-        if (isBadFlag && value) {
-          variant = "destructive"
-        } else if (!isBadFlag && value) {
-          variant = "default"
-        } else {
-          variant = "outline"
-        }
-
-        return (
-          <Badge key={name} variant={variant}>
-            {name}: {value ? "ON" : "OFF"}
-          </Badge>
-        )
-      })}
-    </div>
-  )
+  if (!latest) return <p className="text-sm text-muted-foreground">No raw-v7 status data yet.</p>
+  const flags = [
+    ["GPS valid", rawFlagIsValid(latest.gps_valid_raw), false], ["IMU valid", rawFlagIsValid(latest.imu_valid_raw), false],
+    ["Barometer valid", rawFlagIsValid(latest.baro_valid_raw), false], ["Battery valid", rawFlagIsValid(latest.batt_valid_raw), false],
+    ["Coral valid", rawFlagIsValid(latest.coral_valid_raw), false], ["GPS fault", hasEquipmentFault(latest, EQUIPMENT_GPS), true],
+    ["IMU fault", hasEquipmentFault(latest, EQUIPMENT_IMU), true], ["Barometer fault", hasEquipmentFault(latest, EQUIPMENT_BARO), true],
+    ["SD fault", hasEquipmentFault(latest, EQUIPMENT_SD), true], ["LoRa fault", hasEquipmentFault(latest, EQUIPMENT_LORA), true],
+  ] as const
+  return <div className="flex flex-wrap gap-2">{flags.map(([name, value, badWhenActive]) => <Badge key={name} variant={value === undefined ? "outline" : badWhenActive && value ? "destructive" : value ? "default" : "secondary"}>{name}: {value === undefined ? "—" : value ? "ON" : "OFF"}</Badge>)}</div>
 }

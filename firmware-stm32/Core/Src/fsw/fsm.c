@@ -1,6 +1,7 @@
 #include "fsw/fsm.h"
 #include "fsw/fsm_thresholds.h"
 #include "main.h"
+#include "ttc/ttc.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -65,6 +66,8 @@ static void FSW_SetPhase(FlightPhase_t phase)
     s_phase = phase;
     g_scv.flight_phase = (uint8_t)phase;
     FSW_ResetTransitionCounters();
+    /* State changes are operationally significant: report them immediately. */
+    TTC_RequestTelemetry();
 }
 
 static uint8_t FSW_CountCondition(uint8_t condition, uint8_t *counter, uint8_t limit)
@@ -207,7 +210,7 @@ void FSW_BuildTelemetryPacket(const SensorData_t *dp, const SCV_t *scv,
     memset(pkt, 0, sizeof(*pkt));
 
     pkt->packet_type = 0x01U;
-    pkt->protocol_version = 0x03U;
+    pkt->protocol_version = 0x07U;
     pkt->sequence_number = s_telemetry_sequence++;
     pkt->tx_uptime_ms = HAL_GetTick();
 
@@ -252,6 +255,8 @@ void FSW_BuildTelemetryPacket(const SensorData_t *dp, const SCV_t *scv,
     pkt->scv_last_batt_mv = scv->last_batt_mv;
     pkt->scv_baro_ground_alt_cm = scv->baro_ground_alt_cm;
     pkt->scv_crc16 = scv->crc16;
+    pkt->uplink = *TTC_GetUplinkState();
+    pkt->lora = *TTC_GetHealth();
 
     pkt->crc16 = FSW_Crc16Ccitt((const uint8_t *)pkt, offsetof(TelemetryPacket_t, crc16));
 }

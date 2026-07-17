@@ -3,7 +3,7 @@
 
 #include "datapool.h"
 
-/* Six flight phases — values persisted to SCV; do not reorder. */
+/* Six flight phases — numeric values are part of the SCV interface; do not reorder. */
 typedef enum {
     PHASE_STANDBY  = 0,
     PHASE_LAUNCH   = 1,

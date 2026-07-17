@@ -102,9 +102,6 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
 
     /* TODO: read ADC for battery voltage — fill batt_voltage_mv, set batt_valid */
     Coral_Update(dp);
-    /* TODO: write updated scv to NVM */
-
-    (void)scv;
 }
 
 /* ------------------------------------------------------------------ */

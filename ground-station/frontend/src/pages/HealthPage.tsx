@@ -25,7 +25,7 @@ export function HealthPage({
             </CardTitle>
           </CardHeader>
           <CardContent className="h-[calc(100%-56px)] px-4 pb-4">
-            <SystemArchitectureDiagram latest={latest} />
+            <SystemArchitectureDiagram latest={latest} backendStatus={backendStatus} />
           </CardContent>
         </Card>
 

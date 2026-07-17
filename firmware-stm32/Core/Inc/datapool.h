@@ -4,12 +4,9 @@
 #include <stdint.h>
 #include <limits.h>
 
-/* SCV_MAGIC is a recognizable sanity marker. Erased STM32 flash reads as
- * 0xFFFF, so 0xCAFE lets boot code distinguish an initialized SCV record from
- * blank/corrupt storage before checking crc16. */
+/* SCV_MAGIC is a recognizable runtime sanity marker. Persistence is owned by
+ * a separate integration and is intentionally outside this module. */
 #define SCV_MAGIC                 0xCAFEU
-#define SCV_FLASH_ADDR            0x080FF800UL
-#define SCV_FLASH_SIZE            0x00000800UL
 
 #define SCV_INVALID_U8            0xFFU
 #define SCV_INVALID_U16           0xFFFFU
@@ -84,7 +81,8 @@ typedef struct __attribute__((packed)) {
 } SensorData_t;
 
 /* ICD Section 2 — SCV_t
- * Persisted to reserved flash. FSW/FDIR owns health and flight state. */
+ * Runtime configuration/health state. FSW/FDIR owns health and flight state;
+ * a separate persistence integration may load/store this structure. */
 typedef struct __attribute__((packed)) {
 
     uint16_t magic;              /* 0xCAFE */
@@ -110,12 +108,79 @@ typedef struct __attribute__((packed)) {
 
 } SCV_t;
 
-/* Raw downlink telemetry v3. Fields are copied directly from SensorData_t and
+/* Volatile TTC/FDIR health snapshot. It is intentionally separate from SCV
+ * because it describes only the current boot's modem recovery activity. */
+typedef struct __attribute__((packed)) {
+    uint8_t  last_event;           /* LoRaHealthEvent_t */
+    uint8_t  consecutive_failures; /* consecutive SPI/TX failures */
+    uint8_t  recovery_count;       /* modem reset/reinit attempts since boot */
+    uint32_t last_success_ms;      /* HAL tick of most recent TxDone */
+    uint8_t  rx_mode_active;       /* RX-continuous mode readback succeeded */
+    uint8_t  last_rx_status;       /* LoRaRxHealthStatus_t */
+    uint16_t rx_packet_count;      /* CRC-valid packets received since boot */
+    uint16_t rx_crc_error_count;   /* packets rejected by modem CRC */
+    uint16_t ack_timeout_count;    /* telemetry packets never ACKed by ground */
+    uint32_t last_rx_ms;           /* HAL tick of most recent valid packet */
+} LoRaHealth_t;
+
+typedef enum {
+    LORA_EVENT_NONE = 0,
+    LORA_EVENT_INIT_OK,
+    LORA_EVENT_INIT_FAIL,
+    LORA_EVENT_TX_OK,
+    LORA_EVENT_TX_SPI_FAIL,
+    LORA_EVENT_TX_TIMEOUT,
+    LORA_EVENT_TX_BAD_LENGTH,
+    LORA_EVENT_NOT_READY,
+    LORA_EVENT_CONFIG_FAIL,
+    LORA_EVENT_RX_OK,
+    LORA_EVENT_RX_CRC_ERROR,
+    LORA_EVENT_RX_SPI_FAIL,
+    LORA_EVENT_RX_MODE_FAIL,
+    LORA_EVENT_ACK_TIMEOUT
+} LoRaHealthEvent_t;
+
+typedef enum {
+    LORA_RX_HEALTH_NONE = 0,
+    LORA_RX_HEALTH_ACTIVE,
+    LORA_RX_HEALTH_PACKET_OK,
+    LORA_RX_HEALTH_CRC_ERROR,
+    LORA_RX_HEALTH_BAD_LENGTH,
+    LORA_RX_HEALTH_SPI_ERROR,
+    LORA_RX_HEALTH_MODE_ERROR
+} LoRaRxHealthStatus_t;
+
+/* Most recent ground command observed by TTC. The flight computer echoes this
+ * snapshot in telemetry so ground can confirm a received uplink. */
+typedef enum {
+    UPLINK_COMMAND_NONE = 0,
+    UPLINK_COMMAND_REQUEST_TELEMETRY,
+    UPLINK_COMMAND_ACKNOWLEDGE
+} UplinkCommand_t;
+
+typedef enum {
+    UPLINK_STATUS_NONE = 0,
+    UPLINK_STATUS_ACCEPTED,
+    UPLINK_STATUS_INVALID_FORMAT,
+    UPLINK_STATUS_UNSUPPORTED,
+    UPLINK_STATUS_DUPLICATE,
+    UPLINK_STATUS_UNEXPECTED_ACK
+} UplinkStatus_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t  last_command;       /* UplinkCommand_t */
+    uint8_t  last_status;        /* UplinkStatus_t */
+    uint16_t last_command_id;    /* ID supplied by CMD,<id>,<verb> */
+    uint16_t last_ack_sequence;  /* Sequence supplied by ACK,<sequence> */
+    uint16_t command_count;      /* Valid uplinks received since boot */
+} UplinkState_t;
+
+/* Raw downlink telemetry v7. Selected fields are copied from SensorData_t and
  * SCV_t. Engineering-unit conversions are intentionally performed by the
  * ground station, not by the flight CPU. */
 typedef struct __attribute__((packed)) {
     uint8_t  packet_type;        /* 0x01 = telemetry */
-    uint8_t  protocol_version;   /* 0x03 = raw datapool/SCV layout */
+    uint8_t  protocol_version;   /* 0x07 = ACK-timeout/replay-safe TTC layout */
     uint16_t sequence_number;
     uint32_t tx_uptime_ms;       /* HAL_GetTick() when this frame was built */
 
@@ -145,7 +210,7 @@ typedef struct __attribute__((packed)) {
     uint8_t  coral_block[16];
     uint8_t  coral_valid;
 
-    /* SCV_t snapshot, including its persisted CRC. */
+    /* Runtime SCV_t snapshot, including the persistence-owned CRC field. */
     uint16_t scv_magic;
     uint32_t scv_boot_count;
     uint32_t scv_mission_elapsed_ms;
@@ -162,6 +227,12 @@ typedef struct __attribute__((packed)) {
     uint16_t scv_last_batt_mv;
     int32_t  scv_baro_ground_alt_cm;
     uint16_t scv_crc16;
+
+    /* Ground-to-flight command/acknowledgement snapshot. */
+    UplinkState_t uplink;
+
+    /* Volatile minimal LoRa FDIR health snapshot. */
+    LoRaHealth_t lora;
 
     uint16_t crc16;              /* CRC-16/CCITT over every preceding byte */
 } TelemetryPacket_t;

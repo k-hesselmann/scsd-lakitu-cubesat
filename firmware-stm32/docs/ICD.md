@@ -80,23 +80,15 @@ typedef struct __attribute__((packed)) {
 
 **Interface:** FR-020
 **Direction:** FSW/FDIR owns the SCV; other subsystems provide source health data
-**Storage:** STM32 internal flash, last 2 KiB page reserved for SCV
+**Storage:** Runtime RAM in this integration
 **Update rate:** FSW updates `flight_phase` on transition; FDIR updates health
 fields on each 1 Hz monitoring cycle.
 
-The SCV is the single persistent system state record. It survives power cycles
-and resets. FSW/FDIR initialise and validate it, restore `flight_phase` after
-unexpected reset, and persist selected fields to flash.
-
-The reserved flash region is:
-
-| Constant | Value | Meaning |
-|---|---:|---|
-| `SCV_FLASH_ADDR` | `0x080FF800` | Start of the final STM32L476RG 2 KiB flash page |
-| `SCV_FLASH_SIZE` | `0x00000800` | Reserved SCV flash size, 2048 bytes |
-
-A CRC-16 covers all fields except `crc16` itself. Any consumer reading the SCV
-must verify the CRC before trusting the contents.
+The current firmware treats the SCV as live runtime state only. Flash layout,
+load/store policy, wear management, and CRC ownership belong to the separate
+persistence integration. This module neither reserves an SCV flash page nor
+reads or writes internal flash. The existing `magic` and `crc16` fields remain
+in the interface for that integration owner.
 
 ```c
 typedef struct __attribute__((packed)) {
@@ -125,9 +117,9 @@ typedef struct __attribute__((packed)) {
 } SCV_t;
 ```
 
-`SCV_MAGIC = 0xCAFE` is a recognizable sanity marker, not a cryptographic value.
-Erased STM32 flash reads as `0xFFFF`, so `0xCAFE` distinguishes an initialized
-SCV record from blank flash before the CRC is checked.
+`SCV_MAGIC = 0xCAFE` is a recognizable runtime sanity marker, not a
+cryptographic value. The current integration initializes the SCV in RAM during
+boot and does not validate a stored CRC.
 
 **Equipment bitmask definitions:**
 
@@ -158,12 +150,12 @@ bit in `equipment_faults` means FSW/FDIR should not trust the equipment data.
 Fields without a valid value use reserved impossible sentinels, e.g. `0xFFFF`
 for unknown `uint16_t` measurements and `INT32_MIN` for unknown signed values.
 
-**Default SCV values on invalid magic or CRC:**
+**Runtime SCV startup defaults:**
 
 | Field | Default |
 |---|---:|
 | `magic` | `SCV_MAGIC` |
-| `boot_count` | `0`, then incremented during boot handling |
+| `boot_count` | `0`, then incremented during boot handling (therefore `1` after each cold boot in this runtime-only integration) |
 | `mission_elapsed_ms` | `0` |
 | `flight_phase` | `PHASE_STANDBY` |
 | `reset_reason` | `RESET_REASON_UNKNOWN` |
@@ -189,31 +181,67 @@ for unknown `uint16_t` measurements and `INT32_MIN` for unknown signed values.
 CDH-owned recovery wrappers. FDIR marks equipment faulty after the configured
 timeout limit, calls the relevant CDH recovery wrapper no more often than once
 per `FDIR_REINIT_PERIOD_MS`, and starts a nonblocking I2C bus restart when both
-I2C sensors are faulted. GPS, Coral, SD, LoRa, and EPS recovery ownership remains
-reserved for their subsystem handlers.
+I2C sensors are faulted. GPS, Coral, SD, and EPS recovery ownership remains reserved for their
+subsystem handlers. LoRa recovery is owned by TTC: it resets/reinitializes the
+modem after three consecutive SPI/TX failures, with a one-minute retry backoff.
 
 ---
 
-## 3. Telemetry Packet ? `TelemetryPacket_t` (protocol v3)
+## 3. Telemetry Packet - `TelemetryPacket_t` (protocol v7)
 
-**Direction:** OBC ? ground station over LoRa
+**Direction:** OBC to ground station over LoRa
 **Wire order:** packed, little-endian
-**Total length:** **128 bytes**
+**Total length:** **155 bytes**
 **Integrity:** CRC-16/CCITT (`0xFFFF` initial value, polynomial `0x1021`) over
-bytes 0?125; the final two bytes are the packet CRC.
+bytes 0-152; the final two bytes are the packet CRC.
 
-The v3 packet is a raw snapshot: it copies every `SensorData_t` field and every
-`SCV_t` field (including the SCV CRC) without flight-side rescaling or unit
-conversion. The only generated values are `packet_type` (`0x01`),
-`protocol_version` (`0x03`), sequence number, transmit uptime, and packet CRC.
+The v7 packet is a selected snapshot of `SensorData_t`, `SCV_t`, reliable-uplink
+state, and LoRa TX/RX health. Engineering-unit conversion remains ground-owned.
 
 | Byte range | Fields | Source / notes |
 |---|---|---|
-| 0?7 | type, version, sequence, `tx_uptime_ms` | TTC/FSW transport metadata |
-| 8?95 | complete `SensorData_t` snapshot | Direct copies; source units are preserved |
-| 96?125 | complete `SCV_t` snapshot | Direct copies, including `scv_crc16` |
-| 126?127 | `crc16` | Packet CRC-16/CCITT |
+| 0-7 | type, version, sequence, `tx_uptime_ms` | TTC/FSW transport metadata |
+| 8-95 | selected `SensorData_t` fields | Direct copies; source units are preserved |
+| 96-125 | complete `SCV_t` snapshot | Direct copies, including `scv_crc16` |
+| 126 | `uplink.last_command` | `0 NONE`, `1 REQ_TELEMETRY`, `2 ACKNOWLEDGE` |
+| 127 | `uplink.last_status` | `0 NONE`, `1 ACCEPTED`, `2 INVALID_FORMAT`, `3 UNSUPPORTED`, `4 DUPLICATE`, `5 UNEXPECTED_ACK` |
+| 128-129 | `uplink.last_command_id` | ID supplied by `CMD,<id>,<verb>` |
+| 130-131 | `uplink.last_ack_sequence` | Last outstanding telemetry sequence acknowledged by ground |
+| 132-133 | `uplink.command_count` | Unique valid commands accepted since boot |
+| 134 | `lora.last_event` | Latest modem TX/RX event |
+| 135 | `lora.consecutive_failures` | Consecutive modem failures |
+| 136 | `lora.recovery_count` | RFM95W recovery attempts since boot |
+| 137-140 | `lora.last_success_ms` | HAL tick of most recent `TxDone` |
+| 141 | `lora.rx_mode_active` | RX-continuous mode readback succeeded |
+| 142 | `lora.last_rx_status` | `0 NONE`, `1 ACTIVE`, `2 PACKET_OK`, `3 CRC_ERROR`, `4 BAD_LENGTH`, `5 SPI_ERROR`, `6 MODE_ERROR` |
+| 143-144 | `lora.rx_packet_count` | CRC-valid uplink packets since boot |
+| 145-146 | `lora.rx_crc_error_count` | Uplink packets rejected by modem CRC |
+| 147-148 | `lora.ack_timeout_count` | Telemetry packets whose three-attempt retry budget expired without a matching ACK |
+| 149-152 | `lora.last_rx_ms` | HAL tick of most recent CRC-valid uplink |
+| 153-154 | `crc16` | Packet CRC-16/CCITT |
 
+LoRa event values include `9 RX_OK`, `10 RX_CRC_ERROR`, `11 RX_SPI_FAIL`,
+`12 RX_MODE_FAIL`, and `13 ACK_TIMEOUT`. Entering continuous RX mode is verified
+by reading back `RegOpMode` and `RegDioMapping1`.
+
+### Reliable TTC protocol
+
+- Ground commands use `CMD,<command-id>,REQ_TELEMETRY`.
+- Flight echoes `last_command_id` and `last_status` in telemetry. A dedicated
+  16-ID sliding replay window tracks the newest accepted ID and handles 16-bit
+  wraparound. ACK processing does not overwrite this window. Previously seen
+  IDs and stale IDs older than the window are treated as duplicates and do not
+  increment the unique-command counter.
+- Ground acknowledges valid telemetry with `ACK,<telemetry-sequence>`.
+- Flight accepts an ACK only when it matches the outstanding stop-and-wait
+  packet. Duplicate and unexpected ACKs are reported separately.
+- Flight retries the exact same telemetry packet and sequence after five seconds,
+  up to three transmission attempts. New periodic/immediate packets wait until
+  the outstanding packet is acknowledged or its retry budget expires.
+- Expiring that retry budget records `LORA_EVENT_ACK_TIMEOUT` and increments the
+  saturating `lora.ack_timeout_count` counter.
+- ACK reception is piggybacked on later telemetry; flight does not emit an
+  immediate ACK-of-ACK packet, preventing acknowledgement loops.
 Ground conversion rules:
 
 - GPS degrees, metres, and m/s; barometer Pa, metres, and ?C; and battery mV

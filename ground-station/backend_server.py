@@ -10,10 +10,11 @@ from typing import Any
 from datetime import datetime, timezone
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from ground_event_store import GroundEventStore
 from lora_radio import RFM95Radio
 from telemetry_decoder import (
     TELEMETRY_PACKET_SIZE,
@@ -35,7 +36,7 @@ class BackendConfig:
     history = 1000
     log_dir = "logs"
 
-    frequency_hz = 868000000
+    frequency_hz = 868100000
     spreading_factor = 9
     sync_word = 0x12
     tx_power_dbm = 10
@@ -71,6 +72,17 @@ class ReceiverState:
         self.command_tx_count = 0
         self.command_tx_failures = 0
 
+        # Ground-observed evidence for the flight uplink/RX path.
+        self.telemetry_ack_tx_count = 0
+        self.telemetry_ack_tx_failures = 0
+        self.last_telemetry_ack_sequence = None
+        self.last_telemetry_ack_ok = None
+        self.last_telemetry_ack_time_unix = None
+        self.last_command_id = None
+        self.last_command_outcome = None
+        self.last_command_attempt = None
+        self.last_command_time_unix = None
+
     def update(self, **kwargs):
         with self.lock:
             for key, value in kwargs.items():
@@ -95,6 +107,15 @@ class ReceiverState:
                 "lora_crc_errors": self.lora_crc_errors,
                 "command_tx_count": self.command_tx_count,
                 "command_tx_failures": self.command_tx_failures,
+                "telemetry_ack_tx_count": self.telemetry_ack_tx_count,
+                "telemetry_ack_tx_failures": self.telemetry_ack_tx_failures,
+                "last_telemetry_ack_sequence": self.last_telemetry_ack_sequence,
+                "last_telemetry_ack_ok": self.last_telemetry_ack_ok,
+                "last_telemetry_ack_time_unix": self.last_telemetry_ack_time_unix,
+                "last_command_id": self.last_command_id,
+                "last_command_outcome": self.last_command_outcome,
+                "last_command_attempt": self.last_command_attempt,
+                "last_command_time_unix": self.last_command_time_unix,
             }
 
 
@@ -133,8 +154,19 @@ state = ReceiverState()
 manager = ConnectionManager()
 
 store: TelemetryStore | None = None
+ground_events: GroundEventStore | None = None
 radio: RFM95Radio | None = None
 radio_lock = threading.Lock()
+command_transaction_lock = asyncio.Lock()
+uplink_log_lock = threading.Lock()
+uplink_logs: list[dict[str, Any]] = []
+UPLINK_LOG_LIMIT = 200
+UPLINK_STATUS_ACCEPTED = 1
+UPLINK_STATUS_DUPLICATE = 4
+UPLINK_ACCEPTED_STATUSES = {UPLINK_STATUS_ACCEPTED, UPLINK_STATUS_DUPLICATE}
+pending_command_lock = threading.Lock()
+pending_command_acks: dict[int, "PendingCommandAck"] = {}
+next_command_id = 1
 
 receiver_thread: threading.Thread | None = None
 stop_event = threading.Event()
@@ -157,6 +189,163 @@ def get_radio() -> RFM95Radio:
         raise HTTPException(status_code=503, detail="Radio is not initialized")
 
     return radio
+
+
+def log_ground_event(
+    event_type: str,
+    severity: str = "info",
+    message: str = "",
+    *,
+    sequence_number: int | None = None,
+    lora_rssi_dbm: float | int | None = None,
+    lora_snr_db: float | int | None = None,
+    **details: Any,
+):
+    current_logger = ground_events
+    if current_logger is None:
+        return
+
+    current_logger.add_event(
+        event_type=event_type,
+        severity=severity,
+        message=message,
+        sequence_number=sequence_number,
+        lora_rssi_dbm=lora_rssi_dbm,
+        lora_snr_db=lora_snr_db,
+        receiver_state=state.snapshot(),
+        details=details,
+    )
+
+
+def record_uplink_log(
+    payload: str,
+    outcome: str,
+    message: str,
+    *,
+    timeout_s: float,
+    command_id: int | None = None,
+    attempt: int | None = None,
+    telemetry_sequence: int | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    row = {
+        "pc_time_iso": now.isoformat(),
+        "pc_time_unix": now.timestamp(),
+        "payload": payload,
+        "outcome": outcome,
+        "message": message,
+        "timeout_s": timeout_s,
+        "command_id": command_id,
+        "attempt": attempt,
+        "telemetry_sequence": telemetry_sequence,
+    }
+    with uplink_log_lock:
+        uplink_logs.append(row)
+        del uplink_logs[:-UPLINK_LOG_LIMIT]
+    return row
+
+
+def get_uplink_logs(limit: int) -> list[dict[str, Any]]:
+    with uplink_log_lock:
+        return list(reversed(uplink_logs[-limit:]))
+
+
+class PendingCommandAck:
+    def __init__(self, command_id: int):
+        self.command_id = command_id
+        self.event = threading.Event()
+        self.status: int | None = None
+        self.telemetry_sequence: int | None = None
+
+
+def register_pending_command() -> PendingCommandAck:
+    global next_command_id
+
+    with pending_command_lock:
+        for _ in range(0xFFFF):
+            command_id = next_command_id
+            next_command_id = 1 if next_command_id >= 0xFFFF else next_command_id + 1
+            if command_id not in pending_command_acks:
+                pending = PendingCommandAck(command_id)
+                pending_command_acks[command_id] = pending
+                return pending
+
+    raise HTTPException(status_code=503, detail="No uplink command IDs available")
+
+
+def observe_command_ack(row: dict[str, Any]) -> None:
+    if row.get("telemetry_valid") is not True:
+        return
+
+    command_id = row.get("uplink_last_command_id")
+    status = row.get("uplink_last_status")
+
+    if (
+        not isinstance(command_id, int) or command_id == 0
+        or not isinstance(status, int)
+    ):
+        return
+
+    with pending_command_lock:
+        pending = pending_command_acks.get(command_id)
+        if pending is None:
+            return
+        pending.status = status
+        sequence = row.get("sequence_number")
+        pending.telemetry_sequence = sequence if isinstance(sequence, int) else None
+        pending.event.set()
+
+
+def send_automatic_downlink_ack(sequence_number: int) -> None:
+    current_radio = radio
+    if current_radio is None:
+        return
+
+    payload = f"ACK,{sequence_number}"
+    try:
+        with radio_lock:
+            try:
+                ok = current_radio.send_packet(payload, timeout_s=5.0)
+            finally:
+                current_radio.start_rx_continuous()
+    except Exception as exc:
+        state.increment("telemetry_ack_tx_failures")
+        state.update(
+            last_telemetry_ack_sequence=sequence_number,
+            last_telemetry_ack_ok=False,
+            last_telemetry_ack_time_unix=time.time(),
+        )
+        record_uplink_log(payload, "error", str(exc), timeout_s=5.0)
+        log_ground_event(
+            "telemetry_ack_error",
+            severity="warning",
+            message=str(exc),
+            sequence_number=sequence_number,
+            payload=payload,
+        )
+        return
+
+    outcome = "sent" if ok else "timeout"
+    state.increment("telemetry_ack_tx_count" if ok else "telemetry_ack_tx_failures")
+    state.update(
+        last_telemetry_ack_sequence=sequence_number,
+        last_telemetry_ack_ok=ok,
+        last_telemetry_ack_time_unix=time.time(),
+    )
+    record_uplink_log(
+        payload,
+        outcome,
+        "Automatic telemetry acknowledgement" if ok else "Telemetry ACK TxDone timeout",
+        timeout_s=5.0,
+        telemetry_sequence=sequence_number,
+    )
+    log_ground_event(
+        "telemetry_ack_sent" if ok else "telemetry_ack_timeout",
+        severity="info" if ok else "warning",
+        message="Ground acknowledged received telemetry" if ok else "Ground telemetry ACK timed out",
+        sequence_number=sequence_number,
+        payload=payload,
+    )
 
 
 def schedule_broadcast(message: dict[str, Any]):
@@ -182,17 +371,23 @@ def schedule_broadcast(message: dict[str, Any]):
 
 def backend_status_payload():
     current_store = store
+    current_ground_events = ground_events
 
     stats = None
     latest = None
+    ground_event_stats = None
 
     if current_store is not None:
         stats = current_store.get_stats()
         latest = current_store.get_latest()
 
+    if current_ground_events is not None:
+        ground_event_stats = current_ground_events.get_stats()
+
     return {
         "receiver": state.snapshot(),
         "stats": stats,
+        "ground_event_stats": ground_event_stats,
         "latest": latest,
         "config": {
             "frequency_hz": CONFIG.frequency_hz,
@@ -222,6 +417,10 @@ def telemetry_receiver_worker():
             last_error=None,
             last_message="Opening CH347/RFM95W radio...",
         )
+        log_ground_event(
+            "receiver_starting",
+            message="Opening CH347/RFM95W ground radio",
+        )
 
         radio = RFM95Radio(
             frequency_hz=CONFIG.frequency_hz,
@@ -248,6 +447,11 @@ def telemetry_receiver_worker():
             radio_initialized=True,
             last_message="LoRa RX mode active. Waiting for telemetry...",
         )
+        log_ground_event(
+            "radio_initialized",
+            message="Ground RFM95W initialized in continuous RX mode",
+            version_register=f"0x{version:02X}",
+        )
 
         schedule_broadcast({
             "type": "status",
@@ -267,6 +471,13 @@ def telemetry_receiver_worker():
             if packet["crc_error"]:
                 state.increment("lora_crc_errors")
                 state.update(last_message="LoRa packet CRC error")
+                log_ground_event(
+                    "lora_crc_error",
+                    severity="warning",
+                    message="Ground radio reported a LoRa packet CRC error",
+                    lora_rssi_dbm=packet.get("rssi_dbm"),
+                    lora_snr_db=packet.get("snr_db"),
+                )
 
                 current_store.add_lora_crc_error(
                     lora_rssi_dbm=packet.get("rssi_dbm"),
@@ -291,6 +502,16 @@ def telemetry_receiver_worker():
                 state.update(
                     last_message=f"Ignored non-telemetry packet: {len(payload)} bytes"
                 )
+                log_ground_event(
+                    "non_telemetry_packet",
+                    severity="warning",
+                    message="Ground radio received a packet with an unexpected length",
+                    lora_rssi_dbm=packet.get("rssi_dbm"),
+                    lora_snr_db=packet.get("snr_db"),
+                    packet_length=len(payload),
+                    expected_length=TELEMETRY_PACKET_SIZE,
+                    payload_hex=payload.hex(" "),
+                )
 
                 schedule_broadcast({
                     "type": "non_telemetry_packet",
@@ -310,6 +531,15 @@ def telemetry_receiver_worker():
                     last_error=f"Telemetry decode error: {e}",
                     last_message="Telemetry decode error",
                 )
+                log_ground_event(
+                    "telemetry_decode_error",
+                    severity="critical",
+                    message=str(e),
+                    lora_rssi_dbm=packet.get("rssi_dbm"),
+                    lora_snr_db=packet.get("snr_db"),
+                    packet_length=len(payload),
+                    payload_hex=payload.hex(" "),
+                )
 
                 schedule_broadcast({
                     "type": "decode_error",
@@ -325,10 +555,62 @@ def telemetry_receiver_worker():
                 lora_snr_db=packet["snr_db"],
             )
 
+            if not telemetry.validation_ok:
+                state.update(
+                    last_message=(
+                        f"Rejected invalid telemetry sequence {telemetry.sequence_number}"
+                    )
+                )
+                log_ground_event(
+                    "invalid_telemetry",
+                    severity="critical",
+                    message="Decoded frame failed application-level validation",
+                    sequence_number=telemetry.sequence_number,
+                    lora_rssi_dbm=packet.get("rssi_dbm"),
+                    lora_snr_db=packet.get("snr_db"),
+                    packet_type_ok=telemetry.packet_type_ok,
+                    protocol_version_ok=telemetry.protocol_version_ok,
+                    crc_ok=telemetry.crc_ok,
+                )
+                schedule_broadcast({
+                    "type": "invalid_telemetry",
+                    "data": row,
+                    "status": backend_status_payload(),
+                })
+                continue
+
+            observe_command_ack(row)
+            if row.get("is_duplicate_packet"):
+                log_ground_event(
+                    "telemetry_duplicate",
+                    severity="warning",
+                    message=(
+                        f"Duplicate telemetry sequence {telemetry.sequence_number}; "
+                        "flight likely did not receive the previous ground ACK in time"
+                    ),
+                    sequence_number=telemetry.sequence_number,
+                    consecutive_duplicates=row.get("consecutive_duplicate_packets"),
+                    total_duplicates=row.get("total_duplicate_packets"),
+                )
+            send_automatic_downlink_ack(telemetry.sequence_number)
+
             state.update(
                 last_packet_time_unix=time.time(),
                 last_error=None,
                 last_message=f"Received telemetry sequence {telemetry.sequence_number}",
+            )
+            log_ground_event(
+                "telemetry_received",
+                message=f"Received raw-v7 telemetry sequence {telemetry.sequence_number}",
+                sequence_number=telemetry.sequence_number,
+                lora_rssi_dbm=packet.get("rssi_dbm"),
+                lora_snr_db=packet.get("snr_db"),
+                packet_length=len(payload),
+                protocol_version=telemetry.protocol_version,
+                packet_type=telemetry.packet_type,
+                crc_ok=telemetry.crc_ok,
+                flight_state=telemetry.flight_state_name,
+                lost_packets_since_previous=row.get("lost_packets_since_previous"),
             )
 
             schedule_broadcast({
@@ -344,6 +626,12 @@ def telemetry_receiver_worker():
             last_error=str(e),
             last_message="Receiver stopped due to error",
         )
+        log_ground_event(
+            "receiver_error",
+            severity="critical",
+            message=str(e),
+            traceback=traceback.format_exc(),
+        )
 
         print("Receiver thread error:")
         traceback.print_exc()
@@ -356,6 +644,10 @@ def telemetry_receiver_worker():
 
     finally:
         state.update(running=False)
+        log_ground_event(
+            "receiver_stopped",
+            message="Ground radio receiver thread stopped",
+        )
 
 
 # ============================================================
@@ -365,6 +657,7 @@ def telemetry_receiver_worker():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global store
+    global ground_events
     global receiver_thread
     global main_loop
 
@@ -374,6 +667,23 @@ async def lifespan(app: FastAPI):
         maxlen=CONFIG.history,
         log_dir=CONFIG.log_dir,
         enable_csv=CONFIG.enable_csv,
+    )
+    ground_events = GroundEventStore(
+        log_dir=CONFIG.log_dir,
+        enable_csv=CONFIG.enable_csv,
+    )
+    log_ground_event(
+        "backend_started",
+        message="Ground-station backend started",
+        host=CONFIG.host,
+        port=CONFIG.port,
+        radio_enabled=CONFIG.enable_radio,
+        telemetry_csv_path=store.csv_path,
+        ground_event_csv_path=ground_events.csv_path,
+        frequency_hz=CONFIG.frequency_hz,
+        spreading_factor=CONFIG.spreading_factor,
+        sync_word=CONFIG.sync_word,
+        tx_power_dbm=CONFIG.tx_power_dbm,
     )
 
     stop_event.clear()
@@ -391,9 +701,14 @@ async def lifespan(app: FastAPI):
             radio_initialized=False,
             last_message="Backend started without radio",
         )
+        log_ground_event(
+            "radio_disabled",
+            message="Backend started without a ground radio",
+        )
 
     yield
 
+    log_ground_event("backend_stopping", message="Ground-station backend stopping")
     stop_event.set()
 
     if receiver_thread is not None:
@@ -401,6 +716,9 @@ async def lifespan(app: FastAPI):
 
     if store is not None:
         store.close()
+
+    if ground_events is not None:
+        ground_events.close()
 
 
 app = FastAPI(
@@ -423,8 +741,17 @@ app.add_middleware(
 # ============================================================
 
 class SendAsciiCommandRequest(BaseModel):
-    payload: str = Field(..., min_length=1, max_length=255)
+    payload: str = Field(..., min_length=1, max_length=48)
     timeout_s: float = Field(default=5.0, ge=0.5, le=30.0)
+    ack_timeout_s: float = Field(default=5.0, ge=1.0, le=30.0)
+    max_attempts: int = Field(default=3, ge=1, le=5)
+
+
+class GroundEventRequest(BaseModel):
+    event_type: str = Field(..., min_length=1, max_length=80, pattern=r"^[a-z0-9_.-]+$")
+    severity: str = Field(default="info", pattern=r"^(info|warning|critical)$")
+    message: str = Field(default="", max_length=1000)
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 # ============================================================
@@ -473,7 +800,7 @@ def api_history(limit: int = 500):
     if limit > 5000:
         limit = 5000
 
-    history = current_store.get_history()
+    history = current_store.get_history(valid_only=True)
 
     return {
         "count": min(len(history), limit),
@@ -488,68 +815,296 @@ def api_stats():
     return {
         "receiver": state.snapshot(),
         "stats": current_store.get_stats(),
+        "ground_event_stats": ground_events.get_stats() if ground_events is not None else None,
     }
 
 
-@app.post("/api/send-ascii")
+@app.get("/api/uplink-log")
+def api_uplink_log(limit: int = 100):
+    return {"data": get_uplink_logs(max(1, min(limit, UPLINK_LOG_LIMIT)))}
+
+
+@app.post("/api/ground-event")
+def api_ground_event(request: GroundEventRequest):
+    log_ground_event(
+        f"dashboard_{request.event_type}",
+        severity=request.severity,
+        message=request.message,
+        source="dashboard",
+        dashboard_details=request.details,
+    )
+    return {"ok": True}
+
+
+async def command_transaction_guard():
+    """Serialize complete command/response transactions, including ACK waits."""
+    async with command_transaction_lock:
+        yield
+
+
+@app.post("/api/send-ascii", dependencies=[Depends(command_transaction_guard)])
 async def api_send_ascii(request: SendAsciiCommandRequest):
-    """
-    Optional command/uplink endpoint.
+    """Transmit an ACK or a reliable command envelope over LoRa.
 
-    This sends one ASCII LoRa packet from the ground station and then
-    returns the radio to continuous RX mode.
-
-    Example payload:
-        PING_GROUND_0001
+    Commands are assigned a stable 16-bit ID and retried until flight telemetry
+    echoes that ID with ACCEPTED/DUPLICATE status. ACK,<sequence> packets are
+    telemetry acknowledgements and intentionally do not require an ACK-of-ACK.
     """
+
+    try:
+        request.payload.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Command payload must contain ASCII characters only",
+        ) from exc
 
     if not CONFIG.enable_radio:
         raise HTTPException(status_code=503, detail="Radio is disabled")
 
     current_radio = get_radio()
-
     if not state.snapshot()["radio_initialized"]:
         raise HTTPException(status_code=503, detail="Radio is not initialized")
 
-    def blocking_send():
+    is_downlink_ack = request.payload.startswith("ACK,")
+    if is_downlink_ack:
+        parts = request.payload.split(",", 1)
+        if len(parts) != 2 or not parts[1].isdigit() or not 0 <= int(parts[1]) <= 0xFFFF:
+            raise HTTPException(status_code=422, detail="ACK must be ACK,<uint16 sequence>")
+        command_id = None
+        wire_payload = request.payload
+        pending = None
+    else:
+        pending = register_pending_command()
+        command_id = pending.command_id
+        wire_payload = f"CMD,{command_id},{request.payload}"
+        if len(wire_payload.encode("ascii")) > 64:
+            with pending_command_lock:
+                pending_command_acks.pop(command_id, None)
+            raise HTTPException(status_code=422, detail="Encoded command exceeds flight RX limit")
+
+    def blocking_send(payload: str):
         with radio_lock:
-            ok = current_radio.send_packet(
-                request.payload,
-                timeout_s=request.timeout_s,
-            )
+            try:
+                return current_radio.send_packet(payload, timeout_s=request.timeout_s)
+            finally:
+                current_radio.start_rx_continuous()
 
-            current_radio.start_rx_continuous()
+    attempts_used = 0
+    last_failure = "No flight acknowledgement received"
 
-            return ok
-
-    ok = await asyncio.to_thread(blocking_send)
-
-    if ok:
-        state.increment("command_tx_count")
-        state.update(last_message=f"Sent command: {request.payload}")
-
-        now = datetime.now(timezone.utc)
-
-        result = {
-            "ok": True,
-            "payload": request.payload,
-            "pc_time_iso": now.isoformat(),
-            "pc_time_unix": now.timestamp(),
-        }
-
+    if command_id is not None:
+        state.update(
+            last_command_id=command_id,
+            last_command_outcome="pending",
+            last_command_attempt=0,
+            last_command_time_unix=time.time(),
+        )
         await manager.broadcast_json({
-            "type": "command_tx",
-            "data": result,
+            "type": "status",
             "status": backend_status_payload(),
         })
 
-        return result
+    try:
+        for attempt in range(1, request.max_attempts + 1):
+            attempts_used = attempt
+            try:
+                ok = await asyncio.to_thread(blocking_send, wire_payload)
+            except Exception as exc:
+                state.increment("command_tx_failures")
+                last_failure = str(exc)
+                record_uplink_log(
+                    wire_payload,
+                    "error",
+                    str(exc),
+                    timeout_s=request.timeout_s,
+                    command_id=command_id,
+                    attempt=attempt,
+                )
+                log_ground_event(
+                    "command_tx_error",
+                    severity="warning",
+                    message=str(exc),
+                    payload=wire_payload,
+                    command_id=command_id,
+                    attempt=attempt,
+                )
+                continue
 
-    state.increment("command_tx_failures")
-    state.update(last_message=f"Command TX failed: {request.payload}")
+            if not ok:
+                state.increment("command_tx_failures")
+                if command_id is not None:
+                    state.update(
+                        last_command_outcome="retrying",
+                        last_command_attempt=attempt,
+                        last_command_time_unix=time.time(),
+                    )
+                last_failure = "Ground radio did not report TxDone"
+                record_uplink_log(
+                    wire_payload,
+                    "timeout",
+                    last_failure,
+                    timeout_s=request.timeout_s,
+                    command_id=command_id,
+                    attempt=attempt,
+                )
+                continue
 
-    raise HTTPException(status_code=500, detail="Command TX timeout/error")
+            state.increment("command_tx_count")
+            state.update(last_message=f"Transmitted uplink: {wire_payload}")
+            if command_id is not None:
+                state.update(
+                    last_command_outcome="pending",
+                    last_command_attempt=attempt,
+                    last_command_time_unix=time.time(),
+                )
+            record_uplink_log(
+                wire_payload,
+                "radio_sent",
+                "Ground radio reported TxDone; waiting for flight acknowledgement"
+                if pending is not None else "Ground radio reported TxDone",
+                timeout_s=request.timeout_s,
+                command_id=command_id,
+                attempt=attempt,
+            )
 
+            if pending is None:
+                now = datetime.now(timezone.utc)
+                result = {
+                    "ok": True,
+                    "acknowledged": False,
+                    "outcome": "sent",
+                    "payload": request.payload,
+                    "wire_payload": wire_payload,
+                    "command_id": None,
+                    "attempts": attempt,
+                    "pc_time_iso": now.isoformat(),
+                    "pc_time_unix": now.timestamp(),
+                }
+                await manager.broadcast_json({
+                    "type": "command_tx",
+                    "data": result,
+                    "status": backend_status_payload(),
+                })
+                return result
+
+            received = await asyncio.to_thread(pending.event.wait, request.ack_timeout_s)
+            if received:
+                status = pending.status
+                accepted = status in UPLINK_ACCEPTED_STATUSES
+                outcome = "acknowledged" if accepted else "rejected"
+                message = (
+                    f"Flight acknowledged command in telemetry sequence {pending.telemetry_sequence}"
+                    if accepted
+                    else f"Flight rejected command with status {status}"
+                )
+                record_uplink_log(
+                    wire_payload,
+                    outcome,
+                    message,
+                    timeout_s=request.ack_timeout_s,
+                    command_id=command_id,
+                    attempt=attempt,
+                    telemetry_sequence=pending.telemetry_sequence,
+                )
+                now = datetime.now(timezone.utc)
+                result = {
+                    "ok": accepted,
+                    "acknowledged": accepted,
+                    "outcome": outcome,
+                    "payload": request.payload,
+                    "wire_payload": wire_payload,
+                    "command_id": command_id,
+                    "flight_status": status,
+                    "telemetry_sequence": pending.telemetry_sequence,
+                    "attempts": attempt,
+                    "pc_time_iso": now.isoformat(),
+                    "pc_time_unix": now.timestamp(),
+                }
+                state.update(
+                    last_command_outcome=outcome,
+                    last_command_attempt=attempt,
+                    last_command_time_unix=time.time(),
+                )
+                if accepted:
+                    state.update(last_message=f"Flight acknowledged command {command_id}")
+                await manager.broadcast_json({
+                    "type": "command_tx",
+                    "data": result,
+                    "status": backend_status_payload(),
+                })
+                if accepted:
+                    log_ground_event(
+                        "command_acknowledged",
+                        message=message,
+                        sequence_number=pending.telemetry_sequence,
+                        command_id=command_id,
+                        attempt=attempt,
+                    )
+                    return result
+                log_ground_event(
+                    "command_rejected",
+                    severity="warning",
+                    message=message,
+                    sequence_number=pending.telemetry_sequence,
+                    command_id=command_id,
+                    attempt=attempt,
+                )
+                raise HTTPException(status_code=409, detail=message)
+
+            last_failure = f"No flight acknowledgement within {request.ack_timeout_s:g} s"
+            state.update(
+                last_command_outcome="retrying",
+                last_command_attempt=attempt,
+                last_command_time_unix=time.time(),
+            )
+            await manager.broadcast_json({
+                "type": "status",
+                "status": backend_status_payload(),
+            })
+            record_uplink_log(
+                wire_payload,
+                "retry",
+                last_failure,
+                timeout_s=request.ack_timeout_s,
+                command_id=command_id,
+                attempt=attempt,
+            )
+
+        state.increment("command_tx_failures")
+        state.update(
+            last_message=f"Uplink command {command_id} was not acknowledged",
+            last_command_outcome="unacknowledged",
+            last_command_attempt=attempts_used,
+            last_command_time_unix=time.time(),
+        )
+        record_uplink_log(
+            wire_payload,
+            "unacknowledged",
+            last_failure,
+            timeout_s=request.ack_timeout_s,
+            command_id=command_id,
+            attempt=attempts_used,
+        )
+        await manager.broadcast_json({
+            "type": "status",
+            "status": backend_status_payload(),
+        })
+        log_ground_event(
+            "command_unacknowledged",
+            severity="critical",
+            message=last_failure,
+            command_id=command_id,
+            attempts=attempts_used,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=f"Command not acknowledged after {attempts_used} attempt(s): {last_failure}",
+        )
+    finally:
+        if command_id is not None:
+            with pending_command_lock:
+                pending_command_acks.pop(command_id, None)
 
 # ============================================================
 # WebSocket route
@@ -558,6 +1113,14 @@ async def api_send_ascii(request: SendAsciiCommandRequest):
 @app.websocket("/ws/telemetry")
 async def websocket_telemetry(websocket: WebSocket):
     await manager.connect(websocket)
+    client = websocket.client
+    log_ground_event(
+        "dashboard_connected",
+        message="Dashboard WebSocket connected",
+        client_host=client.host if client else None,
+        client_port=client.port if client else None,
+        active_connections=len(manager.active_connections),
+    )
 
     try:
         await websocket.send_json({
@@ -566,15 +1129,30 @@ async def websocket_telemetry(websocket: WebSocket):
         })
 
         while True:
-            # The frontend does not need to send anything, but keeping this
-            # receive loop open lets us detect disconnects cleanly.
+            # The frontend sends only keepalive text; receiving it also lets us
+            # detect disconnects cleanly.
             await websocket.receive_text()
 
     except WebSocketDisconnect:
-        await manager.disconnect(websocket)
+        pass
 
-    except Exception:
+    except Exception as exc:
+        log_ground_event(
+            "dashboard_websocket_error",
+            severity="warning",
+            message=str(exc),
+            client_host=client.host if client else None,
+        )
+
+    finally:
         await manager.disconnect(websocket)
+        log_ground_event(
+            "dashboard_disconnected",
+            message="Dashboard WebSocket disconnected",
+            client_host=client.host if client else None,
+            client_port=client.port if client else None,
+            active_connections=len(manager.active_connections),
+        )
 
 
 # ============================================================
@@ -633,7 +1211,7 @@ def parse_args():
         "--log-dir",
         type=str,
         default="logs",
-        help="Directory for CSV telemetry logs",
+        help="Directory for telemetry and ground-event CSV logs",
     )
 
     parser.add_argument(

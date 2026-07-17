@@ -142,6 +142,7 @@ int main(void)
     FDIR_Update(&g_datapool, &g_scv);
     FSW_Update(&g_datapool);
     SD_Logger_Update(&g_datapool, &g_scv);
+    TTC_Service();
     if (TTC_TelemetryDue())
     {
       FSW_BuildTelemetryPacket(&g_datapool, &g_scv, &tx_packet);

@@ -32,13 +32,20 @@ class TelemetryStore:
         self.csv_path = None
 
         self.total_packets_received = 0
+        self.total_valid_packets = 0
+        self.total_invalid_packets = 0
         self.total_packets_logged = 0
         self.total_crc_errors = 0
         self.total_packet_type_errors = 0
         self.total_protocol_errors = 0
         self.total_lost_packets = 0
+        self.total_duplicate_packets = 0
+        self.consecutive_duplicate_packets = 0
+        self.sequence_session_resets = 0
 
         self.previous_sequence_number = None
+        self.previous_boot_count = None
+        self.previous_uptime_ms = None
 
         if self.enable_csv:
             self._open_csv_log()
@@ -84,6 +91,7 @@ class TelemetryStore:
             "lora_crc_error",
 
             # Packet validation
+            "telemetry_valid",
             "packet_type",
             "protocol_version",
             "packet_type_ok",
@@ -95,8 +103,12 @@ class TelemetryStore:
 
             # Counters
             "sequence_number",
+            "sequence_session_reset",
             "lost_packets_since_previous",
             "total_lost_packets",
+            "is_duplicate_packet",
+            "consecutive_duplicate_packets",
+            "total_duplicate_packets",
 
             # Time and state
             "utc_timestamp",
@@ -176,7 +188,7 @@ class TelemetryStore:
             "last_uplink_rssi_dbm",
             "last_uplink_snr_db",
 
-            # Raw v3 datapool and SCV snapshot
+            # Raw v7 datapool and SCV snapshot
             "datapool_timestamp_ms",
             "gps_valid_raw",
             "imu_accel_x_g",
@@ -206,6 +218,29 @@ class TelemetryStore:
             "scv_crc16",
             "reset_reason_name",
 
+            # Ground-to-flight command/acknowledgement snapshot
+            "uplink_last_command",
+            "uplink_last_command_name",
+            "uplink_last_status",
+            "uplink_last_status_name",
+            "uplink_last_command_id",
+            "uplink_last_ack_sequence",
+            "uplink_command_count",
+
+            # Minimal LoRa FDIR snapshot
+            "lora_last_event",
+            "lora_last_event_name",
+            "lora_consecutive_failures",
+            "lora_recovery_count",
+            "lora_last_success_ms",
+            "lora_rx_mode_active",
+            "lora_last_rx_status",
+            "lora_last_rx_status_name",
+            "lora_rx_packet_count",
+            "lora_rx_crc_error_count",
+            "lora_ack_timeout_count",
+            "lora_last_rx_ms",
+
             # Coral payload
             "coral_status",
             "coral_result_age_s",
@@ -214,33 +249,17 @@ class TelemetryStore:
         ]
 
     def add_packet(self, telemetry_packet, lora_rssi_dbm=None, lora_snr_db=None):
-        """
-        Add a decoded TelemetryPacket to the in-memory buffer and CSV log.
-
-        Args:
-            telemetry_packet:
-                Decoded TelemetryPacket object from telemetry_decoder.py
-
-            lora_rssi_dbm:
-                RSSI measured by the ground-side RFM95W for this downlink packet
-
-            lora_snr_db:
-                SNR measured by the ground-side RFM95W for this downlink packet
-
-        Returns:
-            row dictionary that was stored/logged
-        """
+        """Store every decoded frame, but advance mission state only for trusted telemetry."""
 
         now = datetime.now(timezone.utc)
-        row = self._packet_to_row(
-            telemetry_packet=telemetry_packet,
-            pc_receive_time=now,
-            lora_rssi_dbm=lora_rssi_dbm,
-            lora_snr_db=lora_snr_db,
-        )
+        telemetry_valid = bool(telemetry_packet.validation_ok)
 
         with self.lock:
             self.total_packets_received += 1
+            if telemetry_valid:
+                self.total_valid_packets += 1
+            else:
+                self.total_invalid_packets += 1
 
             if not telemetry_packet.crc_ok:
                 self.total_crc_errors += 1
@@ -251,6 +270,13 @@ class TelemetryStore:
             if not telemetry_packet.protocol_version_ok:
                 self.total_protocol_errors += 1
 
+            row = self._packet_to_row(
+                telemetry_packet=telemetry_packet,
+                pc_receive_time=now,
+                lora_rssi_dbm=lora_rssi_dbm,
+                lora_snr_db=lora_snr_db,
+                update_sequence=telemetry_valid,
+            )
             self.history.append(row)
 
             if self.csv_writer is not None:
@@ -260,34 +286,52 @@ class TelemetryStore:
 
         return row
 
-    def _calculate_lost_packets(self, sequence_number):
-        """
-        Estimate lost packets from sequence number.
-
-        Handles normal uint16 wrap-around.
-        """
+    def _calculate_sequence_health(self, sequence_number, boot_count, uptime_ms):
+        """Estimate loss within one spacecraft boot/session, including uint16 wrap."""
 
         if self.previous_sequence_number is None:
             self.previous_sequence_number = sequence_number
-            return 0
+            self.previous_boot_count = boot_count
+            self.previous_uptime_ms = uptime_ms
+            self.consecutive_duplicate_packets = 0
+            return 0, False, False
+
+        boot_changed = boot_count != self.previous_boot_count
+        uptime_regressed = (
+            isinstance(uptime_ms, int)
+            and isinstance(self.previous_uptime_ms, int)
+            and uptime_ms < self.previous_uptime_ms
+        )
+        if boot_changed or uptime_regressed:
+            self.previous_sequence_number = sequence_number
+            self.previous_boot_count = boot_count
+            self.previous_uptime_ms = uptime_ms
+            self.consecutive_duplicate_packets = 0
+            self.sequence_session_resets += 1
+            return 0, False, True
 
         previous = self.previous_sequence_number
+        if sequence_number == previous:
+            self.total_duplicate_packets += 1
+            self.consecutive_duplicate_packets += 1
+            return 0, True, False
 
         if sequence_number >= previous:
             difference = sequence_number - previous
         else:
-            # uint16 wrap-around
             difference = (65536 - previous) + sequence_number
 
         self.previous_sequence_number = sequence_number
+        self.previous_boot_count = boot_count
+        self.previous_uptime_ms = uptime_ms
+        self.consecutive_duplicate_packets = 0
 
         if difference <= 1:
-            return 0
+            return 0, False, False
 
         lost = difference - 1
         self.total_lost_packets += lost
-
-        return lost
+        return lost, False, False
 
     def _packet_to_row(
         self,
@@ -295,10 +339,18 @@ class TelemetryStore:
         pc_receive_time,
         lora_rssi_dbm=None,
         lora_snr_db=None,
+        update_sequence=False,
     ):
-        lost_packets = self._calculate_lost_packets(
-            telemetry_packet.sequence_number
-        )
+        if update_sequence:
+            lost_packets, is_duplicate, sequence_session_reset = (
+                self._calculate_sequence_health(
+                    telemetry_packet.sequence_number,
+                    telemetry_packet.boot_count,
+                    telemetry_packet.obc_uptime_ms,
+                )
+            )
+        else:
+            lost_packets, is_duplicate, sequence_session_reset = 0, False, False
 
         status = telemetry_packet.status_flags
         reset = telemetry_packet.reset_cause
@@ -312,6 +364,7 @@ class TelemetryStore:
             "lora_crc_error": False,
 
             # Packet validation
+            "telemetry_valid": bool(telemetry_packet.validation_ok),
             "packet_type": telemetry_packet.packet_type,
             "protocol_version": telemetry_packet.protocol_version,
             "packet_type_ok": telemetry_packet.packet_type_ok,
@@ -323,8 +376,12 @@ class TelemetryStore:
 
             # Counters
             "sequence_number": telemetry_packet.sequence_number,
+            "sequence_session_reset": sequence_session_reset,
             "lost_packets_since_previous": lost_packets,
             "total_lost_packets": self.total_lost_packets,
+            "is_duplicate_packet": is_duplicate,
+            "consecutive_duplicate_packets": self.consecutive_duplicate_packets,
+            "total_duplicate_packets": self.total_duplicate_packets,
 
             # Time and state
             "utc_timestamp": telemetry_packet.utc_timestamp,
@@ -410,7 +467,7 @@ class TelemetryStore:
             "coral_payload_text": telemetry_packet.coral_payload_text,
             "coral_payload_hex": telemetry_packet.coral_payload_raw.hex(" "),
 
-            # Raw v3 datapool and SCV snapshot (no flight-side unit conversion).
+            # Raw v7 datapool and SCV snapshot (no flight-side unit conversion).
             "datapool_timestamp_ms": telemetry_packet.datapool_timestamp_ms,
             "gps_valid_raw": telemetry_packet.gps_valid_raw,
             "imu_accel_x_g": telemetry_packet.imu_accel_x_g,
@@ -439,6 +496,25 @@ class TelemetryStore:
             "scv_baro_ground_alt_cm": telemetry_packet.scv_baro_ground_alt_cm,
             "scv_crc16": f"0x{telemetry_packet.scv_crc16:04X}",
             "reset_reason_name": telemetry_packet.reset_reason_name,
+            "uplink_last_command": telemetry_packet.uplink_last_command,
+            "uplink_last_command_name": telemetry_packet.uplink_last_command_name,
+            "uplink_last_status": telemetry_packet.uplink_last_status,
+            "uplink_last_status_name": telemetry_packet.uplink_last_status_name,
+            "uplink_last_command_id": telemetry_packet.uplink_last_command_id,
+            "uplink_last_ack_sequence": telemetry_packet.uplink_last_ack_sequence,
+            "uplink_command_count": telemetry_packet.uplink_command_count,
+            "lora_last_event": telemetry_packet.lora_last_event,
+            "lora_last_event_name": telemetry_packet.lora_last_event_name,
+            "lora_consecutive_failures": telemetry_packet.lora_consecutive_failures,
+            "lora_recovery_count": telemetry_packet.lora_recovery_count,
+            "lora_last_success_ms": telemetry_packet.lora_last_success_ms,
+            "lora_rx_mode_active": telemetry_packet.lora_rx_mode_active,
+            "lora_last_rx_status": telemetry_packet.lora_last_rx_status,
+            "lora_last_rx_status_name": telemetry_packet.lora_last_rx_status_name,
+            "lora_rx_packet_count": telemetry_packet.lora_rx_packet_count,
+            "lora_rx_crc_error_count": telemetry_packet.lora_rx_crc_error_count,
+            "lora_ack_timeout_count": telemetry_packet.lora_ack_timeout_count,
+            "lora_last_rx_ms": telemetry_packet.lora_last_rx_ms,
         }
 
         return row
@@ -458,6 +534,7 @@ class TelemetryStore:
         row["lora_downlink_rssi_dbm"] = lora_rssi_dbm
         row["lora_downlink_snr_db"] = lora_snr_db
         row["lora_crc_error"] = True
+        row["telemetry_valid"] = False
         row["crc_ok"] = False
 
         with self.lock:
@@ -472,21 +549,26 @@ class TelemetryStore:
 
     def get_latest(self):
         """
-        Return the latest stored row, or None if no telemetry has been received.
+        Return the newest decoded telemetry row, or None if none has been received.
+
+        Radio-level CRC errors are retained in history for link diagnostics, but
+        they do not contain spacecraft telemetry and must not replace the data
+        used by the dashboard's current-state displays.
         """
 
         with self.lock:
-            if not self.history:
-                return None
+            for row in reversed(self.history):
+                if row.get("telemetry_valid") is True:
+                    return dict(row)
 
-            return dict(self.history[-1])
+            return None
 
-    def get_history(self):
-        """
-        Return a copy of the current in-memory history.
-        """
-
+    def get_history(self, valid_only=False):
+        """Return copied history, optionally excluding diagnostic/invalid rows."""
         with self.lock:
+            if valid_only:
+                return [dict(row) for row in self.history
+                        if row.get("telemetry_valid") is True]
             return [dict(row) for row in self.history]
 
     def get_stats(self):
@@ -497,11 +579,17 @@ class TelemetryStore:
         with self.lock:
             return {
                 "total_packets_received": self.total_packets_received,
+                "total_valid_packets": self.total_valid_packets,
+                "total_invalid_packets": self.total_invalid_packets,
+                "total_unique_valid_packets": self.total_valid_packets - self.total_duplicate_packets,
                 "total_packets_logged": self.total_packets_logged,
                 "total_crc_errors": self.total_crc_errors,
                 "total_packet_type_errors": self.total_packet_type_errors,
                 "total_protocol_errors": self.total_protocol_errors,
                 "total_lost_packets": self.total_lost_packets,
+                "total_duplicate_packets": self.total_duplicate_packets,
+                "consecutive_duplicate_packets": self.consecutive_duplicate_packets,
+                "sequence_session_resets": self.sequence_session_resets,
                 "history_length": len(self.history),
                 "csv_path": self.csv_path,
             }

@@ -1,5 +1,5 @@
 # telemetry_decoder.py
-"""Decoder for the raw datapool/SCV v3 downlink packet.
+"""Decoder for the reliable raw datapool/SCV/TTC-state v7 downlink packet.
 
 The STM32 copies source values into the frame without rescaling.  Any display
 conversion (for example g to m/s? and deg/s to rad/s) happens here on ground.
@@ -11,8 +11,8 @@ from dataclasses import asdict, dataclass
 from typing import Optional
 
 TELEMETRY_PACKET_TYPE = 0x01
-TELEMETRY_PROTOCOL_VERSION = 0x03
-TELEMETRY_PACKET_SIZE = 128
+TELEMETRY_PROTOCOL_VERSION = 0x07
+TELEMETRY_PACKET_SIZE = 155
 STANDARD_GRAVITY_MS2 = 9.80665
 
 EQUIPMENT_GPS = 1 << 0
@@ -32,6 +32,39 @@ FLIGHT_STATES = {
     5: "LANDING",
 }
 
+LORA_EVENTS = {
+    0: "NONE",
+    1: "INIT_OK",
+    2: "INIT_FAIL",
+    3: "TX_OK",
+    4: "TX_SPI_FAIL",
+    5: "TX_TIMEOUT",
+    6: "TX_BAD_LENGTH",
+    7: "NOT_READY",
+    8: "CONFIG_FAIL",
+    9: "RX_OK",
+    10: "RX_CRC_ERROR",
+    11: "RX_SPI_FAIL",
+    12: "RX_MODE_FAIL",
+    13: "ACK_TIMEOUT",
+}
+
+UPLINK_COMMANDS = {0: "NONE", 1: "REQUEST_TELEMETRY", 2: "ACKNOWLEDGE"}
+UPLINK_STATUSES = {
+    0: "NONE", 1: "ACCEPTED", 2: "INVALID_FORMAT",
+    3: "UNSUPPORTED", 4: "DUPLICATE", 5: "UNEXPECTED_ACK",
+}
+
+LORA_RX_HEALTH = {
+    0: "NONE",
+    1: "ACTIVE",
+    2: "PACKET_OK",
+    3: "CRC_ERROR",
+    4: "BAD_LENGTH",
+    5: "SPI_ERROR",
+    6: "MODE_ERROR",
+}
+
 RESET_REASONS = {
     0: "UNKNOWN",
     1: "POWER_ON",
@@ -41,7 +74,7 @@ RESET_REASONS = {
 }
 
 # Little-endian packed layout matching TelemetryPacket_t in datapool.h.
-TELEMETRY_STRUCT = struct.Struct("<BBHIIfffffBfffffffBfffBBHB16sBHIIBBHH6BHiHH")
+TELEMETRY_STRUCT = struct.Struct("<BBHIIfffffBfffffffBfffBBHB16sBHIIBBHH6BHiHBBHHHBBBIBBHHHIH")
 
 
 @dataclass
@@ -130,9 +163,41 @@ class TelemetryPacket:
     scv_crc16: int
     reset_reason_name: str
 
+    # Ground-to-flight command/acknowledgement snapshot.
+    uplink_last_command: int
+    uplink_last_command_name: str
+    uplink_last_status: int
+    uplink_last_status_name: str
+    uplink_last_command_id: int
+    uplink_last_ack_sequence: int
+    uplink_command_count: int
+
+    # Minimal volatile LoRa FDIR health snapshot.
+    lora_last_event: int
+    lora_last_event_name: str
+    lora_consecutive_failures: int
+    lora_recovery_count: int
+    lora_last_success_ms: int
+    lora_rx_mode_active: int
+    lora_last_rx_status: int
+    lora_last_rx_status_name: str
+    lora_rx_packet_count: int
+    lora_rx_crc_error_count: int
+    lora_ack_timeout_count: int
+    lora_last_rx_ms: int
+
+    @property
+    def validation_ok(self) -> bool:
+        """True when the complete v7 transport envelope is valid."""
+        return (
+            self.length_ok
+            and self.crc_ok
+            and self.packet_type_ok
+            and self.protocol_version_ok
+        )
+
     def to_dict(self):
         return asdict(self)
-
 
 def crc16_ccitt(data: bytes) -> int:
     crc = 0xFFFF
@@ -206,7 +271,14 @@ def decode_telemetry_packet(raw: bytes) -> TelemetryPacket:
         scv_reset_reason, scv_equipment_enabled, scv_equipment_faults,
         scv_gps_timeout_count, scv_imu_timeout_count, scv_baro_timeout_count,
         scv_coral_timeout_count, scv_sd_fault_count, scv_watchdog_reset_count,
-        scv_last_batt_mv, scv_baro_ground_alt_cm, scv_crc16, received_crc16,
+        scv_last_batt_mv, scv_baro_ground_alt_cm, scv_crc16,
+        uplink_last_command, uplink_last_status, uplink_last_command_id,
+        uplink_last_ack_sequence, uplink_command_count,
+        lora_last_event, lora_consecutive_failures, lora_recovery_count,
+        lora_last_success_ms, lora_rx_mode_active, lora_last_rx_status,
+        lora_rx_packet_count, lora_rx_crc_error_count, lora_ack_timeout_count,
+        lora_last_rx_ms,
+        received_crc16,
     ) = TELEMETRY_STRUCT.unpack(raw)
 
     status_flags = decode_status_flags(gps_valid, imu_valid, baro_valid,
@@ -293,6 +365,31 @@ def decode_telemetry_packet(raw: bytes) -> TelemetryPacket:
         scv_baro_ground_alt_cm=scv_baro_ground_alt_cm,
         scv_crc16=scv_crc16,
         reset_reason_name=RESET_REASONS.get(scv_reset_reason, f"UNKNOWN_{scv_reset_reason}"),
+        uplink_last_command=uplink_last_command,
+        uplink_last_command_name=UPLINK_COMMANDS.get(
+            uplink_last_command, f"UNKNOWN_{uplink_last_command}"
+        ),
+        uplink_last_status=uplink_last_status,
+        uplink_last_status_name=UPLINK_STATUSES.get(
+            uplink_last_status, f"UNKNOWN_{uplink_last_status}"
+        ),
+        uplink_last_command_id=uplink_last_command_id,
+        uplink_last_ack_sequence=uplink_last_ack_sequence,
+        uplink_command_count=uplink_command_count,
+        lora_last_event=lora_last_event,
+        lora_last_event_name=LORA_EVENTS.get(lora_last_event, f"UNKNOWN_{lora_last_event}"),
+        lora_consecutive_failures=lora_consecutive_failures,
+        lora_recovery_count=lora_recovery_count,
+        lora_last_success_ms=lora_last_success_ms,
+        lora_rx_mode_active=lora_rx_mode_active,
+        lora_last_rx_status=lora_last_rx_status,
+        lora_last_rx_status_name=LORA_RX_HEALTH.get(
+            lora_last_rx_status, f"UNKNOWN_{lora_last_rx_status}"
+        ),
+        lora_rx_packet_count=lora_rx_packet_count,
+        lora_rx_crc_error_count=lora_rx_crc_error_count,
+        lora_ack_timeout_count=lora_ack_timeout_count,
+        lora_last_rx_ms=lora_last_rx_ms,
     )
 
 
