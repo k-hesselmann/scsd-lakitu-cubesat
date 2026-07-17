@@ -12,7 +12,7 @@
 
 #define GPS_MAX_ALTITUDE_M         40000.0f
 #define GPS_MIN_ALTITUDE_M         0.0f
-#define GPS_TIMEOUT_S              5
+#define GPS_TIMEOUT_S              60
 #define GPS_MAX_DISTANCE_KM        1000.0f
 #define MUNICH_LAT                 48.1351f
 #define MUNICH_LON                 11.5820f
