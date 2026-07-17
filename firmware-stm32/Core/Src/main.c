@@ -28,6 +28,7 @@
 #include "cdh/baro_diag.h"
 #include "datapool.h"
 #include "fdir/fdir.h"
+#include "fdir/fdir_test_hooks.h"
 #include "fdir/scv.h"
 #include "fsw/fsm.h"
 #include "sd_logger.h"
@@ -150,6 +151,10 @@ int main(void)
    * be stopped (FMECA F1). */
   IWDG_UserInit();
 
+  /* Bench-only fault-injection console (docs/FMECA.md Section 5); compiles
+   * to nothing unless FDIR_TEST_HOOKS is defined (testhooks build env). */
+  FDIR_TestHooks_Init();
+
   TelemetryPacket_t tx_packet = {0};
 
   /* Superloop schedule: the loop free-runs (no delay) so FDIR executes at the
@@ -176,6 +181,10 @@ int main(void)
       if (FDIR_SubsystemEnabled(FDIR_SUBSYS_FSW))
         FSW_Update(&g_datapool);
     }
+
+    /* Applied after CDH/FSW so an injected value survives this cycle's real
+     * sensor read and is what FDIR actually evaluates below. */
+    FDIR_TestHooks_Poll(&g_datapool, &g_scv);
 
     FDIR_Update(&g_datapool, &g_scv);
 

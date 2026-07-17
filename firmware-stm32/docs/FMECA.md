@@ -78,8 +78,8 @@ The radio also has a hardware RST line pulsed by `LoRa_Init()`, invoked via
 
 | # | Item | Failure mode | Possible cause | Local effect | System effect | Detection means | Isolation | Recovery | Worst phase | Sev | Lvl |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| F1 | MCU | superloop hangs | blocking call, logic bug | everything stops | mission loss if unrecovered | IWDG — **not enabled yet (main.c TODO)**; kick at end of loop only | — | watchdog reset; SCV restores phase/state | any | 4 | L3 |
-| F2 | MCU | repeated watchdog resets (boot loop) | persistent fault re-triggered each boot | reset storm | mission loss | `watchdog_reset_count >= 3` (counted today, **not acted on**) | staged: each further reset disables the next subsystem update (SD → CDH → TTC → FSW) | reduced mode; FDIR + watchdog kick stay alive at every stage | any | 4 | L4 |
+| F1 | MCU | superloop hangs | blocking call, logic bug | everything stops | mission loss if unrecovered | IWDG — armed in `main.c` (`IWDG_UserInit()`, ~30 s timeout); kick at end of loop, gated by `FDIR_SystemHealthyEnoughToKickWatchdog()` | — | watchdog reset; SCV restores phase/state | any | 4 | L3 |
+| F2 | MCU | repeated watchdog resets (boot loop) | persistent fault re-triggered each boot | reset storm | mission loss | `watchdog_reset_count >= 3` (staged reduced mode implemented in `main()`, see `FDIR_INTEGRATION.md`) | staged: each further reset disables the next subsystem update (SD → CDH → TTC → FSW) | reduced mode; FDIR + watchdog kick stay alive at every stage | any | 4 | L4 |
 | F3 | SCV/flash | SCV corrupt or erased | reset during flash write, wear | state lost | phase/counters reset | magic + CRC16 check (exists) | — | reinit defaults; log the event | any | 2 | L1 |
 | F4 | FSW time | `mission_elapsed_ms` resets on reboot | boot-relative tick stored as mission time (fdir.c:183) | wrong mission time after any reset | phase logic errors if time-dependent | code review finding — fix, not monitor | — | boot-offset reconstruction from SCV | any | 2 | — |
 
@@ -111,21 +111,27 @@ restart, and LoRa recovery alike.
 
 One test per monitor. Run on the bench before flight; record actual FDIR reaction.
 
+Rows marked "(test hook)" are injected via the bench-only fault-injection
+console (`Core/Src/fdir/fdir_test_hooks.c`, `-DFDIR_TEST_HOOKS` build env
+`nucleo_l476rg_testhooks`, never in the flight image) over the USART2 debug
+UART — send `HOOK STATUS` for the full command list. The console exists now;
+two of the monitors it targets do not yet (see caveats below).
+
 | Test | Injection | Expected reaction | Status |
 |---|---|---|---|
 | GPS no-fix | shield/disconnect antenna only | no-fix flagged, no reinit spam, telemetry continues | ☐ |
 | GPS no-data | disconnect GPS from I2C | GPS fault after 30 cycles, protocol reinit requests | ☐ |
 | IMU loss | disconnect IMU from I2C | fault after 3 s, reinit requests every 10 s, clears on reconnect | ☐ |
-| IMU garbage | inject stuck values (test hook) | plausibility flag, FSM ignores IMU | ☐ |
+| IMU garbage | `HOOK IMU FREEZE <seconds>` (test hook) | plausibility flag, FSM ignores IMU — **not yet testable: the plausibility monitor itself is unimplemented in `fdir.c` (see TODO at line 32); the hook injects the fault, there's just nothing watching for it yet** | ☐ |
 | Baro loss | disconnect baro from I2C | fault after 3 s, reinit requests every 10 s | ☐ |
-| Baro drift | offset baro reading (test hook) | cross-check flags baro, FSM uses GPS altitude | ☐ |
+| Baro drift | `HOOK BARO OFFSET <meters>` (test hook) | cross-check flags baro, FSM uses GPS altitude — **not yet testable, same reason as IMU garbage: no GPS/baro cross-check monitor exists yet** | ☐ |
 | Bus wedge | short SDA to GND during operation | GPS+IMU+baro all faulted → bus restart executes; LoRa TX and SD logging continue throughout | ☐ |
 | Coral loss | disconnect Coral RX line | CORAL fault after 5 cycles, no recovery attempted, core loop unaffected | ☐ |
-| ADC fault | misconfigure/disable ADC (test hook) | EPS_ADC fault after debounce, telemetry marks battery invalid | ☐ |
+| ADC fault | `HOOK ADC FAULT <seconds>` (test hook) | EPS_ADC fault after debounce, telemetry marks battery invalid | ☐ |
 | SD failure | remove card mid-run | remount attempts, telemetry unaffected, logging resumes on reinsert | ☐ |
 | SD full | fill card to capacity (optional — accepted risk) | writes fail with SD fault set, telemetry unaffected | ☐ |
 | LoRa failure | disconnect radio SPI | LORA fault, periodic LoRa_Init retries (RST pulse), recovery on reconnect | ☐ |
 | LoRa boot failure | hold radio in reset at boot | TTC starts degraded, retries init, recovers when released | ☐ |
 | Loop hang | debug-halt or induced infinite loop | IWDG resets MCU, SCV restores phase, watchdog_reset_count increments | ☐ |
 | Boot loop | force repeated watchdog resets | staged disabling: SD off after 3 resets, then CDH, TTC, FSW on further resets; FDIR + watchdog kick alive at every stage | ☐ |
-| SCV corruption | erase SCV flash page | defaults reinitialised, boot continues, event logged | ☐ |
+| SCV corruption | `HOOK SCV ERASE` (test hook) | defaults reinitialised, boot continues, event logged | ☐ |
