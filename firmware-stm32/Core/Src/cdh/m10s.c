@@ -481,6 +481,81 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
     len = snprintf(dbg, sizeof(dbg), "[M10S] Device found at I2C 0x42\r\n");
     HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
 
+    /* Step 0.5: Soft reset GPS to clear any stuck state */
+    uint8_t rst_cmd[] = {
+        0xB5, 0x62,           /* UBX Sync */
+        0x06, 0x04,           /* CFG-RST class/id */
+        0x04, 0x00,           /* Length = 4 bytes */
+        0x00, 0x00,           /* Reserved */
+        0x01,                 /* Reset type: 1 = soft reset */
+        0x00,                 /* Reserved */
+        0x00, 0x00            /* Checksum placeholder */
+    };
+
+    ck_a = 0;
+    ck_b = 0;
+    M10S_CalculateChecksum(&rst_cmd[2], 8, &ck_a, &ck_b);
+    rst_cmd[10] = ck_a;
+    rst_cmd[11] = ck_b;
+
+    if (M10S_SendCommand(hi2c, rst_cmd, sizeof(rst_cmd))) {
+        len = snprintf(dbg, sizeof(dbg), "[M10S] Soft reset sent\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        HAL_Delay(500);  /* Give GPS time to reset */
+    }
+
+    /* Step 0.75: Enable UBX protocol on I2C input
+     * CFG-VALSET: Enable UBX input protocol on I2C
+     * Key: 0x80420001 (CFG-I2CINPROT-UBX) = 1 (enabled) */
+    uint8_t cfg_i2c_in[] = {
+        0xB5, 0x62,           /* UBX Sync */
+        0x06, 0x8A,           /* CFG-VALSET class/id */
+        0x08, 0x00,           /* Length = 8 bytes */
+        0x00,                 /* Version */
+        0x01,                 /* Layer: RAM */
+        0x01, 0x00, 0x42, 0x80,  /* Key: CFG-I2CINPROT-UBX */
+        0x01,                 /* Value: 1 (enabled) */
+        0x00, 0x00            /* Checksum placeholder */
+    };
+
+    ck_a = 0;
+    ck_b = 0;
+    M10S_CalculateChecksum(&cfg_i2c_in[2], 10, &ck_a, &ck_b);
+    cfg_i2c_in[12] = ck_a;
+    cfg_i2c_in[13] = ck_b;
+
+    if (M10S_SendCommand(hi2c, cfg_i2c_in, sizeof(cfg_i2c_in))) {
+        len = snprintf(dbg, sizeof(dbg), "[M10S] I2C input protocol enabled\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    }
+    HAL_Delay(100);
+
+    /* Step 0.8: Enable UBX protocol on I2C output
+     * CFG-VALSET: Enable UBX output protocol on I2C
+     * Key: 0x80420002 (CFG-I2COUTPROT-UBX) = 1 (enabled) */
+    uint8_t cfg_i2c_out[] = {
+        0xB5, 0x62,           /* UBX Sync */
+        0x06, 0x8A,           /* CFG-VALSET class/id */
+        0x08, 0x00,           /* Length = 8 bytes */
+        0x00,                 /* Version */
+        0x01,                 /* Layer: RAM */
+        0x02, 0x00, 0x42, 0x80,  /* Key: CFG-I2COUTPROT-UBX */
+        0x01,                 /* Value: 1 (enabled) */
+        0x00, 0x00            /* Checksum placeholder */
+    };
+
+    ck_a = 0;
+    ck_b = 0;
+    M10S_CalculateChecksum(&cfg_i2c_out[2], 10, &ck_a, &ck_b);
+    cfg_i2c_out[12] = ck_a;
+    cfg_i2c_out[13] = ck_b;
+
+    if (M10S_SendCommand(hi2c, cfg_i2c_out, sizeof(cfg_i2c_out))) {
+        len = snprintf(dbg, sizeof(dbg), "[M10S] I2C output protocol enabled\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    }
+    HAL_Delay(100);
+
     /* Step 1: Configure I2C port to output only UBX (like SparkFun library)
      * UBX-CFG-PRT (0x06 0x00)
      * Structure:
