@@ -29,3 +29,14 @@ payload/models/*
 
 # STM32CubeIDE / Eclipse workspace cache (not the project itself)
 .metadata/
+
+# LaTeX build artifacts
+Final_Report/*.aux
+Final_Report/*.log
+Final_Report/*.out
+Final_Report/*.toc
+Final_Report/*.fls
+Final_Report/*.fdb_latexmk
+Final_Report/*.synctex.gz
+Final_Report/*.pdf
+Final_Report/chapters/*.aux
