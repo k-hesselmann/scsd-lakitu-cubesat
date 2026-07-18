@@ -13,13 +13,18 @@ static uint8_t mock_ready;
 static uint8_t mock_rx_active;
 static uint16_t mock_init_calls;
 static uint16_t mock_send_calls;
+static uint16_t mock_fdir_requests;
 
-/* White-box TTC test: hardware and the LoRa driver are mocked below. */
+/* White-box TTC test: hardware, the LoRa driver, and FDIR's reinit-request
+ * bitmask are mocked below. */
 #include "../../Core/Src/ttc/ttc.c"
 
 #define CHECK(x) do { if (!(x)) return __LINE__; } while (0)
 
 uint32_t HAL_GetTick(void) { return mock_tick; }
+
+uint16_t FDIR_GetReinitRequests(void) { return mock_fdir_requests; }
+void FDIR_AcknowledgeReinit(uint16_t mask) { mock_fdir_requests &= (uint16_t)~mask; }
 
 LoRaStatus_t LoRa_Init(void)
 {
@@ -75,6 +80,7 @@ static void Mock_Reset(void)
     mock_init_result = LORA_OK; mock_isolate_result = LORA_OK;
     mock_busy = 0U; mock_ready = 0U; mock_rx_active = 0U;
     mock_init_calls = 0U; mock_send_calls = 0U;
+    mock_fdir_requests = 0U;
 }
 
 static void Mock_Complete(LoRaStatus_t status, uint8_t ready, uint8_t rx)
@@ -194,6 +200,21 @@ static int TestAckRetriesAndNackCounter(void)
     return 0;
 }
 
+static int TestFdirReinitBitTriggersRecovery(void)
+{
+    TTC_FDIR_ActionStatus_t action;
+    Mock_Reset(); StartHealthyTtc();
+
+    mock_fdir_requests = EQUIPMENT_LORA;
+    TTC_Service();
+    CHECK((mock_fdir_requests & EQUIPMENT_LORA) == 0U);   /* acked         */
+    action = TTC_FDIR_GetActionStatus();
+    CHECK(action.action == TTC_FDIR_ACTION_RECOVERY);
+    CHECK((action.state == TTC_FDIR_ACTION_PENDING) ||
+          (action.state == TTC_FDIR_ACTION_IN_PROGRESS));
+    return 0;
+}
+
 int main(void)
 {
     int result;
@@ -205,5 +226,7 @@ int main(void)
     if (result != 0) return result;
     result = TestIsolationPreemptsStartup();
     if (result != 0) return result;
-    return TestAckRetriesAndNackCounter();
+    result = TestAckRetriesAndNackCounter();
+    if (result != 0) return result;
+    return TestFdirReinitBitTriggersRecovery();
 }
