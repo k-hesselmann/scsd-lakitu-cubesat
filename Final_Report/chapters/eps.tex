@@ -31,7 +31,8 @@ duty -- Edge TPU inference latency is millisecond-scale against a 1~Hz
 capture cycle, so the TPU is only briefly active per second -- and removed
 a duplicated boost-efficiency term from the battery-referred conversion.
 
-\begin{center}
+\begin{table}[H]
+\centering
 \begin{tabular}{lrr}
 \toprule
 \textbf{Quantity} & \textbf{Before} & \textbf{After} \\
@@ -42,7 +43,8 @@ Usable battery (0.9 cold derate) & 22.6~Wh & 22.6~Wh \\
 Margin & 1.70$\times$ & $\sim$3.1$\times$ \\
 \bottomrule
 \end{tabular}
-\end{center}
+\caption{Power budget before and after the review correction}
+\end{table}
 
 The corrected budget, referred to the battery: Coral $\sim$0.76~W (measured
 158--180~mA idle; inference adds $\sim$0.3~A for 2--2.4~ms, negligible in
@@ -114,7 +116,8 @@ reversed input; and the measured inference transient
 ($\sim$0.3~A above baseline, 2.0--2.4~ms, self-contained) is far gentler
 than the multi-amp spike the original budget assumed.
 
-\begin{center}
+\begin{table}[H]
+\centering
 \small
 \begin{tabular}{p{2.1cm}p{3.3cm}p{8.0cm}}
 \toprule
@@ -155,4 +158,5 @@ MR-008 / CR-001 & Flyable mass $\leq$650~g & EPS assembly (board + pack)
 measured 15.09~g, well inside its 200~g sub-budget. \\
 \bottomrule
 \end{tabular}
-\end{center}
+\caption{EPS requirement verification summary}
+\end{table}
