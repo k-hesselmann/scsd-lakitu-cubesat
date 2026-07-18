@@ -108,6 +108,11 @@ typedef struct __attribute__((packed)) {
      * the SCV; NOT yet in TelemetryPacket_t (v3) or the CSV — add both at
      * the next coordinated format revision (v4). */
     uint8_t  lora_timeout_count;
+    /* Lifetime (not consecutive) count of failed LoRa TX attempts since boot,
+     * mirrored from TTC_FDIR_Health_t.lora_tx_fault_counter. Persisted in the
+     * SCV; not yet in TelemetryPacket_t (v3) or the CSV — same deferred-v4
+     * treatment as lora_timeout_count above. */
+    uint16_t lora_tx_fault_counter;
     uint8_t  sd_fault_count;
     uint8_t  watchdog_reset_count;
 
