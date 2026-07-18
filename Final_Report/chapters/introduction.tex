@@ -1,0 +1,48 @@
+\chapter{Introduction}
+
+\section{Mission Overview}
+
+Lakitu is a 1U CubeSat-format payload flown aboard a stratospheric balloon,
+developed as a Spacecraft Computer, Software and Data (SCSD) course project at
+the Technical University of Munich. The platform executes an autonomous
+4--6~hour flight managed by a six-phase finite state machine: \emph{Standby},
+\emph{Launch}, \emph{Ascent}, \emph{Cruise}, \emph{Descent}, and
+\emph{Landing}. Its primary payload is a downward-facing camera coupled to an
+on-board machine-learning model that performs visual cloud-cover estimation in
+flight. Every captured frame is archived to an SD card and a compact
+cloud-fraction record is downlinked over LoRa alongside housekeeping
+telemetry.
+
+\section{Scope of this Report}
+
+This report documents the spacecraft from a Computer, Software and Data
+perspective, organised by subsystem: Command and Data Handling (CDH),
+Telemetry, Tracking and Command (TT\&C), the On-Board Computer (OBC),
+Electrical Power System (EPS), Flight Software (FSW) and its finite state
+machine, the on-board Machine-Learning Payload, and Structures. Each chapter
+covers that subsystem's responsibilities, interfaces to the rest of the
+spacecraft, and key design decisions as implemented in the
+\texttt{scsd-lakitu-cubesat} repository.
+
+\section{Team and Responsibilities}
+
+\textcolor{red}{Everyone: please check the table below is correct for your
+own contributions and flag anything that needs correcting.}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Name} & \textbf{Led} & \textbf{Helped with} \\
+\midrule
+Frederik Alexander Simon & CDH & -- \\
+Keval Satish Mohite & Project Management, FSW & -- \\
+Andrei Arteev & FSW & EPS \\
+Konstantin Hesselmann & EPS & OBC, Structures \\
+Alberto S\'anchez Calvo & TT\&C & -- \\
+Alisher Orynbek & OBC & -- \\
+Angela Ghurburrun & Structures & -- \\
+\bottomrule
+\end{tabular}
+\caption{Team leads and supporting contributions by subsystem}
+\end{table}
