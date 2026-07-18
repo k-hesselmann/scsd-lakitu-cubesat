@@ -61,16 +61,16 @@ Phases: Standby / Launch / Ascent / Cruise / Descent / Landing (fsm.h).
 
 ### TTC — LoRa RFM9x (SPI1, downlink only)
 
-Detection and recovery are both feasible and largely present in the driver:
-bounded 100 ms SPI timeouts, version-register (0x42) check at init, TxDone wait
-with timeout, and `ttc.c` already sets/clears `EQUIPMENT_LORA` per transmit. The
-radio also has a hardware RST line pulsed by `LoRa_Init()`. **Gap:** `s_radio_ready`
-is set once in `TTC_Init()` and never retried — a failed boot init or persistent
-send failure is currently permanent.
+Detection and recovery are both implemented: bounded 100 ms SPI timeouts,
+version-register (0x42) check at init, TxDone wait with timeout, and `fdir.c`
+thresholds TTC's raw TX-outcome counters (`TTC_FDIR_GetHealth()`) into
+`EQUIPMENT_LORA` set/clear and recovery requests — TTC itself sets neither.
+The radio also has a hardware RST line pulsed by `LoRa_Init()`, invoked via
+`TTC_FDIR_RequestRecovery()`.
 
 | # | Item | Failure mode | Possible cause | Local effect | System effect | Detection means | Isolation | Recovery | Worst phase | Sev | Lvl |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| T1 | LoRa | init fails at boot, or send fails / TxDone timeout | SPI fault, module hang | packet not sent, LORA fault set | ground blind | already implemented: LoRa_Send status → EQUIPMENT_LORA | logging continues | re-run `LoRa_Init()` (pulses RST) with cooldown after N consecutive failures — **to implement** | any | 3 | L1 |
+| T1 | LoRa | init fails at boot, or send fails / TxDone timeout | SPI fault, module hang | packet not sent, LORA fault set | ground blind | FDIR thresholds TTC_FDIR_GetHealth() → EQUIPMENT_LORA (≥90% of last 10 TX failed) | logging continues | recovery request (reinit bitmask) → `TTC_FDIR_RequestRecovery()` (pulses RST), on ≥5 consecutive failures or ≥60% of last 20, 10 s cooldown | any | 3 | L1 |
 | T2 | LoRa | TX reports OK but nothing radiated | antenna, RF stage | packets lost silently | ground blind | not software-detectable (downlink only, no ACK) | — | accepted risk; mitigate by pre-flight RF range test | any | 3 | — |
 | T3 | LoRa | driver blocks the superloop | SPI hang | loop stalls | whole FSW hung | already mitigated at L0: all SPI calls bounded (100 ms), TxDone wait bounded (5 s) | — | IWDG backstop (F1) | any | 4 | L0/L3 |
 
@@ -87,7 +87,9 @@ send failure is currently permanent.
 
 Every monitor = one row in the table-driven `FDIR_Update()` loop, except the
 escalation rules which stay explicit code. Recovery = bit in `reinit_requests`,
-consumed and acknowledged by the owning subsystem (pattern: `CDH_RequestBusRestart`).
+consumed and acknowledged by the owning subsystem's own `_Update()`/
+`_Service()` — the one uniform pattern used for GPS/IMU/BARO reinit, I2C bus
+restart, and LoRa recovery alike.
 
 | Monitor | FMECA | Signal | Debounce | Fault bit | Recovery request | Executor | Escalation |
 |---|---|---|---|---|---|---|---|
@@ -101,7 +103,7 @@ consumed and acknowledged by the owning subsystem (pattern: `CDH_RequestBusResta
 | Battery ADC | C8 | `batt_valid` | 3 cycles (new — currently 1) | EQUIPMENT_EPS_ADC | internal ADC reinit (cheap, new) | CDH | none — low risk |
 | Coral timeout | P1 | `coral_valid` | 5 cycles | EQUIPMENT_CORAL | **none** (RX-only) — flag for telemetry/log | — | none |
 | SD failures | S1 | consecutive-failure count from sd_logger | 3 failures | EQUIPMENT_SD | remount request | SD logger | rotate file; never auto-format |
-| LoRa TX | T1 | LoRa_Send status (already wired to fault bit) | 3 consecutive failures (new) | EQUIPMENT_LORA | re-run LoRa_Init (RST pulse), cooldown (new) | TTC | none |
+| LoRa TX | T1 | TTC_FDIR_GetHealth() consecutive/lifetime fault counters | 5 consecutive, or ≥60%/last 20 (recovery); ≥90%/last 10 (fault bit) | EQUIPMENT_LORA | re-run LoRa_Init via TTC_FDIR_RequestRecovery() (RST pulse), 10 s cooldown | TTC | none |
 | CDH freshness | C10 | datapool `timestamp_ms` stops advancing | 2 cycles | (new CDH bit) | bus restart | CDH | loop hung → IWDG |
 | Watchdog escalation | F2 | `watchdog_reset_count` | ≥ 3 at boot | — | — | FSW | enter reduced mode - stop updating particular subsystems |
 
