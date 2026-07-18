@@ -1,5 +1,9 @@
 \chapter{Machine-Learning Payload}
 
+\textit{Code, trained models, and training pipeline for this chapter live
+under \href{\repourl/tree/main/payload}{\texttt{payload/}} in the
+\href{\repourl}{scsd-lakitu-cubesat} repository.}
+
 \section{What the Payload Does}
 
 Lakitu carries a small camera and a dedicated AI chip pointed straight down
@@ -113,9 +117,9 @@ Both share a MobileNet-class CNN backbone. The regressor is trained with
 quantization-aware training (QAT) rather than plain post-training
 quantization, then compiled for the Edge TPU; the deployed artifact is
 committed directly under
-\url{payload/coral/models/cloud_regressor_qat_int8_edgetpu.tflite} (an
-exception to the repo's usual \texttt{*.tflite} ignore rule) so the firmware
-builds without regenerating the model.
+\href{\repourl/blob/main/payload/coral/models/cloud_regressor_qat_int8_edgetpu.tflite}{\texttt{payload/coral/models/cloud\_regressor\_qat\_int8\_edgetpu.tflite}}
+(an exception to the repo's usual \texttt{*.tflite} ignore rule) so the
+firmware builds without regenerating the model.
 
 \subsection{Training Pipeline}
 
@@ -124,21 +128,29 @@ builds without regenerating the model.
 \toprule
 \textbf{Stage} & \textbf{Artifact / tool} \\
 \midrule
-Raw imagery & 95-Cloud / 38-Cloud dataset (\texttt{payload/data/}, not
+Raw imagery & 95-Cloud / 38-Cloud dataset
+(\href{\repourl/tree/main/payload/data}{\texttt{payload/data/}}, not
 tracked) \\
-Class dataset build & \texttt{training/build\_cloud\_classes.py} \\
-Training & \texttt{training/notebooks/train\_cloud\_regressor.ipynb} (Keras)
+Class dataset build &
+\href{\repourl/blob/main/payload/training/build_cloud_classes.py}{\texttt{training/build\_cloud\_classes.py}}
 \\
+Training &
+\href{\repourl/blob/main/payload/training/notebooks/train_cloud_regressor.ipynb}{\texttt{training/notebooks/train\_cloud\_regressor.ipynb}}
+(Keras) \\
 Quantization & QAT $\rightarrow$ int8 TFLite \\
 Edge TPU compile & \texttt{edgetpu\_compiler} \\
-Flight artifact & \texttt{coral/models/*\_edgetpu.tflite} (tracked) \\
+Flight artifact &
+\href{\repourl/tree/main/payload/coral/models}{\texttt{coral/models/*\_edgetpu.tflite}}
+(tracked) \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 \subsection{Coral Firmware}
 
-The flight firmware (\url{payload/coral/src/cloud_regressor.cc}) is an
+The flight firmware
+(\href{\repourl/blob/main/payload/coral/src/cloud_regressor.cc}{\texttt{payload/coral/src/cloud\_regressor.cc}})
+is an
 out-of-tree \texttt{coralmicro} application (FreeRTOS on the M7 core). Per
 cycle it captures a 224$\times$224 grayscale frame, invokes the int8 model
 on the Edge TPU via an 8~MB tensor arena in SDRAM, and sends the result to
@@ -159,7 +171,9 @@ the OBC. Two bring-up findings are worth noting:
 An unrecoverable initialisation failure triggers a self-reboot after a fixed
 delay (\texttt{FatalRestart}) rather than hanging -- there is no one in orbit
 to press reset. Debug-only tooling (HTTP/RPC image preview, burst capture)
-is flagged in \texttt{docs/TODO.md} for removal before flight and does not
+is flagged in
+\href{\repourl/blob/main/payload/coral/docs/TODO.md}{\texttt{docs/TODO.md}}
+for removal before flight and does not
 ship on the UART data path.
 
 \subsection{Wire Interface}
@@ -169,7 +183,9 @@ Every cycle the payload sends one image packet to the OBC over UART6 at
 fraction, and the sequence number, CRC-16 protected. The OBC archives the
 frame to SD keyed by SEQ and forwards only the fraction record to the
 downlink. The byte-level framing is the authoritative UART Protocol
-Specification in \texttt{interface\_docs/}, not reproduced here.
+Specification in
+\href{\repourl/blob/main/interface_docs/UART_PROTOCOL.md}{\texttt{interface\_docs/UART\_PROTOCOL.md}},
+not reproduced here.
 
 \section{Thermal Envelope}
 
