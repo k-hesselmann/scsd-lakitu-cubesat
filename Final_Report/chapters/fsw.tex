@@ -4,24 +4,19 @@
 
 The mission is divided into six flight phases, each representing a physically distinct regime of the stratospheric balloon flight.
 
-\begin{table}[h]
+\begin{table}[H]
 \centering
-\begin{tabular}{|l|p{10cm}|}
-\hline
+\begin{tabular}{lp{10cm}}
+\toprule
 \textbf{Phase} & \textbf{Physical description} \\
-\hline
+\midrule
 Standby & System powered on, sitting on ground. All sensors initialising. Ground pressure baseline (P\_ground) recorded here as reference for all altitude calculations. \\
-\hline
 Launch & Balloon released. Sharp upward jerk, brief chaotic motion lasting seconds. Transition from ground-constrained to free flight. \\
-\hline
 Ascent & Balloon stabilised, climbing at 3-6 m/s steadily. Longest active phase, typically 1.5-2 hours. Temperature drops significantly with altitude. \\
-\hline
 Cruise & Balloon fully expanded at float altitude (~25-35 km). Vertical velocity near zero, altitude oscillating within a bounded range. Duration 30 min to several hours. \\
-\hline
 Descent & Balloon envelope bursts. Rapid fall begins, IMU sees sudden shift from near 0g float to ~1g. Parachute deploys, stabilising descent rate. \\
-\hline
 Landing & System touches down. All motion stops. Terminal state, no further FSM transitions. Logging and telemetry continue for recovery; shutdown timer starts. \\
-\hline
+\bottomrule
 \end{tabular}
 \caption{Mission phases and physical description}
 \end{table}
