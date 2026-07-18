@@ -101,7 +101,33 @@ static void validateBaro(SensorData_t *dp)
 static void validateGPS(SensorData_t *dp)
 {
     uint32_t now = HAL_GetTick();
-    if (!dp->gps_valid) return;
+
+    /* Update timestamp whenever GPS data changes (even if invalid) */
+    if (dp->gps_lat_deg != 0 || dp->gps_lon_deg != 0 || dp->gps_alt_m != 0) {
+        g_sensor_validation.last_gps_update_ms = now;
+    }
+
+    /* Check if GPS has a valid fix */
+    if (dp->gps_fix_type == 0) {
+        char dbg[80];
+        int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] GPS no fix\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        dp->gps_valid = 0;
+        g_sensor_validation.gps_valid = 0;
+        g_sensor_validation.gps_fault_count++;
+        return;
+    }
+
+    /* Check if GPS data is stale (no update for GPS_TIMEOUT_S seconds) */
+    if ((now - g_sensor_validation.last_gps_update_ms) > (GPS_TIMEOUT_S * 1000)) {
+        char dbg[80];
+        int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] GPS timeout (%ds)\r\n", GPS_TIMEOUT_S);
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        dp->gps_valid = 0;
+        g_sensor_validation.gps_valid = 0;
+        g_sensor_validation.gps_fault_count++;
+        return;
+    }
 
     if (dp->gps_alt_m < GPS_MIN_ALTITUDE_M || dp->gps_alt_m > GPS_MAX_ALTITUDE_M) {
         char dbg[80];
@@ -130,6 +156,7 @@ static void validateGPS(SensorData_t *dp)
         HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
     }
     g_sensor_validation.gps_valid = 1;
+    dp->gps_valid = 1;  /* Set datapool valid flag when all checks pass */
     g_sensor_validation.last_gps_update_ms = now;
 }
 

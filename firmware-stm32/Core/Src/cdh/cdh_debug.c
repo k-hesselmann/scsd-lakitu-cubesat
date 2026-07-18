@@ -99,20 +99,16 @@ void CDH_Debug_PrintDatapool(SensorData_t *dp)
     int lon = (int)(dp->gps_lon_deg * 1000000);
     int alt = (int)(dp->gps_alt_m * 100);
     int speed = (int)(dp->gps_speed_mps * 100);
-    int vel_n = (int)(dp->gps_vel_north_mps * 100);
-    int vel_e = (int)(dp->gps_vel_east_mps * 100);
     int vel_d = (int)(dp->gps_vel_down_mps * 100);
     int heading = (int)(dp->gps_heading_deg * 100);
 
     int len = snprintf((char*)debug_buffer, sizeof(debug_buffer),
       "GPS_POOL: LAT=%d.%06d LON=%d.%06d ALT=%d.%02d SPEED=%d.%02d "
-      "VN=%d.%02d VE=%d.%02d VD=%d.%02d HDG=%d.%02d SAT=%d FIX=%d VALID=%d\r\n",
+      "VD=%d.%02d HDG=%d.%02d SAT=%d FIX=%d VALID=%d\r\n",
       lat/1000000, (lat < 0 ? -lat : lat) % 1000000,
       lon/1000000, (lon < 0 ? -lon : lon) % 1000000,
       alt/100, (alt < 0 ? -alt : alt) % 100,
       speed/100, (speed < 0 ? -speed : speed) % 100,
-      vel_n/100, (vel_n < 0 ? -vel_n : vel_n) % 100,
-      vel_e/100, (vel_e < 0 ? -vel_e : vel_e) % 100,
       vel_d/100, (vel_d < 0 ? -vel_d : vel_d) % 100,
       heading/100, (heading < 0 ? -heading : heading) % 100,
       dp->gps_num_satellites,

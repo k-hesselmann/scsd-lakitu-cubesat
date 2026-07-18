@@ -26,6 +26,14 @@
 #include "third_party/tflite-micro/tensorflow/lite/micro/micro_interpreter.h"
 #include "third_party/tflite-micro/tensorflow/lite/micro/micro_mutable_op_resolver.h"
 
+// Compile-time switch for bench-only debug tooling: the last-image / burst RPC
+// endpoints and the button-hold burst-capture ring. Flight builds leave this at
+// 0 so none of it is compiled in (saves the ~400 KB burst ring and trims the
+// main loop); bench builds pass -DCLOUD_DEBUG=1 (see CMakeLists.txt).
+#ifndef CLOUD_DEBUG
+#define CLOUD_DEBUG 0
+#endif
+
 namespace coralmicro {
 namespace {
 
@@ -47,15 +55,28 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
 // Inference interval (ms). Written by OBC command task, read by main loop.
 static volatile uint32_t g_inference_interval_ms = 10000;
 
+// Sleep flag. Set by the OBC SLEEP command, cleared by WAKE. While true the main
+// loop suspends all inference (periodic, OBC TRIGGER, and button) and blocks
+// until woken. Camera and TPU stay powered — this suspends the inference work
+// (the dominant power draw), not a full peripheral power-down.
+static volatile bool g_sleeping = false;
+
+// Dead-man auto-wake. The payload stays asleep for at most this long per SLEEP;
+// if no WAKE (or a refreshing SLEEP) arrives within the window it resumes
+// inference on its own, so a dead or reset OBC cannot leave the payload
+// suspended for the rest of the flight. Each SLEEP re-arms this timer, and the
+// OBC must re-send SLEEP to suspend again after an auto-wake.
+static constexpr uint32_t kMaxSleepMs = 5 * 60 * 1000;  // 5 minutes
+
 // Handle to main task so OBCCommandTask can unblock it for a trigger.
 static TaskHandle_t g_main_task_handle = nullptr;
 
-// Last captured frame — served via the debug RPC endpoint.
+#if CLOUD_DEBUG
+// Last captured frame — served via the debug RPC endpoint (bench builds only).
 static std::vector<uint8_t> g_last_image;
 static float g_last_fraction = 0.0f;
 static uint16_t g_last_width = 0, g_last_height = 0;
 
-// DEBUG ONLY — remove before flight.
 // Burst-capture ring for motion-blur inspection: holding the user button
 // fills this with the most recent frames (no UART send), which the host then
 // pulls by index over RPC.
@@ -68,6 +89,7 @@ static constexpr int kBurstRingSize = 8;
 static BurstFrame g_burst_ring[kBurstRingSize];
 static int g_burst_count = 0;  // valid frames, capped at ring size
 static int g_burst_head  = 0;  // next slot to write
+#endif  // CLOUD_DEBUG
 
 // Persisted sequence counter so SEQ does not collide across reboots.
 const char kSeqPath[] = "/cloud_seq";
@@ -156,14 +178,10 @@ bool CloudFractionFromCamera(tflite::MicroInterpreter* interpreter,
                           model_height,
                           /*preserve_ratio=*/false,
                           gray_image->data()};
-    // The white TPU LED is bright enough to reflect off the case glass into
-    // the camera; blank it across the exposure (with margin), then restore.
-    TpuLedSet(false);
-    vTaskDelay(pdMS_TO_TICKS(kLedBlankMarginMs));
+    // The TPU LED is blanked by the caller across the whole capture window
+    // (warm-up frames included) — see CloudConsole — so nothing to toggle here.
     CameraTask::GetSingleton()->Trigger();
     bool ok = CameraTask::GetSingleton()->GetFrame({fmt});
-    vTaskDelay(pdMS_TO_TICKS(kLedBlankMarginMs));
-    TpuLedSet(true);
     if (!ok) return false;
 
     // Preprocessing: [0,255] -> [-1,1] to match MobileNetV2 training pipeline.
@@ -282,8 +300,11 @@ static void SendImagePacket(uint32_t seq, float fraction,
 //  ────────────  ─────  ──────────────────────────────────
 //  TRIGGER       3      [0x10][CRC16_HI][CRC16_LO]
 //  SET_INTERVAL  7      [0x11][ms_B3][ms_B2][ms_B1][ms_B0][CRC16_HI][CRC16_LO]
+//  SLEEP         3      [0x17][CRC16_HI][CRC16_LO]   suspend inference until WAKE
+//  WAKE          3      [0x18][CRC16_HI][CRC16_LO]   resume inference
 //
-//  CRC covers all bytes before the CRC field (1 byte for TRIGGER, 5 for SET_INTERVAL).
+//  CRC covers all bytes before the CRC field (1 byte for the 3-byte commands,
+//  5 for SET_INTERVAL).
 //
 // Responses (Coral -> OBC):
 //   0x06  ACK — command accepted
@@ -348,6 +369,37 @@ static void OBCCommandTask(void* param) {
                 ((uint32_t)buf[3] <<  8) | ((uint32_t)buf[4]      );
             LPUART_WriteBlocking(LPUART6, &ack, 1);
 
+        } else if (cmd == 0x17) {
+            // SLEEP: 2-byte CRC follows. Suspend inference until WAKE.
+            if (!UartReadBytes(buf + 1, 2, kInterByteTimeout) ||
+                (((uint16_t)buf[1] << 8) | buf[2]) != Crc16(buf, 1)) {
+                LPUART_WriteBlocking(LPUART6, &nak, 1);
+                continue;
+            }
+            // Always notify: a fresh SLEEP (re)arms the dead-man window, so an
+            // already-sleeping loop unblocks and re-blocks with a new timeout.
+            g_sleeping = true;
+            xTaskNotifyGive(main_task);
+            LPUART_WriteBlocking(LPUART6, &ack, 1);
+            printf("OBC SLEEP: suspending inference (auto-wake in <= %u ms).\r\n",
+                   (unsigned)kMaxSleepMs);
+
+        } else if (cmd == 0x18) {
+            // WAKE: 2-byte CRC follows. Resume inference.
+            if (!UartReadBytes(buf + 1, 2, kInterByteTimeout) ||
+                (((uint16_t)buf[1] << 8) | buf[2]) != Crc16(buf, 1)) {
+                LPUART_WriteBlocking(LPUART6, &nak, 1);
+                continue;
+            }
+            // Only unblock/capture if we were actually asleep — a WAKE while
+            // already awake is a true no-op (no spurious extra capture).
+            if (g_sleeping) {
+                g_sleeping = false;
+                xTaskNotifyGive(main_task);  // unblock the loop from its sleep wait
+            }
+            LPUART_WriteBlocking(LPUART6, &ack, 1);
+            printf("OBC WAKE: resuming inference.\r\n");
+
         } else {
             LPUART_WriteBlocking(LPUART6, &nak, 1);
         }
@@ -363,17 +415,29 @@ void CloudConsole(tflite::MicroInterpreter* interpreter, uint32_t seq) {
     int model_width  = input_tensor->dims->data[2];
     std::vector<uint8_t> gray_image(model_width * model_height);
     float fraction;
-    // Let AE re-converge to the current scene before the real capture. The
-    // warm-up frames land in gray_image and are overwritten by the capture.
+    // Blank the white TPU LED across the ENTIRE capture window — the AE warm-up
+    // included, not just the final exposure. The LED is bright enough to reflect
+    // off the case glass into the lens; if it is lit while auto-exposure
+    // converges, AE locks onto the reflection and the real capture comes out
+    // mis-exposed. Turn it off before the pre-roll, restore it after read-out.
+    TpuLedSet(false);
+    vTaskDelay(pdMS_TO_TICKS(kLedBlankMarginMs));
+    // Let AE re-converge to the current (LED-free) scene before the real
+    // capture. The warm-up frames land in gray_image and are overwritten.
     WarmUpAe(model_width, model_height, &gray_image, kAePrerollFrames);
-    if (CloudFractionFromCamera(interpreter, model_width, model_height,
-                                &fraction, &gray_image)) {
+    bool ok = CloudFractionFromCamera(interpreter, model_width, model_height,
+                                      &fraction, &gray_image);
+    vTaskDelay(pdMS_TO_TICKS(kLedBlankMarginMs));
+    TpuLedSet(true);
+    if (ok) {
         printf("cloud cover: %.1f%% (seq=%u)\r\n",
                fraction * 100.0f, (unsigned)seq);
+#if CLOUD_DEBUG
         g_last_image    = gray_image;
         g_last_fraction = fraction;
         g_last_width    = (uint16_t)model_width;
         g_last_height   = (uint16_t)model_height;
+#endif
         SendImagePacket(seq, fraction, gray_image,
                         (uint16_t)model_width, (uint16_t)model_height);
     } else {
@@ -381,9 +445,10 @@ void CloudConsole(tflite::MicroInterpreter* interpreter, uint32_t seq) {
     }
 }
 
-// DEBUG ONLY — remove before flight.
-// Returns the last captured frame + cloud cover over HTTP/RPC so the host
-// can display it. Call: POST http://10.10.10.1/jsonrpc {"method":"get_last_image",...}
+#if CLOUD_DEBUG
+// Bench-only (CLOUD_DEBUG). Returns the last captured frame + cloud cover over
+// HTTP/RPC so the host can display it.
+// Call: POST http://10.10.10.1/jsonrpc {"method":"get_last_image",...}
 void GetLastImageRpc(struct jsonrpc_request* r) {
     if (g_last_image.empty()) {
         jsonrpc_return_error(r, -1, "No image captured yet.", nullptr);
@@ -397,7 +462,7 @@ void GetLastImageRpc(struct jsonrpc_request* r) {
                            g_last_image.data());
 }
 
-// DEBUG ONLY — remove before flight. Stores one frame into the burst ring.
+// Bench-only (CLOUD_DEBUG). Stores one frame into the burst ring.
 static void BurstStoreFrame(const std::vector<uint8_t>& pixels, float fraction,
                             uint16_t width, uint16_t height) {
     BurstFrame& slot = g_burst_ring[g_burst_head];
@@ -409,7 +474,7 @@ static void BurstStoreFrame(const std::vector<uint8_t>& pixels, float fraction,
     if (g_burst_count < kBurstRingSize) ++g_burst_count;
 }
 
-// DEBUG ONLY — remove before flight.
+// Bench-only (CLOUD_DEBUG).
 // Captures frames as fast as the camera allows for as long as the user button
 // is held, keeping the most recent kBurstRingSize in RAM. No UART send.
 static void BurstCaptureWhileHeld(tflite::MicroInterpreter* interpreter) {
@@ -422,6 +487,9 @@ static void BurstCaptureWhileHeld(tflite::MicroInterpreter* interpreter) {
     g_burst_count = 0;  // start a fresh burst
     g_burst_head  = 0;
     int n = 0;
+    // Keep the TPU LED blanked for the whole burst too, so these frames match
+    // what the flight path captures (no LED reflection off the case glass).
+    TpuLedSet(false);
     while (!GpioGet(Gpio::kUserButton)) {  // active-low: low == pressed
         if (CloudFractionFromCamera(interpreter, model_width, model_height,
                                     &fraction, &gray_image)) {
@@ -431,16 +499,17 @@ static void BurstCaptureWhileHeld(tflite::MicroInterpreter* interpreter) {
         }
         vTaskDelay(1);  // yield so lower-priority tasks (USB) still run
     }
+    TpuLedSet(true);
     printf("burst: %d frames captured, ring holds last %d\r\n",
            n, g_burst_count);
 }
 
-// DEBUG ONLY — remove before flight. Number of frames in the burst ring.
+// Bench-only (CLOUD_DEBUG). Number of frames in the burst ring.
 void GetBurstCountRpc(struct jsonrpc_request* r) {
     jsonrpc_return_success(r, "{%Q:%d}", "count", g_burst_count);
 }
 
-// DEBUG ONLY — remove before flight. Returns burst frame at "index"
+// Bench-only (CLOUD_DEBUG). Returns burst frame at "index"
 // (0 = oldest .. count-1 = newest). Call with params {"index": N}.
 void GetBurstFrameRpc(struct jsonrpc_request* r) {
     double idx_d;
@@ -464,6 +533,7 @@ void GetBurstFrameRpc(struct jsonrpc_request* r) {
                            "pixels",   f.pixels.size(),
                            f.pixels.data());
 }
+#endif  // CLOUD_DEBUG
 
 // ---------------------------------------------------------------------------
 // UART6 init
@@ -503,11 +573,16 @@ static bool UartInit() {
     LedSet(Led::kStatus, true);
     printf("Cloud Cover Estimator!\r\n");
 
-    // DEBUG ONLY — remove GetLastImageRpc export before flight.
+    // The JSON-RPC/HTTP server is brought up unconditionally: it also enumerates
+    // the USB CDC console that printf logging relies on. Flight builds export no
+    // RPC methods, so it answers nothing; bench builds (CLOUD_DEBUG) export the
+    // image/burst inspection endpoints.
     jsonrpc_init(nullptr, nullptr);
+#if CLOUD_DEBUG
     jsonrpc_export("get_last_image", GetLastImageRpc);
     jsonrpc_export("get_burst_count", GetBurstCountRpc);
     jsonrpc_export("get_burst_frame", GetBurstFrameRpc);
+#endif
     UseHttpServer(new JsonRpcHttpServer);
 
     std::vector<uint8_t> model;
@@ -554,10 +629,17 @@ static bool UartInit() {
     CameraTask::GetSingleton()->Enable(CameraMode::kTrigger);
     // Cold-start AE convergence (see kAeWarmupFrames). Each periodic capture
     // additionally pre-rolls a few frames to track the changing scene.
+    // Blank the TPU LED across this boot warm-up too — it IS exposure
+    // adjustment, so a lit LED makes AE converge to its glass reflection (same
+    // reason as the per-capture blanking in CloudConsole). The LED stays on
+    // through boot/init as an alive indicator, then drops just before warm-up.
     {
         int wh = in_t->dims->data[1], ww = in_t->dims->data[2];
         std::vector<uint8_t> warmup(ww * wh);
+        TpuLedSet(false);
+        vTaskDelay(pdMS_TO_TICKS(kLedBlankMarginMs));
         WarmUpAe(ww, wh, &warmup, kAeWarmupFrames);
+        TpuLedSet(true);
     }
     printf("Camera ready. Inferring every %u ms or on button/OBC trigger.\r\n",
            (unsigned)g_inference_interval_ms);
@@ -581,14 +663,31 @@ static bool UartInit() {
     uint32_t seq = LoadSeq();  // resume past any SEQs used before a reboot
     printf("Resuming at seq=%u\r\n", (unsigned)seq);
     while (true) {
-        // Sleep for configured interval OR wake early on button / OBC TRIGGER command.
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(g_inference_interval_ms));
-        // DEBUG: if the wake came from holding the user button, run a burst
-        // capture for motion-blur inspection instead of the normal cycle.
+        // Wait the configured interval, OR wake early on a button / OBC TRIGGER.
+        // While asleep wait at most kMaxSleepMs, so a dead/reset OBC can't leave
+        // us suspended forever (dead-man auto-wake below).
+        uint32_t notified = ulTaskNotifyTake(
+            pdTRUE, g_sleeping ? pdMS_TO_TICKS(kMaxSleepMs)
+                               : pdMS_TO_TICKS(g_inference_interval_ms));
+        if (g_sleeping) {
+            // A WAKE clears g_sleeping (so we fall through and capture); any
+            // other notify (stray TRIGGER/button, or a refreshing SLEEP) leaves
+            // it set and we re-block with a fresh window.
+            if (notified != 0) continue;
+            // Timed out still asleep: dead-man auto-wake. The OBC must re-send
+            // SLEEP if it still wants us suspended.
+            g_sleeping = false;
+            printf("Auto-wake: no OBC WAKE within %u ms; resuming inference. "
+                   "Re-send SLEEP to suspend again.\r\n", (unsigned)kMaxSleepMs);
+        }
+#if CLOUD_DEBUG
+        // Bench: holding the user button runs a motion-blur burst capture
+        // (frames kept in RAM, no UART send) instead of the normal cycle.
         if (!GpioGet(Gpio::kUserButton)) {  // active-low: low == still held
             BurstCaptureWhileHeld(&interpreter);
             continue;
         }
+#endif
         CloudConsole(&interpreter, seq);
         SaveSeq(++seq);  // persist the next SEQ so it survives a reboot
     }

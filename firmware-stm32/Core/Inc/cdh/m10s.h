@@ -31,10 +31,9 @@ typedef struct {
     double longitude;       /* degrees, WGS-84 */
     int32_t altitude;       /* meters above ellipsoid */
     float speed;            /* meters per second (gSpeed - 2D ground speed) */
-    float vel_north;        /* m/s, NED North velocity component */
-    float vel_east;         /* m/s, NED East velocity component */
-    float vel_down;         /* m/s, NED Down velocity component */
+    float vel_down;         /* m/s, vertical velocity from altitude changes */
     float heading;          /* degrees, heading of motion */
+    uint32_t utc_time;      /* HHMMSS format */
     uint8_t num_satellites; /* count */
     uint8_t fix_type;       /* GNSS fix type */
     uint32_t timestamp;     /* HAL_GetTick() */
@@ -114,13 +113,9 @@ uint16_t M10S_GetBufferFillLevel(void);
 void M10S_ClearBufferedData(void);
 
 /**
- * @brief Request new PVT data from GPS (poll mode)
+ * @brief Request new PVT data from GPS (not used in streaming mode)
  *
- * Sends a UBX-NAV-PVT poll request to the GPS module.
- * The GPS will respond with a new NAV-PVT message containing current position/velocity/time data.
- * This function must be called regularly to receive updated GPS data in poll mode.
- *
- * @param hi2c I2C handle
+ * @param hi2c I2C handle (unused)
  */
 void M10S_RequestPVT(I2C_HandleTypeDef *hi2c);
 

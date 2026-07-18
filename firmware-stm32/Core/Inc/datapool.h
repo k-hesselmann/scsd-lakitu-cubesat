@@ -46,10 +46,9 @@ typedef struct __attribute__((packed)) {
     float    gps_lon_deg;
     float    gps_alt_m;
     float    gps_speed_mps;      /* 2D ground speed magnitude */
-    float    gps_vel_north_mps;  /* NED North velocity */
-    float    gps_vel_east_mps;   /* NED East velocity */
-    float    gps_vel_down_mps;   /* NED Down velocity */
+    float    gps_vel_down_mps;   /* vertical velocity from altitude changes */
     float    gps_heading_deg;    /* heading of motion */
+    uint32_t gps_utc_time;       /* HHMMSS format from GPRMC */
     uint8_t  gps_num_satellites;
     uint8_t  gps_fix_type;
     uint8_t  gps_valid;

@@ -3,6 +3,7 @@
 #include "cdh/mpu6050_equipment_handler.h"
 #include "cdh/ms5607_equipment_handler.h"
 #include "cdh/gps_equipment_handler.h"
+#include "cdh/battery_adc.h"
 #include "cdh/cdh_debug.h"
 #include "cdh/cdh_fdir.h"
 #include "cdh/coral.h"
@@ -12,6 +13,7 @@
 #include <math.h>
 
 extern I2C_HandleTypeDef hi2c1;
+extern ADC_HandleTypeDef hadc1;
 
 static MPU6050_EquipmentHandler s_imu;
 static MS5607_EquipmentHandler  s_baro;
@@ -73,34 +75,32 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
 
     /* ---- GPS ---- */
     s_gps = GPS_EquipmentHandler_Update(s_gps, &hi2c1);
-    if (s_gps.gps_valid)
-    {
-        dp->gps_lat_deg        = s_gps.data.latitude;
-        dp->gps_lon_deg        = s_gps.data.longitude;
-        dp->gps_alt_m          = s_gps.data.altitude;
-        dp->gps_speed_mps      = s_gps.data.speed;
-        dp->gps_vel_north_mps  = s_gps.data.vel_north;
-        dp->gps_vel_east_mps   = s_gps.data.vel_east;
-        dp->gps_vel_down_mps   = s_gps.data.vel_down;
-        dp->gps_heading_deg    = s_gps.data.heading;
-        dp->gps_num_satellites = s_gps.data.num_satellites;
-        dp->gps_fix_type       = s_gps.data.fix_type;
-        dp->gps_valid          = 1U;
-    }
-    else { dp->gps_valid = 0U; }
+    /* Always copy GPS data to datapool (for logging), but validation sets VALID flag */
+    dp->gps_lat_deg        = s_gps.data.latitude;
+    dp->gps_lon_deg        = s_gps.data.longitude;
+    dp->gps_alt_m          = s_gps.data.altitude;
+    dp->gps_speed_mps      = s_gps.data.speed;
+    dp->gps_vel_down_mps   = s_gps.data.vel_down;
+    dp->gps_heading_deg    = s_gps.data.heading;
+    dp->gps_utc_time       = s_gps.data.utc_time;
+    dp->gps_num_satellites = s_gps.data.num_satellites;
+    dp->gps_fix_type       = s_gps.data.fix_type;
+    dp->gps_valid          = s_gps.gps_valid ? 1U : 0U;
+
+    /* Validate sensor data and handle faults (before printing so validation matches printed values) */
+    SensorValidation_Update(dp, scv);
 
     CDH_Debug_PrintDatapool(dp);
     CDH_Debug_PrintBaro(&s_baro);
-
-    /* Validate sensor data and handle faults */
-    SensorValidation_Update(dp, scv);
 
     /* CDH owns the I2C bus: advance any pending restart requested by FDIR and
      * publish the resulting bus state. CDH is the sole writer of i2c_bus_state. */
     CDH_FDIR_BusRestart_Process(&s_fdir, &hi2c1);
     dp->i2c_bus_state = s_fdir.bus_state;
 
-    /* TODO: read ADC for battery voltage — fill batt_voltage_mv, set batt_valid */
+    /* ---- Battery voltage (PA0 = ADC1_IN5, 22k/10k divider) ---- */
+    dp->batt_valid = BatteryADC_Read(&hadc1, &dp->batt_voltage_mv);
+
     Coral_Update(dp);
 }
 

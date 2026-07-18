@@ -1,75 +1,26 @@
 /**
  * @file m10s.c
- * @brief SparkFun u-blox GNSS (MAX-M10S) I2C Driver
+ * @brief u-blox MAX-M10S GPS NMEA Parser for I2C
  *
- * Complete port of the SparkFun u-blox GNSS Arduino Library to STM32 C.
- * Implements exact same behavior: buffering, parsing, validation, and data access.
- *
- * Key behaviors:
- * - begin(): Check I2C device, configure output protocols, enable NAV-PVT
- * - checkUblox(): Check bytes available, buffer incoming data, parse messages
- * - getPVT(): Search for complete UBX-NAV-PVT, validate, parse, return new messages only
+ * Parses NMEA sentences from MAX-M10S GPS module via I2C.
+ * Extracts position, velocity, heading, and satellite information.
  */
 
 #include "cdh/m10s.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <math.h>
 
 extern UART_HandleTypeDef huart2;
 
-/* Forward declarations for helpers used before their definitions */
-static uint8_t M10S_GetBytesAvailable(I2C_HandleTypeDef *hi2c, uint8_t *bytes_avail);
-static uint8_t M10S_ReadDataStream(I2C_HandleTypeDef *hi2c, uint8_t *buffer, uint16_t len);
-
 /* ========================================================================== */
-/* UBX Protocol Constants                                                    */
+/* I2C Communication Registers                                              */
 /* ========================================================================== */
 
-#define UBX_SYNC_CHAR_1        0xB5
-#define UBX_SYNC_CHAR_2        0x62
-
-#define UBX_CLASS_NAV          0x01
-#define UBX_CLASS_CFG          0x06
-#define UBX_CLASS_ACK_NAK      0x05
-
-#define UBX_ID_NAV_PVT         0x07
-
-#define UBX_ID_CFG_PRT         0x00  /* Port configuration */
-#define UBX_ID_CFG_MSG         0x01  /* Message output rate */
-#define UBX_ID_CFG_CFG         0x09  /* Save configuration */
-
-#define UBX_ID_ACK             0x01  /* Acknowledgment */
-#define UBX_ID_NAK             0x00  /* Negative acknowledgment */
-
-/* NAV-PVT Payload is exactly 92 bytes */
-#define UBX_NAV_PVT_PAYLOAD_LEN  92
-
-/* I2C Registers for MAX-M10S */
-#define M10S_I2C_REG_BYTES_AVAIL  0xFD  /* Number of bytes available to read */
-#define M10S_I2C_REG_DATA_STREAM   0xFF  /* Data stream register */
-
-/* Circular buffer size - must hold multiple complete messages */
-#define M10S_BUFFER_SIZE           512
-
-/* ========================================================================== */
-/* Message Structure                                                         */
-/* ========================================================================== */
-
-/**
- * @brief Complete UBX message frame
- * Format: [0xB5][0x62][Class][ID][Length_L][Length_H][Payload...][CK_A][CK_B]
- */
-typedef struct {
-    uint8_t sync1;              /* 0xB5 */
-    uint8_t sync2;              /* 0x62 */
-    uint8_t msg_class;
-    uint8_t msg_id;
-    uint16_t payload_length;
-    uint8_t payload[UBX_NAV_PVT_PAYLOAD_LEN];
-    uint8_t checksum_a;
-    uint8_t checksum_b;
-} UBX_Message;
+#define M10S_I2C_REG_BYTES_AVAIL   0xFD
+#define M10S_I2C_REG_DATA_STREAM   0xFF
+#define M10S_BUFFER_SIZE           1024
 
 /* ========================================================================== */
 /* Static Module Data                                                        */
@@ -77,79 +28,189 @@ typedef struct {
 
 static uint8_t s_rx_buffer[M10S_BUFFER_SIZE];
 static uint16_t s_rx_index = 0;
-
-/* Last successfully parsed PVT data (internal copy) */
 static M10S_NavPVT s_last_pvt = {0};
-
-/* Initialization state */
 static uint8_t s_initialized = 0;
+static int32_t s_last_altitude_m = 0;
+static uint32_t s_last_altitude_update_ms = 0;
 
 /* ========================================================================== */
-/* Checksum Calculation (UBX Protocol)                                       */
+/* I2C Helper Functions                                                      */
 /* ========================================================================== */
+
+static uint8_t M10S_GetBytesAvailable(I2C_HandleTypeDef *hi2c, uint16_t *bytes_avail)
+{
+    /* u-blox byte-count is a 16-bit register: 0xFD = high byte, 0xFE = low byte.
+     * Reading 2 bytes starting at 0xFD gives the full count. Reading only 0xFD
+     * (as before) returns count/256, which broke low-rate UBX streaming. */
+    uint8_t buf[2];
+    if (HAL_I2C_Mem_Read(hi2c, (M10S_I2C_ADDR << 1), M10S_I2C_REG_BYTES_AVAIL,
+                         I2C_MEMADD_SIZE_8BIT, buf, 2, 100) != HAL_OK) {
+        return 0;
+    }
+    uint16_t count = ((uint16_t)buf[0] << 8) | buf[1];
+    if (count == 0xFFFF) count = 0;  /* 0xFFFF = module not ready / no data */
+    *bytes_avail = count;
+    return 1;
+}
+
+static uint8_t M10S_ReadDataStream(I2C_HandleTypeDef *hi2c, uint8_t *buffer, uint16_t len)
+{
+    return HAL_I2C_Mem_Read(hi2c, (M10S_I2C_ADDR << 1), M10S_I2C_REG_DATA_STREAM,
+                           I2C_MEMADD_SIZE_8BIT, buffer, len, 100) == HAL_OK;
+}
+
+static uint8_t M10S_WriteDataStream(I2C_HandleTypeDef *hi2c, uint8_t *buffer, uint16_t len)
+{
+    return HAL_I2C_Mem_Write(hi2c, (M10S_I2C_ADDR << 1), M10S_I2C_REG_DATA_STREAM,
+                            I2C_MEMADD_SIZE_8BIT, buffer, len, 100) == HAL_OK;
+}
 
 /**
- * @brief Calculate UBX message checksum (Fletcher-16 variant)
- * @param data Pointer to message data (after sync bytes)
- * @param len Length of data to checksum (class + id + len_l + len_h + payload)
- * @param ck_a Output: first checksum byte
- * @param ck_b Output: second checksum byte
+ * @brief Query UBX-MON-VER to verify GPS responds to UBX commands
+ * Returns firmware version info if successful
  */
-static void M10S_CalculateChecksum(const uint8_t *data, uint16_t len,
-                                   uint8_t *ck_a, uint8_t *ck_b)
+static void M10S_QueryVersion(I2C_HandleTypeDef *hi2c)
 {
-    *ck_a = 0;
-    *ck_b = 0;
+    char dbg[256];
+    int len;
 
-    for (uint16_t i = 0; i < len; i++) {
-        *ck_a += data[i];
-        *ck_b += *ck_a;
+    /* Build UBX-MON-VER request (no payload) */
+    uint8_t request[8];
+    request[0] = 0xB5;           /* Sync 1 */
+    request[1] = 0x62;           /* Sync 2 */
+    request[2] = 0x0A;           /* Class: MON */
+    request[3] = 0x04;           /* ID: VER */
+    request[4] = 0x00;           /* Length low (no payload) */
+    request[5] = 0x00;           /* Length high */
+
+    /* Calculate checksum */
+    uint8_t ck_a = 0, ck_b = 0;
+    for (int i = 2; i < 6; i++) {
+        ck_a += request[i];
+        ck_b += ck_a;
+    }
+
+    request[6] = ck_a;
+    request[7] = ck_b;
+
+    len = snprintf(dbg, sizeof(dbg), "[M10S] Querying UBX-MON-VER (testing UBX communication)...\r\n");
+    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+
+    /* Clear any buffered data first */
+    uint16_t bytes_avail;
+    uint8_t flush_buf[64];
+    for (int i = 0; i < 5; i++) {
+        if (M10S_GetBytesAvailable(hi2c, &bytes_avail) && bytes_avail > 0) {
+            if (bytes_avail > 64) bytes_avail = 64;
+            M10S_ReadDataStream(hi2c, flush_buf, bytes_avail);
+        }
+        HAL_Delay(50);
+    }
+
+    /* Send request */
+    uint8_t result = M10S_WriteDataStream(hi2c, request, 8);
+
+    if (!result) {
+        len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: Failed to send UBX-MON-VER request\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        return;
+    }
+
+    /* Wait for response */
+    HAL_Delay(500);
+
+    /* Try to read response */
+    if (M10S_GetBytesAvailable(hi2c, &bytes_avail) && bytes_avail > 0) {
+        if (bytes_avail > 64) bytes_avail = 64;
+
+        uint8_t response[64];
+        if (M10S_ReadDataStream(hi2c, response, bytes_avail)) {
+            /* Look for UBX-MON-VER response (class 0x0A, id 0x04) */
+            if (bytes_avail >= 8 && response[0] == 0xB5 && response[1] == 0x62 &&
+                response[2] == 0x0A && response[3] == 0x04) {
+
+                len = snprintf(dbg, sizeof(dbg),
+                    "[M10S] ✓ GPS responds to UBX! Got %d bytes of UBX-MON-VER response\r\n",
+                    bytes_avail);
+                HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+
+                /* Print first part of version string if available (starts at byte 8) */
+                if (bytes_avail > 8) {
+                    char ver_str[50];
+                    int ver_len = (bytes_avail - 8 > 40) ? 40 : (bytes_avail - 8);
+                    strncpy(ver_str, (char*)&response[8], ver_len);
+                    ver_str[ver_len] = '\0';
+
+                    len = snprintf(dbg, sizeof(dbg), "[M10S] Firmware: %s\r\n", ver_str);
+                    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+                }
+            } else {
+                len = snprintf(dbg, sizeof(dbg),
+                    "[M10S] Got response but not UBX-MON-VER. First bytes: %02X %02X %02X %02X\r\n",
+                    response[0], response[1], response[2], response[3]);
+                HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+            }
+        }
+    } else {
+        len = snprintf(dbg, sizeof(dbg), "[M10S] No response to UBX-MON-VER query\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
     }
 }
 
 /**
- * @brief Verify UBX message checksum
- * @param data Pointer to message data (after sync bytes)
- * @param len Length of data to verify (class + id + len_l + len_h + payload)
- * @param ck_a Expected first checksum byte
- * @param ck_b Expected second checksum byte
- * @return 1 if valid, 0 if invalid
+ * @brief Calculate NMEA checksum (XOR of all characters between $ and *)
+ * Returns checksum as two hex digits
  */
-static uint8_t M10S_VerifyChecksum(const uint8_t *data, uint16_t len,
-                                   uint8_t ck_a, uint8_t ck_b)
+static void M10S_CalculateNMEAChecksum(const char *sentence, char *checksum_hex)
 {
-    uint8_t calc_a = 0, calc_b = 0;
-    M10S_CalculateChecksum(data, len, &calc_a, &calc_b);
-    return (calc_a == ck_a) && (calc_b == ck_b);
+    uint8_t checksum = 0;
+    const char *p = sentence;
+
+    /* Skip the $ character */
+    if (*p == '$') p++;
+
+    /* XOR all characters until we hit * or end of string */
+    while (*p && *p != '*') {
+        checksum ^= (uint8_t)*p;
+        p++;
+    }
+
+    /* Convert to hex string (uppercase) */
+    snprintf(checksum_hex, 3, "%02X", checksum);
 }
 
-static uint8_t M10S_WaitForACK(I2C_HandleTypeDef *hi2c, uint8_t cmd_class, uint8_t cmd_id, uint32_t timeout_ms)
-{
-    uint32_t start_time = HAL_GetTick();
-    uint8_t chunk[32];
-    uint8_t bytes_avail;
 
-    while ((HAL_GetTick() - start_time) < timeout_ms) {
-        if (M10S_GetBytesAvailable(hi2c, &bytes_avail) && bytes_avail > 0 && bytes_avail != 0xFF) {
-            if (bytes_avail > 32) bytes_avail = 32;
-            if (M10S_ReadDataStream(hi2c, chunk, bytes_avail)) {
-                for (uint8_t i = 0; i < bytes_avail - 9; i++) {
-                    if (chunk[i] == 0xB5 && chunk[i+1] == 0x62 && chunk[i+2] == 0x05) {
-                        uint8_t msg_id = chunk[i+3];
-                        uint8_t ack_class = chunk[i+6];
-                        uint8_t ack_id = chunk[i+7];
-                        if (ack_class == cmd_class && ack_id == cmd_id) {
-                            if (msg_id == UBX_ID_ACK) {
-                                char dbg[64];
-                                int len = snprintf(dbg, sizeof(dbg), "[M10S] ACK for 0x%02X 0x%02X\r\n", cmd_class, cmd_id);
-                                HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-                                return 1;
-                            } else if (msg_id == UBX_ID_NAK) {
-                                char dbg[64];
-                                int len = snprintf(dbg, sizeof(dbg), "[M10S] NAK for 0x%02X 0x%02X\r\n", cmd_class, cmd_id);
-                                HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-                                return 0;
-                            }
+/**
+ * @brief Helper: encode 32-bit value to little-endian
+ */
+static uint32_t M10S_EncodeUint32LE(uint32_t value)
+{
+    return ((value & 0xFF) << 0) | ((value & 0xFF00) << 8) |
+           ((value & 0xFF0000) << 16) | ((value & 0xFF000000) << 24);
+}
+
+/**
+ * @brief Check for UBX ACK-ACK or ACK-NAK response (non-blocking)
+ * Returns: 1=ACK received, 0=NAK or timeout
+ */
+static uint8_t M10S_WaitForACK(I2C_HandleTypeDef *hi2c, uint32_t timeout_ms)
+{
+    uint32_t start = HAL_GetTick();
+    uint16_t bytes_avail;
+    uint8_t response[64];
+
+    while ((HAL_GetTick() - start) < timeout_ms) {
+        if (M10S_GetBytesAvailable(hi2c, &bytes_avail) && bytes_avail >= 8) {
+            uint16_t read_size = (bytes_avail > 64) ? 64 : bytes_avail;
+            if (M10S_ReadDataStream(hi2c, response, read_size)) {
+                /* Scan for UBX-ACK-ACK (B5 62 05 01) or UBX-ACK-NAK (B5 62 05 00)
+                 * anywhere in the read chunk - it may not be at the start */
+                for (uint16_t i = 0; i + 3 < read_size; i++) {
+                    if (response[i] == 0xB5 && response[i+1] == 0x62 && response[i+2] == 0x05) {
+                        if (response[i+3] == 0x01) {
+                            return 1;  /* ACK-ACK */
+                        } else if (response[i+3] == 0x00) {
+                            return 0;  /* ACK-NAK */
                         }
                     }
                 }
@@ -157,307 +218,378 @@ static uint8_t M10S_WaitForACK(I2C_HandleTypeDef *hi2c, uint8_t cmd_class, uint8
         }
         HAL_Delay(10);
     }
-    char dbg[64];
-    int len = snprintf(dbg, sizeof(dbg), "[M10S] ACK timeout for 0x%02X 0x%02X\r\n", cmd_class, cmd_id);
+    return 0;  /* Timeout */
+}
+
+/**
+ * @brief Send UBX-CFG-VALSET to configure NMEA sentence output rate via I2C
+ * Proper u-blox CFG-VALSET format with transaction and little-endian encoding
+ * Message: B5 62 06 8A <len_lo> <len_hi> | version(1) layers(1) transaction(1) reserved(1) | key(4-LE) value(1-8) | CK_A CK_B
+ *
+ * Configuration keys (I2C-specific, size encoded in top nibble):
+ *   0x209102ac = RMC_I2C (1-byte value)
+ *   0x209102b1 = GGA_I2C (1-byte value)
+ *   0x209102b6 = GSV_I2C (1-byte value, set to 0 to disable)
+ *   0x209102c1 = GSA_I2C (1-byte value, set to 0 to disable)
+ *   0x209102cc = GLL_I2C (1-byte value, set to 0 to disable)
+ */
+static void M10S_ConfigureNMEAViaValset(I2C_HandleTypeDef *hi2c, uint32_t key, uint8_t value)
+{
+    const char *msg_name;
+    if (key == 0x209102ac) msg_name = "RMC_I2C";
+    else if (key == 0x209102b1) msg_name = "GGA_I2C";
+    else if (key == 0x209102b6) msg_name = "GSV_I2C";
+    else if (key == 0x209102c1) msg_name = "GSA_I2C";
+    else if (key == 0x209102cc) msg_name = "GLL_I2C";
+    else if (key == 0x10720001) msg_name = "I2COUTPROT-UBX";
+    else if (key == 0x10720002) msg_name = "I2COUTPROT-NMEA";
+    else if (key == 0x20910006) msg_name = "MSGOUT-UBX_NAV_PVT_I2C";
+    else if (key == 0x20110021) msg_name = "NAVSPG-DYNMODEL";
+    else msg_name = "UNKNOWN";
+
+    /* UBX-CFG-VALSET message format (proper u-blox implementation):
+     * B5 62 06 8A | len_lo len_hi | version layers transaction reserved | key(4-LE) | value(1-8) | CK_A CK_B
+     * Total: 2 (sync) + 2 (class/id) + 2 (length) + 4 (header) + 4 (key) + 1 (value) + 2 (checksum) = 17 bytes
+     */
+    uint8_t msg[17];
+    int idx = 0;
+
+    /* Frame header */
+    msg[idx++] = 0xB5;           /* Sync 1 */
+    msg[idx++] = 0x62;           /* Sync 2 */
+    msg[idx++] = 0x06;           /* Class: CFG */
+    msg[idx++] = 0x8A;           /* ID: VALSET */
+    msg[idx++] = 0x09;           /* Length low byte (9 payload bytes) */
+    msg[idx++] = 0x00;           /* Length high byte */
+
+    /* Payload header */
+    msg[idx++] = 0x00;           /* version 0x00: simple valset, no transaction */
+    msg[idx++] = 0x01;           /* layers: bit0 = RAM (apply immediately) */
+    msg[idx++] = 0x00;           /* reserved */
+    msg[idx++] = 0x00;           /* reserved */
+
+    /* Configuration key (4 bytes, little-endian byte order) */
+    msg[idx++] = (key >> 0) & 0xFF;    /* key byte 0 (LSB) */
+    msg[idx++] = (key >> 8) & 0xFF;    /* key byte 1 */
+    msg[idx++] = (key >> 16) & 0xFF;   /* key byte 2 */
+    msg[idx++] = (key >> 24) & 0xFF;   /* key byte 3 (MSB) */
+
+    /* Value (1 byte for U1 type, which all our NMEA keys are) */
+    msg[idx++] = value;
+
+    /* Calculate checksum (Fletcher's algorithm per UBX protocol)
+     * CK_A = sum of bytes [2..n-1]
+     * CK_B = sum of CK_A values
+     */
+    uint8_t ck_a = 0, ck_b = 0;
+    for (int i = 2; i < idx; i++) {  /* Start from class byte (index 2), skip sync */
+        ck_a += msg[i];
+        ck_b += ck_a;
+    }
+
+    msg[idx++] = ck_a;
+    msg[idx++] = ck_b;
+
+    /* Debug output */
+    char dbg[128];
+    int len = snprintf(dbg, sizeof(dbg),
+        "[M10S] CFG-VALSET %s=%d\r\n", msg_name, value);
     HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+
+    /* Send via I2C */
+    uint8_t result = M10S_WriteDataStream(hi2c, msg, idx);
+
+    if (!result) {
+        len = snprintf(dbg, sizeof(dbg), "[M10S]   ERROR: Failed to send command\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        return;
+    }
+
+    /* Wait for ACK/NAK response */
+    HAL_Delay(100);  /* Give GPS time to process */
+    uint8_t ack = M10S_WaitForACK(hi2c, 300);
+
+    if (ack) {
+        len = snprintf(dbg, sizeof(dbg), "[M10S]   ✓ ACK received\r\n");
+    } else {
+        len = snprintf(dbg, sizeof(dbg), "[M10S]   ✗ No ACK (may not support this key on I2C)\r\n");
+    }
+    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+
+    HAL_Delay(100);
+}
+
+/**
+ * @brief Send UBX-CFG-MSG command to configure NMEA sentence output rate (legacy but works)
+ */
+static void M10S_ConfigureNMEAMessage(I2C_HandleTypeDef *hi2c, uint8_t msg_id, uint8_t rate)
+{
+    const char *msg_name = (msg_id == 0x04) ? "GNRMC" : (msg_id == 0x0A) ? "GNGGA" : "UNKNOWN";
+
+    uint8_t full_msg[11];
+    full_msg[0] = 0xB5;           /* Sync Char 1 */
+    full_msg[1] = 0x62;           /* Sync Char 2 */
+    full_msg[2] = 0x06;           /* Class: CFG */
+    full_msg[3] = 0x01;           /* ID: MSG */
+    full_msg[4] = 0x03;           /* Length low byte */
+    full_msg[5] = 0x00;           /* Length high byte */
+    full_msg[6] = 0xF0;           /* msgClass: NMEA */
+    full_msg[7] = msg_id;         /* msgID */
+    full_msg[8] = rate;           /* rate (1 = 1Hz) */
+
+    /* Calculate checksum (both A and B required for proper UBX protocol) */
+    uint8_t ck_a = 0, ck_b = 0;
+    for (int i = 2; i < 9; i++) {
+        ck_a += full_msg[i];
+        ck_b += ck_a;
+    }
+
+    full_msg[9] = ck_a;
+    full_msg[10] = ck_b;
+
+    /* Debug: print UBX command being sent */
+    char dbg[128];
+    int len = snprintf(dbg, sizeof(dbg),
+        "[M10S] Sending CFG-MSG for %s at %dHz (msg_id=0x%02X, ck_a=0x%02X, ck_b=0x%02X)\r\n",
+        msg_name, rate, msg_id, ck_a, ck_b);
+    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+
+    /* Send via I2C */
+    uint8_t result = M10S_WriteDataStream(hi2c, full_msg, 11);
+
+    if (result) {
+        len = snprintf(dbg, sizeof(dbg), "[M10S]   ✓ %s command sent\r\n", msg_name);
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    } else {
+        len = snprintf(dbg, sizeof(dbg), "[M10S]   ✗ ERROR: Failed to send %s\r\n", msg_name);
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        return;
+    }
+
+    HAL_Delay(200);  /* Wait for GPS to process and generate ACK */
+}
+
+/* ========================================================================== */
+/* NMEA Sentence Parsing                                                     */
+/* ========================================================================== */
+
+/**
+ * @brief Parse a NMEA field (comma-delimited)
+ * Returns pointer to field value, or empty string if field missing
+ */
+static char* M10S_GetNMEAField(char *sentence, int field_num)
+{
+    static char field[32];
+    int current_field = 0;
+    int i = 0;
+
+    memset(field, 0, sizeof(field));
+
+    for (int pos = 0; pos < strlen(sentence) && i < sizeof(field) - 1; pos++) {
+        if (sentence[pos] == ',') {
+            if (current_field == field_num) break;
+            current_field++;
+            i = 0;
+        } else if (current_field == field_num) {
+            field[i++] = sentence[pos];
+        }
+    }
+    field[i] = '\0';
+    return field;
+}
+
+/**
+ * @brief Parse GPRMC sentence (Recommended Minimum Navigation Information)
+ * $GPRMC,hhmmss.ss,A,llll.ll,a,yyyyy.yy,a,x.x,x.x,ddmmyy,...*hh
+ */
+static void M10S_ParseGPRMC(char *sentence, M10S_NavPVT *pvt)
+{
+    char *field;
+
+    /* UTC time (field 1: hhmmss.ss) */
+    field = M10S_GetNMEAField(sentence, 1);
+    if (field[0]) {
+        pvt->utc_time = (uint32_t)atof(field);
+    }
+
+    /* Extract all GPRMC fields for debugging */
+    char f1[32], f2[32], f3[32], f4[32], f5[32], f6[32], f7[32], f8[32];
+    strncpy(f1, M10S_GetNMEAField(sentence, 1), sizeof(f1)-1); f1[sizeof(f1)-1] = '\0';
+    strncpy(f2, M10S_GetNMEAField(sentence, 2), sizeof(f2)-1); f2[sizeof(f2)-1] = '\0';
+    strncpy(f3, M10S_GetNMEAField(sentence, 3), sizeof(f3)-1); f3[sizeof(f3)-1] = '\0';
+    strncpy(f4, M10S_GetNMEAField(sentence, 4), sizeof(f4)-1); f4[sizeof(f4)-1] = '\0';
+    strncpy(f5, M10S_GetNMEAField(sentence, 5), sizeof(f5)-1); f5[sizeof(f5)-1] = '\0';
+    strncpy(f6, M10S_GetNMEAField(sentence, 6), sizeof(f6)-1); f6[sizeof(f6)-1] = '\0';
+    strncpy(f7, M10S_GetNMEAField(sentence, 7), sizeof(f7)-1); f7[sizeof(f7)-1] = '\0';
+    strncpy(f8, M10S_GetNMEAField(sentence, 8), sizeof(f8)-1); f8[sizeof(f8)-1] = '\0';
+
+    /* Check status (field 2: A=valid, V=void) */
+    if (f2[0] != 'A') {
+        pvt->fix_type = 0;  /* No fix */
+        return;
+    }
+
+    pvt->fix_type = 2;  /* 2D fix (GPRMC status A = active fix) */
+
+    /* Latitude (field 3: ddmm.mmmm) - use extracted f3 */
+    if (f3[0]) {
+        double lat_deg = atof(f3) / 100.0;
+        int lat_d = (int)lat_deg;
+        double lat_m = (lat_deg - lat_d) * 100.0;
+        pvt->latitude = lat_d + (lat_m / 60.0);
+
+        /* Check N/S (field 4) */
+        if (f4[0] == 'S') pvt->latitude = -pvt->latitude;
+    }
+
+    /* Longitude (field 5: dddmm.mmmm) - use extracted f5 */
+    if (f5[0]) {
+        double lon_deg = atof(f5) / 100.0;
+        int lon_d = (int)lon_deg;
+        double lon_m = (lon_deg - lon_d) * 100.0;
+        pvt->longitude = lon_d + (lon_m / 60.0);
+
+        /* Check E/W (field 6) */
+        if (f6[0] == 'W') pvt->longitude = -pvt->longitude;
+    }
+
+    /* Speed in knots (field 7) -> convert to m/s - use extracted f7 */
+    if (f7[0]) {
+        float speed_knots = atof(f7);
+        pvt->speed = speed_knots * 0.51444f;  /* 1 knot = 0.51444 m/s */
+    }
+
+    /* True heading (field 8) - use extracted f8 */
+    if (f8[0]) {
+        pvt->heading = atof(f8);
+    }
+}
+
+/**
+ * @brief Parse GPGGA sentence (Global Positioning System Fix Data)
+ * Contains position, altitude, and number of satellites
+ * $GNGGA,hhmmss.ss,llll.llll,a,yyyyy.yyyy,a,x,xx,x.x,x.x,M,x.x,M,x.x,xxxx*hh
+ */
+static void M10S_ParseGPGGA(char *sentence, M10S_NavPVT *pvt)
+{
+    char *field;
+
+    /* Fix quality (field 6: 0=invalid, 1=GPS, 2=DGPS, etc) */
+    field = M10S_GetNMEAField(sentence, 6);
+    int fix_quality = atoi(field);
+    if (fix_quality == 0) {
+        pvt->fix_type = 0;  /* No fix */
+        return;
+    }
+    pvt->fix_type = (fix_quality >= 1) ? 2 : 0;  /* 2D fix if quality >= 1 */
+
+    /* Latitude (field 2: ddmm.mmmm) */
+    field = M10S_GetNMEAField(sentence, 2);
+    if (field[0]) {
+        double lat_deg = atof(field) / 100.0;
+        int lat_d = (int)lat_deg;
+        double lat_m = (lat_deg - lat_d) * 100.0;
+        pvt->latitude = lat_d + (lat_m / 60.0);
+
+        /* Check N/S (field 3) */
+        char *ns = M10S_GetNMEAField(sentence, 3);
+        if (ns[0] == 'S') pvt->latitude = -pvt->latitude;
+    }
+
+    /* Longitude (field 4: dddmm.mmmm) */
+    field = M10S_GetNMEAField(sentence, 4);
+    if (field[0]) {
+        double lon_deg = atof(field) / 100.0;
+        int lon_d = (int)lon_deg;
+        double lon_m = (lon_deg - lon_d) * 100.0;
+        pvt->longitude = lon_d + (lon_m / 60.0);
+
+        /* Check E/W (field 5) */
+        char *ew = M10S_GetNMEAField(sentence, 5);
+        if (ew[0] == 'W') pvt->longitude = -pvt->longitude;
+    }
+
+    /* Number of satellites in use (field 7) */
+    field = M10S_GetNMEAField(sentence, 7);
+    if (field[0]) {
+        pvt->num_satellites = atoi(field);
+    }
+
+    /* Altitude above mean sea level in meters (field 9) */
+    field = M10S_GetNMEAField(sentence, 9);
+    if (field[0]) {
+        pvt->altitude = (int32_t)atof(field);
+    }
+}
+
+/**
+ * @brief Calculate vertical velocity from altitude changes over time
+ */
+static void M10S_CalculateVerticalVelocity(M10S_NavPVT *pvt)
+{
+    uint32_t now = HAL_GetTick();
+
+    if (s_last_altitude_update_ms == 0) {
+        /* First altitude reading */
+        s_last_altitude_m = pvt->altitude;
+        s_last_altitude_update_ms = now;
+        pvt->vel_down = 0.0f;
+        return;
+    }
+
+    uint32_t time_delta_ms = now - s_last_altitude_update_ms;
+    if (time_delta_ms < 100) {
+        /* Not enough time has passed, use previous value */
+        return;
+    }
+
+    float time_delta_s = time_delta_ms / 1000.0f;
+    int32_t altitude_delta = pvt->altitude - s_last_altitude_m;
+    pvt->vel_down = -(float)altitude_delta / time_delta_s;  /* Negative because down is negative altitude change */
+
+    s_last_altitude_m = pvt->altitude;
+    s_last_altitude_update_ms = now;
+}
+
+/**
+ * @brief Extract and process a complete NMEA sentence from buffer
+ */
+static uint8_t M10S_ProcessSentence(char *sentence)
+{
+    M10S_NavPVT temp_pvt = {0};
+
+    /* Filter out high-volume messages that flood the buffer (software filtering since CFG-VALSET doesn't work) */
+    /* These messages aren't needed and consume significant I2C bandwidth */
+    if (strstr(sentence, "GSV") ||      /* Satellite list (hundreds of bytes per cycle) */
+        strstr(sentence, "GSA") ||      /* Active satellites (not needed for position) */
+        strstr(sentence, "GLL") ||      /* Geographic position (duplicate of RMC/GGA) */
+        strstr(sentence, "VTG")) {      /* Course/speed (duplicate of RMC data) */
+        return 0;  /* Silently ignore */
+    }
+
+    /* Accept both GP (GPS) and GN (GNSS multi-constellation) prefixes */
+    if ((strncmp(sentence, "$GPRMC", 6) == 0) || (strncmp(sentence, "$GNRMC", 6) == 0)) {
+        M10S_ParseGPRMC(sentence, &temp_pvt);
+        /* Preserve altitude from previous GNGGA sentence (GPRMC has no altitude field) */
+        temp_pvt.altitude = s_last_pvt.altitude;
+        temp_pvt.num_satellites = s_last_pvt.num_satellites;  /* Preserve satellite count from GNGGA */
+        s_last_pvt = temp_pvt;
+        s_last_pvt.timestamp = HAL_GetTick();
+        return 1;
+    }
+    else if ((strncmp(sentence, "$GPGGA", 6) == 0) || (strncmp(sentence, "$GNGGA", 6) == 0)) {
+        M10S_ParseGPGGA(sentence, &s_last_pvt);
+        M10S_CalculateVerticalVelocity(&s_last_pvt);
+        return 1;
+    }
+
     return 0;
 }
 
 /* ========================================================================== */
-/* NAV-PVT Message Parsing                                                   */
+/* Public API                                                                */
 /* ========================================================================== */
 
-/**
- * @brief Parse UBX-NAV-PVT payload into M10S_NavPVT structure
- *
- * NAV-PVT Payload Structure (92 bytes):
- * Offset  Size   Name            Format    Description
- * ------  ----   ----            ------    -----------
- * 0-3     U4     iTOW            ms        GPS time of week
- * 4-7     I4     year            year      Year (UTC)
- * 8       U1     month           month     Month (1=Jan)
- * 9       U1     day             day       Day of month
- * 10      U1     hour            hour      Hour of day (0-23)
- * 11      U1     min             minute    Minute of hour (0-59)
- * 12      U1     sec             second    Seconds of minute (0-59)
- * 13      U1     valid           bitfield  Validity bits
- * 14-17   U4     tAcc            ns        Time accuracy estimate (ns)
- * 18-21   I4     nano            ns        Fraction of second (-1e9..1e9)
- * 22      U1     fixType         enum      GNSS fix type (0=None,1=2D,2=3D,3=DGPS,4=RTK-F,5=RTK-F)
- * 23      U1     flags           bitfield  Validity/correction flags [GNSS Fix OK = bit 0]
- * 24      U1     numSV           count     Number of satellites used in solution
- * 25-26   I2     reserved1       -         Reserved
- * 27-30   I4     lon             1e-7 deg  Longitude
- * 31-34   I4     lat             1e-7 deg  Latitude
- * 35-38   I4     height          mm        Height above ellipsoid
- * 39-42   I4     hMSL            mm        Height above mean sea level
- * 43-46   U4     hAcc            mm        Horizontal accuracy estimate
- * 47-50   U4     vAcc            mm        Vertical accuracy estimate
- * 51-54   I4     velN            mm/s      NED velocity North component
- * 55-58   I4     velE            mm/s      NED velocity East component
- * 59-62   I4     velD            mm/s      NED velocity Down component
- * 63-66   I4     gSpeed          mm/s      Ground speed (2D)
- * 67-70   I4     heading         1e-5 deg  Heading of motion (2D)
- * 71-74   U4     sAcc            mm/s      Speed accuracy estimate
- * 75-78   U4     headingAcc      1e-5 deg  Heading accuracy estimate (both 2D and 3D)
- * 79-80   U2     pDOP            1e-2      Position dilution of precision
- * 81      U1     reserved2       -         Reserved
- * 82      U1     reserved3       -         Reserved
- * 83-86   I4     headVeh         1e-5 deg  Heading of vehicle (from gyroscope)
- * 87-88   I2     magDec          1e-2 deg  Magnetic declination
- * 89-90   U2     magAcc          1e-2 deg  Magnetic declination accuracy
- * 91      U1     reserved4       -         Reserved
- *
- * @param payload Pointer to 92-byte NAV-PVT payload
- * @param len Length of payload (must be 92)
- * @param pvt Pointer to output structure
- * @return 1 if data is valid and parsed successfully, 0 otherwise
- */
-static uint8_t M10S_ParseNAVPVT(const uint8_t *payload, uint16_t len, M10S_NavPVT *pvt)
-{
-    /* Validate payload length */
-    if (len < UBX_NAV_PVT_PAYLOAD_LEN)
-        return 0;
-
-    /* Extract fix type and flags */
-    uint8_t fix_type = payload[22];
-    uint8_t flags = payload[23];
-    uint8_t num_sv = payload[24];
-
-    /* Extract raw coordinate values (little-endian) */
-    int32_t lon_raw = (payload[27]) |
-                      (payload[28] << 8) |
-                      (payload[29] << 16) |
-                      (payload[30] << 24);
-
-    int32_t lat_raw = (payload[31]) |
-                      (payload[32] << 8) |
-                      (payload[33] << 16) |
-                      (payload[34] << 24);
-
-    int32_t height_raw = (payload[35]) |
-                         (payload[36] << 8) |
-                         (payload[37] << 16) |
-                         (payload[38] << 24);
-
-    int32_t gspeed_raw = (payload[63]) |
-                         (payload[64] << 8) |
-                         (payload[65] << 16) |
-                         (payload[66] << 24);
-
-    /* Extract velocity components (NED - North/East/Down) */
-    int32_t vel_north_raw = (payload[51]) |
-                            (payload[52] << 8) |
-                            (payload[53] << 16) |
-                            (payload[54] << 24);
-
-    int32_t vel_east_raw = (payload[55]) |
-                           (payload[56] << 8) |
-                           (payload[57] << 16) |
-                           (payload[58] << 24);
-
-    int32_t vel_down_raw = (payload[59]) |
-                           (payload[60] << 8) |
-                           (payload[61] << 16) |
-                           (payload[62] << 24);
-
-    /* Extract heading of motion */
-    int32_t heading_raw = (payload[67]) |
-                          (payload[68] << 8) |
-                          (payload[69] << 16) |
-                          (payload[70] << 24);
-
-    /* Extract validity flags */
-    uint8_t gnss_fix_ok = (flags & 0x01);  /* Bit 0: GNSS fix valid */
-
-    /* Validate data quality */
-    if (!gnss_fix_ok || fix_type == 0 || num_sv == 0)
-        return 0;
-
-    /* Reject invalid/placeholder values */
-    if (lat_raw == 0x7FFFFFFF || lon_raw == 0x7FFFFFFF)
-        return 0;
-
-    /* Convert and store data
-     * LAT/LON: divide by 1e7 to convert from 1e-7 deg to degrees
-     * Height: divide by 1000 to convert from mm to meters
-     * Speed: divide by 1000 to convert from mm/s to m/s
-     * Velocity: divide by 1000 to convert from mm/s to m/s
-     * Heading: divide by 1e5 to convert from 1e-5 deg to degrees
-     */
-    pvt->latitude = lat_raw / 10000000.0;
-    pvt->longitude = lon_raw / 10000000.0;
-    pvt->altitude = height_raw / 1000.0;
-    pvt->speed = gspeed_raw / 1000.0;
-    pvt->vel_north = vel_north_raw / 1000.0;
-    pvt->vel_east = vel_east_raw / 1000.0;
-    pvt->vel_down = vel_down_raw / 1000.0;
-    pvt->heading = heading_raw / 100000.0;
-    pvt->fix_type = fix_type;
-    pvt->num_satellites = num_sv;
-    pvt->timestamp = HAL_GetTick();
-
-    return 1;
-}
-
-/* ========================================================================== */
-/* I2C Communication                                                         */
-/* ========================================================================== */
-
-/**
- * @brief Check if MAX-M10S device is present at I2C address 0x42
- * @param hi2c I2C handle
- * @return 1 if device responds, 0 if not
- */
-static uint8_t M10S_CheckPresence(I2C_HandleTypeDef *hi2c)
-{
-    uint8_t dummy = 0;
-
-    /* Try to read 1 byte from the device */
-    HAL_StatusTypeDef status = HAL_I2C_Master_Receive(hi2c,
-                                                       (M10S_I2C_ADDR << 1),
-                                                       &dummy, 1, 100);
-
-    return (status == HAL_OK) ? 1 : 0;
-}
-
-/**
- * @brief Send UBX configuration command via I2C
- * @param hi2c I2C handle
- * @param msg Pointer to complete UBX message (including sync and checksum)
- * @param msg_len Total message length
- * @return 1 if sent successfully, 0 otherwise
- */
-static uint8_t M10S_SendCommand(I2C_HandleTypeDef *hi2c,
-                                const uint8_t *msg, uint16_t msg_len)
-{
-    HAL_StatusTypeDef status = HAL_I2C_Master_Transmit(hi2c,
-                                                        (M10S_I2C_ADDR << 1),
-                                                        (uint8_t*)msg,
-                                                        msg_len,
-                                                        500);
-    return (status == HAL_OK) ? 1 : 0;
-}
-
-/**
- * @brief Read bytes available at I2C register 0xFD
- * @param hi2c I2C handle
- * @param bytes_avail Pointer to store available byte count
- * @return 1 if read successfully, 0 if I2C error
- */
-static uint8_t M10S_GetBytesAvailable(I2C_HandleTypeDef *hi2c, uint8_t *bytes_avail)
-{
-    uint8_t reg = M10S_I2C_REG_BYTES_AVAIL;
-
-    /* Read the bytes available register */
-    HAL_StatusTypeDef status = HAL_I2C_Master_Transmit(hi2c,
-                                                        (M10S_I2C_ADDR << 1),
-                                                        &reg, 1, 50);
-    if (status != HAL_OK)
-        return 0;
-
-    status = HAL_I2C_Master_Receive(hi2c,
-                                     (M10S_I2C_ADDR << 1),
-                                     bytes_avail, 1, 50);
-
-    return (status == HAL_OK) ? 1 : 0;
-}
-
-/**
- * @brief Read data from I2C data stream register
- * @param hi2c I2C handle
- * @param buffer Pointer to buffer
- * @param len Number of bytes to read
- * @return 1 if read successfully, 0 if I2C error
- */
-static uint8_t M10S_ReadDataStream(I2C_HandleTypeDef *hi2c, uint8_t *buffer, uint16_t len)
-{
-    uint8_t reg = M10S_I2C_REG_DATA_STREAM;
-
-    /* Write register address */
-    HAL_StatusTypeDef status = HAL_I2C_Master_Transmit(hi2c,
-                                                        (M10S_I2C_ADDR << 1),
-                                                        &reg, 1, 50);
-    if (status != HAL_OK)
-        return 0;
-
-    /* Read data from that register */
-    status = HAL_I2C_Master_Receive(hi2c,
-                                     (M10S_I2C_ADDR << 1),
-                                     buffer, len, 50);
-
-    return (status == HAL_OK) ? 1 : 0;
-}
-
-/* ========================================================================== */
-/* Buffer Management                                                         */
-/* ========================================================================== */
-
-/**
- * @brief Clear receive buffer
- */
-static void M10S_ClearBuffer(void)
-{
-    memset(s_rx_buffer, 0, M10S_BUFFER_SIZE);
-    s_rx_index = 0;
-}
-
-/**
- * @brief Add bytes to circular buffer
- * @param data Pointer to data
- * @param len Number of bytes to add
- * @return Number of bytes actually added (may be less if buffer full)
- */
-static uint16_t M10S_BufferAdd(const uint8_t *data, uint16_t len)
-{
-    uint16_t bytes_added = 0;
-
-    for (uint16_t i = 0; i < len; i++) {
-        if (s_rx_index < M10S_BUFFER_SIZE) {
-            s_rx_buffer[s_rx_index++] = data[i];
-            bytes_added++;
-        } else {
-            /* Buffer full - discard oldest data */
-            memmove(&s_rx_buffer[0], &s_rx_buffer[1], M10S_BUFFER_SIZE - 1);
-            s_rx_buffer[M10S_BUFFER_SIZE - 1] = data[i];
-        }
-    }
-
-    return bytes_added;
-}
-
-/**
- * @brief Remove n bytes from front of buffer
- * @param n Number of bytes to remove
- */
-static void M10S_BufferRemoveFront(uint16_t n)
-{
-    if (n >= s_rx_index) {
-        M10S_ClearBuffer();
-        return;
-    }
-
-    memmove(&s_rx_buffer[0], &s_rx_buffer[n], s_rx_index - n);
-    s_rx_index -= n;
-}
-
-/* ========================================================================== */
-/* Public API - Initialization                                               */
-/* ========================================================================== */
-
-/**
- * @brief Initialize MAX-M10S GPS module
- *
- * Performs the following:
- * 1. Checks if device responds at I2C address 0x42
- * 2. Sends UBX-CFG-PRT to configure I2C port (enable UBX and NMEA output)
- * 3. Sends UBX-CFG-MSG to enable NAV-PVT messages at 1 Hz
- * 4. Sends UBX-CFG-CFG to save configuration to flash
- * 5. Clears receive buffer and waits for data
- *
- * @param hi2c I2C handle
- * @return 1 if initialization successful, 0 if device not found or init failed
- */
 uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
 {
     char dbg[128];
@@ -473,542 +605,344 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
 
     len = snprintf(dbg, sizeof(dbg), "[M10S] Initializing MAX-M10S at I2C 0x42...\r\n");
     HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-    HAL_Delay(500);
 
-    /* Step 0: Check device presence */
-    if (!M10S_CheckPresence(hi2c)) {
+    /* Check device presence */
+    uint16_t bytes_avail = 0;
+    if (!M10S_GetBytesAvailable(hi2c, &bytes_avail)) {
         len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: Device not found at I2C 0x42\r\n");
         HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
         return 0;
     }
 
-    len = snprintf(dbg, sizeof(dbg), "[M10S] Device found at I2C 0x42\r\n");
+    len = snprintf(dbg, sizeof(dbg), "[M10S] Device found. Testing UBX communication...\r\n");
     HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
 
-    /* Step 1: Configure I2C port to output only UBX (like SparkFun library)
-     * UBX-CFG-PRT (0x06 0x00)
-     * Structure:
-     *   Port ID: 0 (I2C)
-     *   Reserved: 0
-     *   TX Ready: 0
-     *   In proto: 1 (UBX only)
-     *   Out proto: 1 (UBX only)
-     *   Flags: 0
-     */
-    uint8_t cfg_prt[] = {
-        0xB5, 0x62,           /* UBX Sync */
-        0x06, 0x00,           /* CFG-PRT class/id */
-        0x14, 0x00,           /* Length = 20 bytes (little-endian) */
-        0x00,                 /* Port ID = 0 (I2C) */
-        0x00,                 /* Reserved */
-        0x00, 0x00,           /* Reserved */
-        0x00, 0x00,           /* TX Ready = 0 */
-        0x01, 0x00,           /* In proto: UBX only (1) */
-        0x01, 0x00,           /* Out proto: UBX only (1) */
-        0x00, 0x00,           /* Flags = 0 */
-        0x00, 0x00,           /* Reserved */
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* Reserved */
-        0x00, 0x00            /* Checksum placeholder */
-    };
+    /* Query version to verify GPS responds to UBX commands */
+    M10S_QueryVersion(hi2c);
+    HAL_Delay(500);
 
-    uint8_t ck_a = 0, ck_b = 0;
-    M10S_CalculateChecksum(&cfg_prt[2], 18, &ck_a, &ck_b);
-    cfg_prt[20] = ck_a;
-    cfg_prt[21] = ck_b;
-
-    if (!M10S_SendCommand(hi2c, cfg_prt, sizeof(cfg_prt))) {
-        len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: Failed to send CFG-PRT\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-        return 0;
-    }
-
-    len = snprintf(dbg, sizeof(dbg), "[M10S] CFG-PRT sent, waiting for ACK...\r\n");
+    /* Perform controlled software reset to clear any stuck state */
+    len = snprintf(dbg, sizeof(dbg), "[M10S] Performing controlled software reset...\r\n");
     HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
 
-    if (!M10S_WaitForACK(hi2c, UBX_CLASS_CFG, UBX_ID_CFG_PRT, 1000)) {
-        len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: CFG-PRT ACK not received\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-        return 0;
-    }
-
-    HAL_Delay(100);
-
-    /* Step 2: Enable NAV-PVT messages at 1 Hz
-     * UBX-CFG-MSG (0x06 0x01)
-     * Structure:
-     *   Class: 0x01 (NAV)
-     *   ID: 0x07 (PVT)
-     *   Rate: 1 (every fix)
-     */
-    uint8_t cfg_msg_pvt[] = {
-        0xB5, 0x62,           /* UBX Sync */
-        0x06, 0x01,           /* CFG-MSG class/id */
-        0x03, 0x00,           /* Length = 3 bytes */
-        0x01, 0x07,           /* NAV-PVT (Class 0x01, ID 0x07) */
-        0x01,                 /* Rate = 1 (every fix) */
-        0x00, 0x00            /* Checksum placeholder */
-    };
-
-    ck_a = 0;
-    ck_b = 0;
-    M10S_CalculateChecksum(&cfg_msg_pvt[2], 5, &ck_a, &ck_b);
-    cfg_msg_pvt[7] = ck_a;
-    cfg_msg_pvt[8] = ck_b;
-
-    if (!M10S_SendCommand(hi2c, cfg_msg_pvt, sizeof(cfg_msg_pvt))) {
-        len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: Failed to send CFG-MSG (NAV-PVT)\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-        return 0;
-    }
-
-    len = snprintf(dbg, sizeof(dbg), "[M10S] CFG-MSG (NAV-PVT) sent, waiting for ACK...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-
-    if (!M10S_WaitForACK(hi2c, UBX_CLASS_CFG, UBX_ID_CFG_MSG, 1000)) {
-        len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: CFG-MSG ACK not received\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-        return 0;
-    }
-
-    HAL_Delay(100);
-
-    /* Step 3: Save configuration to flash
-     * UBX-CFG-CFG (0x06 0x09)
-     * Structure:
-     *   Clear mask: 0x1F (all sections)
-     *   Save mask: 0x1F (all sections)
-     *   Load mask: 0x1F (all sections)
-     */
-    uint8_t cfg_save[] = {
-        0xB5, 0x62,           /* UBX Sync */
-        0x06, 0x09,           /* CFG-CFG class/id */
-        0x0D, 0x00,           /* Length = 13 bytes */
-        0x1F, 0x1F, 0x00, 0x00,  /* Clear mask = all sections */
-        0x1F, 0x1F, 0x00, 0x00,  /* Save mask = all sections */
-        0x1F, 0x1F, 0x00, 0x00,  /* Load mask = all sections */
-        0x00,                    /* Reserved */
-        0x00, 0x00            /* Checksum placeholder */
-    };
-
-    ck_a = 0;
-    ck_b = 0;
-    M10S_CalculateChecksum(&cfg_save[2], 15, &ck_a, &ck_b);
-    cfg_save[17] = ck_a;
-    cfg_save[18] = ck_b;
-
-    if (!M10S_SendCommand(hi2c, cfg_save, sizeof(cfg_save))) {
-        len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: Failed to send CFG-CFG (SAVE)\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-        return 0;
-    }
-
-    len = snprintf(dbg, sizeof(dbg), "[M10S] CFG-CFG (SAVE) sent, waiting for ACK...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-
-    if (!M10S_WaitForACK(hi2c, UBX_CLASS_CFG, UBX_ID_CFG_CFG, 1000)) {
-        len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: CFG-CFG ACK not received\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-        return 0;
-    }
-
-    HAL_Delay(100);
-
-    /* Clear buffer and mark as initialized */
-    M10S_ClearBuffer();
-    s_initialized = 1;
-
-    len = snprintf(dbg, sizeof(dbg), "[M10S] Initialization complete. Waiting for NAV-PVT data...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-
-    return 1;
-}
-
-/* ========================================================================== */
-/* Public API - Data Reading                                                 */
-/* ========================================================================== */
-
-/**
- * @brief Request new PVT data from GPS (poll mode)
- *
- * Sends a UBX-NAV-PVT poll request to the GPS module.
- * The GPS will respond with a new NAV-PVT message containing current position/velocity/time data.
- *
- * @param hi2c I2C handle
- */
-void M10S_RequestPVT(I2C_HandleTypeDef *hi2c)
-{
-    if (!s_initialized)
-        return;
-
-    /* UBX-NAV-PVT Poll request: no payload, just the header */
-    uint8_t request[] = {
-        0xB5, 0x62,           /* UBX Sync bytes */
-        0x01, 0x07,           /* Class NAV, ID PVT */
-        0x00, 0x00,           /* Length = 0 (no payload) */
-        0x00, 0x00            /* Checksum placeholder */
-    };
+    uint8_t reset_msg[10];
+    reset_msg[0] = 0xB5;           /* Sync 1 */
+    reset_msg[1] = 0x62;           /* Sync 2 */
+    reset_msg[2] = 0x06;           /* Class: CFG */
+    reset_msg[3] = 0x04;           /* ID: RST (Reset) */
+    reset_msg[4] = 0x04;           /* Length low (4 bytes payload) */
+    reset_msg[5] = 0x00;           /* Length high */
+    reset_msg[6] = 0x00;           /* navBbrMask: don't clear BBR */
+    reset_msg[7] = 0x01;           /* resetMode: 0x01 = Controlled software reset */
+    reset_msg[8] = 0x00;           /* reserved */
+    reset_msg[9] = 0x00;           /* reserved */
 
     /* Calculate checksum */
     uint8_t ck_a = 0, ck_b = 0;
-    M10S_CalculateChecksum(&request[2], 4, &ck_a, &ck_b);
-    request[6] = ck_a;
-    request[7] = ck_b;
+    for (int i = 2; i < 10; i++) {
+        ck_a += reset_msg[i];
+        ck_b += ck_a;
+    }
 
-    /* Send the poll request */
-    HAL_I2C_Master_Transmit(hi2c, (M10S_I2C_ADDR << 1), request, sizeof(request), 100);
+    /* Append checksum (overwrite reserved bytes) */
+    reset_msg[8] = ck_a;
+    reset_msg[9] = ck_b;
+
+    M10S_WriteDataStream(hi2c, reset_msg, 10);
+    HAL_Delay(2000);  /* Wait for reset to complete */
+
+    /* M10 modules do NOT support legacy UBX-CFG-PRT / UBX-CFG-MSG.
+     * All configuration must go through UBX-CFG-VALSET (configuration interface).
+     * Keys (from u-blox M10 interface description):
+     *   CFG-I2COUTPROT-UBX        0x10720001 (L)  - enable UBX output on I2C
+     *   CFG-I2COUTPROT-NMEA       0x10720002 (L)  - NMEA output on I2C
+     *   CFG-MSGOUT-UBX_NAV_PVT_I2C 0x20910006 (U1) - NAV-PVT rate on I2C
+     */
+    len = snprintf(dbg, sizeof(dbg), "[M10S] Configuring via VALSET: UBX out, NMEA off, NAV-PVT 1Hz...\r\n");
+    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+
+    M10S_ConfigureNMEAViaValset(hi2c, 0x10720001, 1);  /* CFG-I2COUTPROT-UBX = 1 */
+    M10S_ConfigureNMEAViaValset(hi2c, 0x10720002, 0);  /* CFG-I2COUTPROT-NMEA = 0 */
+    M10S_ConfigureNMEAViaValset(hi2c, 0x20910006, 1);  /* CFG-MSGOUT-UBX_NAV_PVT_I2C = 1 */
+    M10S_ConfigureNMEAViaValset(hi2c, 0x20110021, 6);  /* CFG-NAVSPG-DYNMODEL = 6 (Airborne <1g) */
+
+    len = snprintf(dbg, sizeof(dbg), "[M10S] UBX-NAV-PVT configured. Waiting for data...\r\n");
+    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+
+    /* Wait for GPS to start sending configured data */
+    HAL_Delay(2000);
+
+    /* Check if we're receiving data */
+    uint8_t data_detected = 0;
+    len = snprintf(dbg, sizeof(dbg), "[M10S] Checking for incoming UBX data...\r\n");
+    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+
+    /* Clear any initial buffered data and reset internal buffer pointers */
+    uint8_t flush_buf[64];
+    for (int i = 0; i < 10; i++) {
+        if (M10S_GetBytesAvailable(hi2c, &bytes_avail) && bytes_avail > 0) {
+            data_detected = 1;
+            len = snprintf(dbg, sizeof(dbg), "[M10S]   Received %u bytes\r\n", bytes_avail);
+            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+
+            if (bytes_avail > 64) bytes_avail = 64;
+            M10S_ReadDataStream(hi2c, flush_buf, bytes_avail);
+        }
+        HAL_Delay(100);
+    }
+
+    if (!data_detected) {
+        len = snprintf(dbg, sizeof(dbg), "[M10S] WARNING: No UBX data detected after configuration!\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    } else {
+        len = snprintf(dbg, sizeof(dbg), "[M10S] ✓ UBX data detected successfully\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    }
+
+    /* Clear the internal sentence buffer completely */
+    s_rx_index = 0;
+    memset(s_rx_buffer, 0, M10S_BUFFER_SIZE);
+
+    s_initialized = 1;
+    len = snprintf(dbg, sizeof(dbg), "[M10S] Initialization complete. UBX-NAV-PVT at 1Hz...\r\n");
+    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+
+    return 1;
 }
 
-/**
- * @brief Check for available data and buffer it
- *
- * This function must be called frequently (e.g., every 10-100 ms) to maintain
- * responsiveness. It:
- * 1. Reads bytes available from register 0xFD (only if not 0xFF)
- * 2. If bytes available, reads data from register 0xFF
- * 3. Adds received bytes to the circular buffer
- * 4. Does NOT parse messages (that's done by M10S_Read)
- *
- * @param hi2c I2C handle
- * @return Number of bytes added to buffer (0 if nothing received or error)
- */
 uint16_t M10S_CheckUblox(I2C_HandleTypeDef *hi2c)
 {
-    if (!s_initialized)
+    if (!s_initialized) return 0;
+
+    uint16_t bytes_avail = 0;
+    if (!M10S_GetBytesAvailable(hi2c, &bytes_avail) || bytes_avail == 0) {
         return 0;
-
-    uint8_t bytes_avail = 0;
-
-    /* Read how many bytes are available */
-    if (!M10S_GetBytesAvailable(hi2c, &bytes_avail))
-        return 0;
-
-    /* Sanity checks:
-     * - 0x00: No data available
-     * - 0xFF: Register read error or garbage - ignore
-     * - > 127: Limit to avoid huge reads
-     */
-    if (bytes_avail == 0 || bytes_avail == 0xFF)
-        return 0;
-
-    if (bytes_avail > 127)
-        bytes_avail = 127;
-
-    /* Read the data */
-    uint8_t chunk[128];
-    if (!M10S_ReadDataStream(hi2c, chunk, bytes_avail))
-        return 0;
-
-    /* Add to buffer */
-    uint16_t bytes_added = M10S_BufferAdd(chunk, bytes_avail);
-
-    return bytes_added;
-}
-
-/* ========================================================================== */
-/* NMEA Parsing (Fallback)                                                   */
-/* ========================================================================== */
-
-static uint8_t M10S_ParseNMEA_GGA(const uint8_t *sentence, uint16_t len, M10S_NavPVT *pvt)
-{
-    if (len < 30)
-        return 0;
-
-    /* Parse: $GPGGA,hhmmss.ss,llll.lllll,a,yyyyy.yyyyy,a,x,xx,x.x,x.x,M,x.x,M,,*hh */
-    char str[128];
-    memcpy(str, sentence, len < 127 ? len : 127);
-    str[len < 127 ? len : 127] = '\0';
-
-    char *fields[15];
-    int field_count = 0;
-
-    char *p = str;
-    for (int i = 0; i < 15 && p; i++) {
-        fields[i] = p;
-        p = strchr(p, ',');
-        if (p) {
-            *p = '\0';
-            p++;
-            field_count++;
-        }
     }
 
-    if (field_count < 10)
-        return 0;
-
-    int fix_quality = atoi(fields[6]);
-    if (fix_quality == 0)
-        return 0;
-
-    /* NMEA: ddmm.mmmmm format - convert to decimal degrees */
-    double lat_raw = atof(fields[2]);
-    double lon_raw = atof(fields[4]);
-
-    int lat_deg = (int)(lat_raw / 100.0);
-    double lat_min = lat_raw - (lat_deg * 100.0);
-    double lat = lat_deg + (lat_min / 60.0);
-
-    int lon_deg = (int)(lon_raw / 100.0);
-    double lon_min = lon_raw - (lon_deg * 100.0);
-    double lon = lon_deg + (lon_min / 60.0);
-
-    double alt = atof(fields[9]);
-    int num_sats = atoi(fields[7]);
-
-    if (fields[3][0] == 'S')
-        lat = -lat;
-    if (fields[5][0] == 'W')
-        lon = -lon;
-
-    pvt->latitude = lat;
-    pvt->longitude = lon;
-    pvt->altitude = (int32_t)alt;
-    pvt->num_satellites = num_sats;
-    pvt->fix_type = (fix_quality == 2) ? 2 : 1;
-    pvt->speed = 0;
-    pvt->vel_north = 0;
-    pvt->vel_east = 0;
-    pvt->vel_down = 0;
-    pvt->heading = 0;
-    pvt->timestamp = HAL_GetTick();
-
-    return 1;
-}
-
-static uint8_t M10S_ParseNMEA_RMC(const uint8_t *sentence, uint16_t len, M10S_NavPVT *pvt)
-{
-    if (len < 30)
-        return 0;
-
-    /* Parse: $GPRMC,hhmmss.ss,A,llll.lllll,a,yyyyy.yyyyy,a,x.x,x.x,ddmmyy,,*hh */
-    char str[128];
-    memcpy(str, sentence, len < 127 ? len : 127);
-    str[len < 127 ? len : 127] = '\0';
-
-    char *fields[15];
-    int field_count = 0;
-
-    char *p = str;
-    for (int i = 0; i < 15 && p; i++) {
-        fields[i] = p;
-        p = strchr(p, ',');
-        if (p) {
-            *p = '\0';
-            p++;
-            field_count++;
-        }
+    static uint32_t last_debug = 0;
+    if (HAL_GetTick() - last_debug > 3000) {
+        char dbg[100];
+        int len = snprintf(dbg, sizeof(dbg), "[M10S_CHECK] %u bytes available, buffer fill: %d/%d\r\n",
+            bytes_avail, s_rx_index, M10S_BUFFER_SIZE);
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        last_debug = HAL_GetTick();
     }
 
-    if (field_count < 8)
-        return 0;
+    /* Cap to remaining buffer space (no wrap - parser assumes linear buffer) */
+    uint16_t space = M10S_BUFFER_SIZE - s_rx_index;
+    if (space == 0) {
+        /* Buffer full of unparseable data - reset for recovery */
+        s_rx_index = 0;
+        space = M10S_BUFFER_SIZE;
+    }
+    if (bytes_avail > space) {
+        bytes_avail = space;
+    }
 
-    if (fields[2][0] != 'A')
-        return 0;
+    /* Drain up to 256 bytes per call in 64-byte chunks */
+    uint16_t total_read = 0;
+    uint8_t temp_buf[64];
+    while (total_read < bytes_avail && total_read < 256) {
+        uint16_t chunk = bytes_avail - total_read;
+        if (chunk > 64) chunk = 64;
 
-    /* NMEA: ddmm.mmmmm format - convert to decimal degrees */
-    double lat_raw = atof(fields[3]);
-    double lon_raw = atof(fields[5]);
+        if (!M10S_ReadDataStream(hi2c, temp_buf, chunk)) break;
 
-    int lat_deg = (int)(lat_raw / 100.0);
-    double lat_min = lat_raw - (lat_deg * 100.0);
-    double lat = lat_deg + (lat_min / 60.0);
+        memcpy(&s_rx_buffer[s_rx_index], temp_buf, chunk);
+        s_rx_index += chunk;
+        total_read += chunk;
+    }
 
-    int lon_deg = (int)(lon_raw / 100.0);
-    double lon_min = lon_raw - (lon_deg * 100.0);
-    double lon = lon_deg + (lon_min / 60.0);
-
-    double speed = atof(fields[7]);
-
-    if (fields[4][0] == 'S')
-        lat = -lat;
-    if (fields[6][0] == 'W')
-        lon = -lon;
-
-    pvt->latitude = lat;
-    pvt->longitude = lon;
-    pvt->speed = speed;
-    pvt->fix_type = 1;
-    pvt->vel_north = 0;
-    pvt->vel_east = 0;
-    pvt->vel_down = 0;
-    pvt->heading = 0;
-    pvt->timestamp = HAL_GetTick();
-
-    return 1;
+    return total_read;
 }
 
-/**
- * @brief Search buffer for complete UBX-NAV-PVT message and parse it
- *
- * This function implements the exact behavior of SparkFun library's getPVT():
- * 1. Searches buffer for UBX sync characters (0xB5 0x62)
- * 2. Validates class/id (0x01 0x07 for NAV-PVT)
- * 3. Validates payload length (92 bytes)
- * 4. Checks if complete message is in buffer
- * 5. Verifies checksum
- * 6. Parses payload
- * 7. Stores in pvt structure
- * 8. Removes processed message from buffer
- * 9. Returns 1 ONLY if NEW complete message was parsed
- * 10. Returns 0 if no new message or error
- *
- * @param hi2c I2C handle (not used for parsing, kept for API compatibility)
- * @param pvt Pointer to M10S_NavPVT structure to receive parsed data
- * @return 1 if NEW complete NAV-PVT message was found and parsed, 0 otherwise
- */
 uint8_t M10S_Read(I2C_HandleTypeDef *hi2c, M10S_NavPVT *pvt)
 {
-    (void)hi2c;  /* Parameter not used */
+    (void)hi2c;  /* Not used in UBX mode */
 
-    if (!s_initialized || !pvt)
+    if (!s_initialized || s_rx_index < 100) {
+        static uint32_t last_debug = 0;
+        if (HAL_GetTick() - last_debug > 5000) {
+            char dbg[100];
+            int len = snprintf(dbg, sizeof(dbg), "[M10S_READ] Buffer: %d bytes (need 100+)\r\n", s_rx_index);
+            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+            last_debug = HAL_GetTick();
+        }
         return 0;
+    }
 
-    /* Need at least: sync(2) + class(1) + id(1) + len(2) + ck(2) = 8 bytes minimum */
-    if (s_rx_index < 8)
-        return 0;
+    /* Debug: once per 3s, show what message types are sitting in the buffer */
+    static uint32_t last_sync_debug = 0;
+    if (HAL_GetTick() - last_sync_debug > 3000) {
+        char dbg[100];
+        int len = snprintf(dbg, sizeof(dbg), "[M10S_READ] Scanning %d bytes, first: %02X %02X %02X %02X\r\n",
+            s_rx_index, s_rx_buffer[0], s_rx_buffer[1], s_rx_buffer[2], s_rx_buffer[3]);
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        last_sync_debug = HAL_GetTick();
+    }
 
-    /* Search for sync character pair in buffer */
-    for (uint16_t i = 0; i < s_rx_index - 7; i++) {
-        if (s_rx_buffer[i] == UBX_SYNC_CHAR_1 && s_rx_buffer[i+1] == UBX_SYNC_CHAR_2) {
+    /* Look for UBX-NAV-PVT message: B5 62 01 07 */
+    for (uint16_t i = 0; i < s_rx_index - 100; i++) {
+        if (s_rx_buffer[i] == 0xB5 && s_rx_buffer[i+1] == 0x62 &&
+            s_rx_buffer[i+2] == 0x01 && s_rx_buffer[i+3] == 0x07) {
 
-            /* Extract message header */
-            uint8_t msg_class = s_rx_buffer[i+2];
-            uint8_t msg_id = s_rx_buffer[i+3];
-            uint16_t msg_len = s_rx_buffer[i+4] | (s_rx_buffer[i+5] << 8);
+            char dbg[160];
+            int len;
 
-            /* Check if this is a NAV-PVT message */
-            if (msg_class != UBX_CLASS_NAV || msg_id != UBX_ID_NAV_PVT)
-                continue;
+            /* Found UBX-NAV-PVT sync chars and class/ID */
+            uint8_t len_low = s_rx_buffer[i+4];
+            uint8_t len_high = s_rx_buffer[i+5];
+            uint16_t payload_len = (len_high << 8) | len_low;
+            uint16_t total_msg_len = 8 + payload_len;  /* Sync(2) + Class(1) + ID(1) + Len(2) + Payload + CK(2) */
 
-            /* NAV-PVT payload must be exactly 92 bytes */
-            if (msg_len != UBX_NAV_PVT_PAYLOAD_LEN)
-                continue;
-
-            /* Calculate total message size:
-             * sync(2) + class(1) + id(1) + len(2) + payload(92) + checksum(2) = 100 bytes
-             */
-            uint16_t total_msg_size = 2 + 1 + 1 + 2 + msg_len + 2;
-
-            /* Check if complete message is in buffer */
-            if (i + total_msg_size > s_rx_index)
-                return 0;  /* Incomplete message - wait for more data */
-
-            /* Extract checksum bytes */
-            uint8_t msg_ck_a = s_rx_buffer[i + 6 + msg_len];
-            uint8_t msg_ck_b = s_rx_buffer[i + 6 + msg_len + 1];
-
-            /* Verify checksum (data is from class byte to end of payload)
-             * This is: class + id + len_l + len_h + payload
-             */
-            uint8_t ck_data_len = 2 + 2 + msg_len;  /* class + id + len + payload */
-            if (!M10S_VerifyChecksum(&s_rx_buffer[i+2], ck_data_len, msg_ck_a, msg_ck_b)) {
-                /* Checksum failed - skip this sync and continue searching */
-                continue;
+            /* Sanity check: NAV-PVT payload is 92 bytes; reject corrupt lengths */
+            if (payload_len != 92) {
+                /* Corrupt header - drop everything through this sync and rescan next call */
+                s_rx_index -= (i + 2);
+                memmove(s_rx_buffer, &s_rx_buffer[i + 2], s_rx_index);
+                return 0;
             }
 
-            /* Extract payload (92 bytes after the 6-byte header) */
-            uint8_t payload[UBX_NAV_PVT_PAYLOAD_LEN];
-            memcpy(payload, &s_rx_buffer[i+6], UBX_NAV_PVT_PAYLOAD_LEN);
-
-            /* Try to parse the payload */
-            if (M10S_ParseNAVPVT(payload, UBX_NAV_PVT_PAYLOAD_LEN, pvt)) {
-                /* Successfully parsed! Copy to internal storage and remove from buffer */
-                memcpy(&s_last_pvt, pvt, sizeof(M10S_NavPVT));
-                M10S_BufferRemoveFront(i + total_msg_size);
-                return 1;  /* NEW message found and parsed */
-            } else {
-                /* Parse validation failed - skip this message and continue searching */
-                continue;
+            if (i + total_msg_len > s_rx_index) {
+                return 0;  /* Message incomplete - wait for more data */
             }
+
+            /* Verify checksum */
+            uint8_t ck_a = 0, ck_b = 0;
+            for (uint16_t j = 2; j < 6 + payload_len; j++) {
+                ck_a += s_rx_buffer[i+j];
+                ck_b += ck_a;
+            }
+
+            if (ck_a != s_rx_buffer[i + 6 + payload_len] ||
+                ck_b != s_rx_buffer[i + 7 + payload_len]) {
+                len = snprintf(dbg, sizeof(dbg), "[M10S_READ] Bad checksum, dropping message\r\n");
+                HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+                /* Drop everything through this sync so we don't rescan it forever */
+                s_rx_index -= (i + 2);
+                memmove(s_rx_buffer, &s_rx_buffer[i + 2], s_rx_index);
+                return 0;
+            }
+
+            /* Checksum valid - parse UBX-NAV-PVT payload (92 bytes).
+             * Field offsets per u-blox M10 interface description. */
+            uint8_t *payload = &s_rx_buffer[i + 6];
+
+            #define LE_U16(o) ((uint16_t)((uint16_t)payload[o] | ((uint16_t)payload[(o)+1]<<8)))
+            #define LE_U32(o) ((uint32_t)payload[o] | ((uint32_t)payload[(o)+1]<<8) | ((uint32_t)payload[(o)+2]<<16) | ((uint32_t)payload[(o)+3]<<24))
+            #define LE_I16(o) ((int16_t)LE_U16(o))
+            #define LE_I32(o) ((int32_t)LE_U32(o))
+
+            uint32_t iTOW   = LE_U32(0);       /* GPS time of week (ms) */
+            uint16_t year   = LE_U16(4);
+            uint8_t  month  = payload[6];
+            uint8_t  day    = payload[7];
+            uint8_t  hour   = payload[8];
+            uint8_t  minute = payload[9];
+            uint8_t  second = payload[10];
+            uint8_t  validFlags = payload[11]; /* validDate|validTime|fullyResolved|validMag */
+            uint32_t tAcc   = LE_U32(12);       /* time accuracy (ns) */
+            int32_t  nano   = LE_I32(16);       /* fraction of second (ns) */
+            uint8_t  fixType = payload[20];
+            uint8_t  flags  = payload[21];      /* gnssFixOK, diffSoln, ... */
+            uint8_t  numSV  = payload[23];
+            int32_t  lon    = LE_I32(24);       /* deg 1e-7 */
+            int32_t  lat    = LE_I32(28);       /* deg 1e-7 */
+            int32_t  height = LE_I32(32);       /* mm above ellipsoid */
+            int32_t  hMSL   = LE_I32(36);       /* mm above mean sea level */
+            uint32_t hAcc   = LE_U32(40);       /* horizontal accuracy (mm) */
+            uint32_t vAcc   = LE_U32(44);       /* vertical accuracy (mm) */
+            int32_t  velN   = LE_I32(48);       /* mm/s */
+            int32_t  velE   = LE_I32(52);       /* mm/s */
+            int32_t  velD   = LE_I32(56);       /* mm/s */
+            int32_t  gSpeed = LE_I32(60);       /* ground speed mm/s */
+            int32_t  heading = LE_I32(64);      /* heading of motion deg 1e-5 */
+            uint32_t sAcc   = LE_U32(68);       /* speed accuracy mm/s */
+            uint32_t headAcc = LE_U32(72);      /* heading accuracy deg 1e-5 */
+            uint16_t pDOP   = LE_U16(76);       /* position DOP 0.01 */
+
+            /* Store in PVT structure (units: deg*1e-7 -> deg, mm -> m, mm/s -> m/s, deg*1e-5 -> deg) */
+            s_last_pvt.latitude = lat / 10000000.0;
+            s_last_pvt.longitude = lon / 10000000.0;
+            s_last_pvt.altitude = hMSL / 1000;
+            s_last_pvt.speed = gSpeed / 1000.0f;
+            s_last_pvt.vel_down = velD / 1000.0f;
+            s_last_pvt.heading = heading / 100000.0f;
+            s_last_pvt.utc_time = ((uint32_t)hour * 10000) + ((uint32_t)minute * 100) + second;
+            s_last_pvt.num_satellites = numSV;
+            s_last_pvt.fix_type = fixType;
+            s_last_pvt.timestamp = HAL_GetTick();
+
+            /* Debug output (integer formatting - %f not linked for this path).
+             * Split over several lines to stay within the dbg buffer. */
+            len = snprintf(dbg, sizeof(dbg),
+                "[M10S] NAV-PVT iTOW=%lu %04u-%02u-%02u %02u:%02u:%02u nano=%ld valid=0x%02X\r\n",
+                (unsigned long)iTOW, year, month, day, hour, minute, second,
+                (long)nano, validFlags);
+            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+
+            len = snprintf(dbg, sizeof(dbg),
+                "[M10S]   Lat=%ld.%07ld Lon=%ld.%07ld hMSL=%ldmm hEll=%ldmm Fix=%d flags=0x%02X SV=%d\r\n",
+                (long)(lat / 10000000), (long)labs(lat % 10000000),
+                (long)(lon / 10000000), (long)labs(lon % 10000000),
+                (long)hMSL, (long)height, fixType, flags, numSV);
+            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+
+            len = snprintf(dbg, sizeof(dbg),
+                "[M10S]   velN=%ld velE=%ld velD=%ld gSpeed=%ldmm/s head=%ld.%05ldeg\r\n",
+                (long)velN, (long)velE, (long)velD, (long)gSpeed,
+                (long)(heading / 100000), (long)labs(heading % 100000));
+            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+
+            len = snprintf(dbg, sizeof(dbg),
+                "[M10S]   hAcc=%lumm vAcc=%lumm sAcc=%lumm/s headAcc=%ludeg-e5 pDOP=%u.%02u tAcc=%luns\r\n",
+                (unsigned long)hAcc, (unsigned long)vAcc, (unsigned long)sAcc,
+                (unsigned long)headAcc, pDOP / 100, pDOP % 100, (unsigned long)tAcc);
+            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+
+            #undef LE_U16
+            #undef LE_U32
+            #undef LE_I16
+            #undef LE_I32
+
+            /* Remove processed message (and anything before it) from buffer */
+            s_rx_index -= (i + total_msg_len);
+            memmove(s_rx_buffer, &s_rx_buffer[i + total_msg_len], s_rx_index);
+
+            if (pvt) *pvt = s_last_pvt;
+            return 1;
         }
     }
 
-    /* FALLBACK: Try NMEA format ($GPGGA, $GPRMC) */
-    for (uint16_t i = 0; i < s_rx_index; i++) {
-        if (s_rx_buffer[i] == '$') {
-            /* Found potential NMEA sentence start */
-            uint16_t sent_len = 0;
-            uint8_t sentence[128] = {0};
-
-            /* Copy sentence until newline or end of buffer */
-            uint16_t sent_end = i;
-            for (uint16_t j = i; j < s_rx_index && sent_len < 127; j++) {
-                sentence[sent_len++] = s_rx_buffer[j];
-                sent_end = j;
-                if (s_rx_buffer[j] == '\n')
-                    break;
-            }
-
-            if (sent_len > 10) {  /* Minimum sentence length */
-                /* Try to parse NMEA */
-                if ((sentence[0] == '$') &&
-                    ((strncmp((char*)sentence, "$GPGGA", 6) == 0 ||
-                      strncmp((char*)sentence, "$GNGGA", 6) == 0))) {
-
-                    /* Parse GGA sentence for position data */
-                    if (M10S_ParseNMEA_GGA(sentence, sent_len, pvt)) {
-                        memcpy(&s_last_pvt, pvt, sizeof(M10S_NavPVT));
-                        M10S_BufferRemoveFront(sent_end + 1);
-                        return 1;
-                    }
-                } else if ((sentence[0] == '$') &&
-                           ((strncmp((char*)sentence, "$GPRMC", 6) == 0 ||
-                             strncmp((char*)sentence, "$GNRMC", 6) == 0))) {
-
-                    /* Parse RMC sentence for position/speed data */
-                    if (M10S_ParseNMEA_RMC(sentence, sent_len, pvt)) {
-                        memcpy(&s_last_pvt, pvt, sizeof(M10S_NavPVT));
-                        M10S_BufferRemoveFront(sent_end + 1);
-                        return 1;
-                    }
-                }
-            }
-
-            i += sent_len;
-        }
-    }
-
-    return 0;  /* No new complete message found */
+    return 0;
 }
 
-/**
- * @brief Get the last successfully parsed PVT data
- * @param pvt Pointer to M10S_NavPVT structure to receive data
- * @return 1 if data is available, 0 if no data has been parsed yet
- */
 uint8_t M10S_GetLastPVT(M10S_NavPVT *pvt)
 {
-    if (!s_initialized || !pvt)
-        return 0;
-
-    if (s_last_pvt.timestamp == 0)
-        return 0;  /* No data has been parsed yet */
-
-    memcpy(pvt, &s_last_pvt, sizeof(M10S_NavPVT));
+    if (!s_initialized || s_last_pvt.timestamp == 0) return 0;
+    if (pvt) *pvt = s_last_pvt;
     return 1;
 }
 
-/**
- * @brief Check if GPS module is initialized
- * @return 1 if initialized, 0 otherwise
- */
 uint8_t M10S_IsInitialized(void)
 {
     return s_initialized;
 }
 
-/**
- * @brief Get current buffer fill level for debugging
- * @return Number of bytes currently in receive buffer
- */
 uint16_t M10S_GetBufferFillLevel(void)
 {
     return s_rx_index;
 }
 
-/**
- * @brief Clear all buffered data (for recovery/reset)
- */
 void M10S_ClearBufferedData(void)
 {
-    M10S_ClearBuffer();
+    s_rx_index = 0;
+    memset(s_rx_buffer, 0, sizeof(s_rx_buffer));
 }
+
+void M10S_RequestPVT(I2C_HandleTypeDef *hi2c)
+{
+    /* Polling disabled - using NMEA streaming mode only */
+    (void)hi2c;
+}
+
