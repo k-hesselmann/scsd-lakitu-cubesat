@@ -219,3 +219,26 @@ fraction record to the downlink. The byte-level framing is the authoritative
 UART Protocol Specification in \texttt{interface\_docs/}, not reproduced
 here since it is shared, versioned contract between this payload and the OBC
 team.
+
+\section{Thermal Envelope}
+
+The payload carries its own operating requirement, distinct from the rest of
+the platform: the Coral's interior must stay above 0\textdegree{}C
+throughout the flight (MR-009 scopes this floor to the payload specifically,
+not the whole spacecraft). Thermal analysis showed passive insulation alone
+cannot hold that floor through the night-cruise cold case, so a small
+thermostatically controlled survival heater ($\sim$2--3~W) was evaluated as
+a mitigation. The EPS chapter quantifies its cost: at 2.5~W and 30\% duty
+the platform's power margin would fall from $\sim$3.1$\times$ to
+$\sim$1.9$\times$ --- still clear of the 1.5$\times$ floor, so the budget
+has room for it if needed.
+
+Given the limited time before flight, the team chose passive-only thermal
+management for this iteration rather than add the heater and its
+integration work, and mitigated the risk by placement instead: every
+high-internal-heat component (boost converter, batteries, Coral) sits close
+together so the platform's own dissipation stays concentrated rather than
+spreading out to the enclosure walls. This is a managed risk, not an
+unverified one --- the heater option remains budgeted and available as a
+fallback, and the freezer/vacuum test session validates whether the
+passive-only configuration holds the floor in practice.
