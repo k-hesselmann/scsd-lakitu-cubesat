@@ -187,74 +187,50 @@ modem after three consecutive SPI/TX failures, with a one-minute retry backoff.
 
 ---
 
-## 3. Telemetry Packet - `TelemetryPacket_t` (protocol v7)
+## 3. Telemetry Packet - `TelemetryPacket_t` (protocol v8)
 
-**Direction:** OBC to ground station over LoRa
-**Wire order:** packed, little-endian
-**Total length:** **155 bytes**
-**Integrity:** CRC-16/CCITT (`0xFFFF` initial value, polynomial `0x1021`) over
-bytes 0-152; the final two bytes are the packet CRC.
+- **Direction:** OBC to ground station over LoRa
+- **Wire order:** packed, little-endian
+- **Total length:** **92 bytes**
+**Integrity:** CRC-16/CCITT-FALSE over bytes 0-89; bytes 90-91 contain the
+little-endian packet CRC.
 
-The v7 packet is a selected snapshot of `SensorData_t`, `SCV_t`, reliable-uplink
-state, and LoRa TX/RX health. Engineering-unit conversion remains ground-owned.
+V8 is a fixed-point operational snapshot rather than a raw C-structure dump.
+Retries send the exact original packet bytes. Signed invalid sentinels are
+`INT16_MIN`/`INT32_MIN`; unsigned invalid sentinels are the type maximum.
+Validity bits are authoritative, and temporarily invalid sensors retain their
+last valid encoded measurement.
 
-| Byte range | Fields | Source / notes |
-|---|---|---|
-| 0-7 | type, version, sequence, `tx_uptime_ms` | TTC/FSW transport metadata |
-| 8-95 | selected `SensorData_t` fields | Direct copies; source units are preserved |
-| 96-125 | complete `SCV_t` snapshot | Direct copies, including `scv_crc16` |
-| 126 | `uplink.last_command` | `0 NONE`, `1 REQ_TELEMETRY`, `2 ACKNOWLEDGE` |
-| 127 | `uplink.last_status` | `0 NONE`, `1 ACCEPTED`, `2 INVALID_FORMAT`, `3 UNSUPPORTED`, `4 DUPLICATE`, `5 UNEXPECTED_ACK` |
-| 128-129 | `uplink.last_command_id` | ID supplied by `CMD,<id>,<verb>` |
-| 130-131 | `uplink.last_ack_sequence` | Last outstanding telemetry sequence acknowledged by ground |
-| 132-133 | `uplink.command_count` | Unique valid commands accepted since boot |
-| 134 | `lora.last_event` | Latest modem TX/RX event |
-| 135 | `lora.consecutive_failures` | Consecutive modem failures |
-| 136 | `lora.recovery_count` | RFM95W recovery attempts since boot |
-| 137-140 | `lora.last_success_ms` | HAL tick of most recent `TxDone` |
-| 141 | `lora.rx_mode_active` | RX-continuous mode readback succeeded |
-| 142 | `lora.last_rx_status` | `0 NONE`, `1 ACTIVE`, `2 PACKET_OK`, `3 CRC_ERROR`, `4 BAD_LENGTH`, `5 SPI_ERROR`, `6 MODE_ERROR` |
-| 143-144 | `lora.rx_packet_count` | CRC-valid uplink packets since boot |
-| 145-146 | `lora.rx_crc_error_count` | Uplink packets rejected by modem CRC |
-| 147-148 | `lora.ack_timeout_count` | Telemetry packets whose three-attempt retry budget expired without a matching ACK |
-| 149-152 | `lora.last_rx_ms` | HAL tick of most recent CRC-valid uplink |
-| 153-154 | `crc16` | Packet CRC-16/CCITT |
+| Bytes | Contents |
+|---|---|
+| 0-11 | type `0x01`, version `0x08`, sequence, TX uptime s, mission elapsed s |
+| 12-25 | boot/phase/reset, validity, I2C state, enabled/fault masks, sample age, watchdog and SD counters |
+| 26-49 | GNSS position, altitude, speeds, course, UTC seconds-of-day, satellites and fix type |
+| 50-61 | IMU X/Y/Z acceleration in mg and gyro in 0.1 deg/s |
+| 62-73 | barometer pressure/altitude/temperature and battery mV |
+| 74-80 | Coral sequence low word, Q16 cloud fraction, status and result age |
+| 81-89 | LoRa health, TX/ACK counters, command ID and packed CMD/ACK statuses |
+| 90-91 | CRC-16/CCITT-FALSE |
 
-LoRa event values include `9 RX_OK`, `10 RX_CRC_ERROR`, `11 RX_SPI_FAIL`,
-`12 RX_MODE_FAIL`, and `13 ACK_TIMEOUT`. Entering continuous RX mode is verified
-by reading back `RegOpMode` and `RegDioMapping1`.
+Validity bits: bit 0 GNSS, bit 1 IMU, bit 2 barometer, bit 3 battery,
+bit 4 Coral. `lora_rx_state` uses bits 0-2 for `LoRaRxHealthStatus_t` and
+bit 3 for RX-continuous active. `uplink_state` uses bits 0-2 for the last CMD
+status and bits 3-5 for the last telemetry-ACK status.
 
-### Reliable TTC protocol
-
-- Ground commands use `CMD,<command-id>,REQ_TELEMETRY`.
-- Flight echoes `last_command_id` and `last_status` in telemetry. A dedicated
-  16-ID sliding replay window tracks the newest accepted ID and handles 16-bit
-  wraparound. ACK processing does not overwrite this window. Previously seen
-  IDs and stale IDs older than the window are treated as duplicates and do not
-  increment the unique-command counter.
-- Ground acknowledges valid telemetry with `ACK,<telemetry-sequence>`.
-- Flight accepts an ACK only when it matches the outstanding stop-and-wait
-  packet. Duplicate and unexpected ACKs are reported separately.
-- Flight retries the exact same telemetry packet and sequence after five seconds,
-  up to three transmission attempts. New periodic/immediate packets wait until
-  the outstanding packet is acknowledged or its retry budget expires.
-- Expiring that retry budget records `LORA_EVENT_ACK_TIMEOUT` and increments the
-  saturating `lora.ack_timeout_count` counter.
-- ACK reception is piggybacked on later telemetry; flight does not emit an
-  immediate ACK-of-ACK packet, preventing acknowledgement loops.
 Ground conversion rules:
 
-- GPS degrees, metres, and m/s; barometer Pa, metres, and ?C; and battery mV
-  are already the native datapool units and are displayed directly.
-- IMU acceleration is transmitted in **g** and converted on ground to m/s?
-  using `9.80665`.
-- IMU gyro is transmitted in **deg/s** and converted on ground to rad/s.
-- Validity flags and SCV equipment bitmasks are transmitted independently;
-  ground derives display health flags from them.
-- UTC, GNSS fix/satellite/HDOP/VDOP/course, IMU/MCU temperatures, command
-  counters, and OBC uplink metrics are not presently available in the datapool
-  or SCV and are reported as unavailable by the ground station.
+- latitude/longitude: integer / 10,000,000 degrees
+- GNSS and barometer altitude: integer / 10 metres
+- speed: integer / 100 m/s
+- course: integer / 100 degrees
+- acceleration: integer / 1000 g, then multiply by `9.80665` for m/s²
+- gyro: integer / 10 deg/s, then convert to rad/s if desired
+- barometer temperature: integer / 100 degrees C
+- Coral cloud percentage: `coral_fraction_q16 * 100 / 65535`
 
+The ground decoder accepts only the 92-byte protocol-v8 frame. The byte-for-byte
+field table and removal rationale are in
+`interface_docs/TELEMETRY_PACKET_V8_PROPOSAL.md`.
 
 ---
 

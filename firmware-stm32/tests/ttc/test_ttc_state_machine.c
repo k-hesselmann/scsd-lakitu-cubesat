@@ -13,6 +13,7 @@ static uint8_t mock_ready;
 static uint8_t mock_rx_active;
 static uint16_t mock_init_calls;
 static uint16_t mock_send_calls;
+static uint8_t mock_last_send_length;
 static uint16_t mock_fdir_requests;
 
 /* White-box TTC test: hardware, the LoRa driver, and FDIR's reinit-request
@@ -38,8 +39,9 @@ LoRaStatus_t LoRa_Init(void)
 
 LoRaStatus_t LoRa_Send(const uint8_t *data, uint8_t length, uint32_t timeout)
 {
-    (void)data; (void)length; (void)timeout;
+    (void)data; (void)timeout;
     mock_send_calls++;
+    mock_last_send_length = length;
     mock_busy = 1U; mock_rx_active = 0U;
     mock_state = LORA_STATE_TRANSMITTING; mock_status = LORA_BUSY;
     return LORA_OK;
@@ -80,7 +82,7 @@ static void Mock_Reset(void)
     mock_init_result = LORA_OK; mock_isolate_result = LORA_OK;
     mock_busy = 0U; mock_ready = 0U; mock_rx_active = 0U;
     mock_init_calls = 0U; mock_send_calls = 0U;
-    mock_fdir_requests = 0U;
+    mock_last_send_length = 0U; mock_fdir_requests = 0U;
 }
 
 static void Mock_Complete(LoRaStatus_t status, uint8_t ready, uint8_t rx)
@@ -190,6 +192,7 @@ static int TestAckRetriesAndNackCounter(void)
     for (attempt = 0U; attempt < TTC_MAX_TX_ATTEMPTS; attempt++) {
         TTC_Service();
         CHECK(mock_send_calls == (uint16_t)(attempt + 1U));
+        CHECK(mock_last_send_length == TELEMETRY_PACKET_V8_SIZE);
         CompleteTransmitAndRestartRx();
         mock_tick += TTC_ACK_TIMEOUT_MS;
     }
@@ -197,6 +200,27 @@ static int TestAckRetriesAndNackCounter(void)
     CHECK(health.nack_counter == 1U);
     CHECK(TTC_GetHealth()->ack_timeout_count == 1U);
     CHECK(s_pending_valid == 0U);
+    return 0;
+}
+
+static int TestCommandAndAckLatchesAreIndependent(void)
+{
+    static const uint8_t command[] = "CMD,123,REQ_TELEMETRY";
+    uint8_t command_status;
+
+    Mock_Reset(); StartHealthyTtc();
+    TTC_ProcessUplink(command, (uint8_t)(sizeof(command) - 1U));
+    CHECK(s_uplink.last_command_id == 123U);
+    CHECK(s_uplink.last_command_status == UPLINK_STATUS_ACCEPTED);
+    command_status = s_uplink.last_command_status;
+
+    s_pending_valid = 1U;
+    s_pending_packet.sequence_number = 77U;
+    TTC_ProcessAcknowledgement(77U);
+    CHECK(s_uplink.last_ack_status == UPLINK_STATUS_ACCEPTED);
+    CHECK(s_uplink.last_ack_sequence == 77U);
+    CHECK(s_uplink.last_command_id == 123U);
+    CHECK(s_uplink.last_command_status == command_status);
     return 0;
 }
 
@@ -227,6 +251,8 @@ int main(void)
     result = TestIsolationPreemptsStartup();
     if (result != 0) return result;
     result = TestAckRetriesAndNackCounter();
+    if (result != 0) return result;
+    result = TestCommandAndAckLatchesAreIndependent();
     if (result != 0) return result;
     return TestFdirReinitBitTriggersRecovery();
 }

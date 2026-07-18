@@ -21,8 +21,8 @@ uint8_t TTC_TelemetryDue(void);
 /* Queue one telemetry packet. It never waits for the modem or elapsed time. */
 void TTC_Transmit(const TelemetryPacket_t *pkt);
 
-/* Existing volatile telemetry snapshots. Their layout is intentionally
- * unchanged for protocol-v7 compatibility. */
+/* Volatile health and independently latched command/ACK state consumed by the
+ * compact protocol-v8 packet builder. */
 const LoRaHealth_t *TTC_GetHealth(void);
 const UplinkState_t *TTC_GetUplinkState(void);
 

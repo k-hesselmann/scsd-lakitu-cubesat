@@ -242,7 +242,7 @@ export function useTelemetryWebSocket(historyLimit = 500, eventLimit = 300) {
                 time_iso: new Date(now * 1000).toISOString(),
                 time_unix: now,
                 title: "Non-telemetry packet",
-                description: "Ground radio received a packet that does not match the current raw-v7 telemetry length.",
+                description: "Ground radio received a packet that does not match the 92-byte protocol-v8 telemetry length.",
                 severity: "warning",
               },
             ])

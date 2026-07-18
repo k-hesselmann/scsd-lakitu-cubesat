@@ -376,7 +376,11 @@ void Coral_Update(SensorData_t *dp)
     coral_sof_count++;
     dbg("[CORAL] SOF 0xAA55 confirmed -- receiving frame...\r\n");
 
-    coral_receive_frame(dp);
+    {
+        uint8_t status = coral_receive_frame(dp);
+        dp->coral_block[7] = status;
+        coral_last_status = status;
+    }
 }
 
 void Coral_SendTrigger(void)

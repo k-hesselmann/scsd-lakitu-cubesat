@@ -88,7 +88,7 @@ export function TelemetryCharts({
         <EmptyChart title="Altitude" compact={compact} />
         <EmptyChart title="Barometer" compact={compact} />
         <EmptyChart title="Acceleration" compact={compact} />
-        <EmptyChart title="Link Quality" compact={compact} />
+        <EmptyChart title="Coral Cloud Fraction" compact={compact} />
         <EmptyChart title="Speed" compact={compact} />
       </div>
     )
@@ -200,27 +200,20 @@ export function TelemetryCharts({
         </ResponsiveContainer>
       </ChartCard>
 
-      <ChartCard title="Link Quality" compact={compact}>
+      <ChartCard title="Coral Cloud Fraction" compact={compact}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart {...commonChartProps(history)}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="pc_receive_time_iso" tickFormatter={formatTime} />
-            <YAxis width={45} />
+            <YAxis width={45} domain={[0, 100]} />
             <Tooltip labelFormatter={(label) => formatTime(label)} />
             <Legend />
             <Line
               type="monotone"
-              dataKey="lora_downlink_rssi_dbm"
-              name="RX RSSI"
+              dataKey="coral_fraction_percent"
+              name="Cloud fraction [%]"
               dot={false}
               stroke="#9333ea"
-            />
-            <Line
-              type="monotone"
-              dataKey="lora_downlink_snr_db"
-              name="RX SNR"
-              dot={false}
-              stroke="#0f766e"
             />
           </LineChart>
         </ResponsiveContainer>
