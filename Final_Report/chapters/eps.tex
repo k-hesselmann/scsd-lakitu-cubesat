@@ -1,9 +1,162 @@
 \chapter{Electrical Power System (EPS)}
 
-% TODO(EPS owner): power budget, battery sizing, regulation, monitoring.
+\section{Design Overview}
 
-\section{Responsibilities}
+The EPS delivers a single regulated 5~V rail to the platform from a
+two-cell parallel Li-ion pack, with fault protection and battery-voltage
+telemetry to the OBC (IF-008). It is sized against MR-002 (six-hour flight),
+PR-008 ($\geq 1.5\times$ power margin), IF-009 (5~V rail behaviour under
+load), SR-001/002/003 (over-current, reverse-polarity, over-discharge
+protection), and CR-001 (mass).
 
-\section{Interfaces}
+The pack is 2$\times$ Panasonic NCR18650B (unprotected, parallel,
+2$\times$3400~mAh, 25.1~Wh nominal), chosen for energy density with
+well-characterised cold performance ($-20$\textdegree{}C rated, so the
+battery is not the platform's thermal bottleneck) and a hermetically sealed
+can that tolerates the $\sim$1~kPa stratospheric environment without LiPo's
+pouch-swell risk. A USB power bank, LiPo pouch, and lithium-primary cells
+were all rejected on cold performance, altitude-pressure risk, and
+non-rechargeability respectively. Because the cells are unprotected,
+over-current, reverse-polarity, and over-discharge protection is entirely
+external (Section~\ref{sec:eps-architecture}). A boost-only (not
+buck-boost) topology is used because the battery voltage (3.0--4.2~V) is
+always below the 5~V rail target.
 
-\section{Design Decisions}
+\section{Power Budget}
+
+The initial budget overestimated the payload: it modelled the Edge TPU at
+full inference power (1.8~W) for 40\% of the flight. A review corrected
+this to the datasheet active-power figure ($\sim$3~W) at a realistic
+duty -- Edge TPU inference latency is millisecond-scale against a 1~Hz
+capture cycle, so the TPU is only briefly active per second -- and removed
+a duplicated boost-efficiency term from the battery-referred conversion.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrr}
+\toprule
+\textbf{Quantity} & \textbf{Before} & \textbf{After} \\
+\midrule
+Total average battery power & $\sim$2219~mW & $\sim$1216~mW \\
+Energy required (6~h) & 13.3~Wh & $\sim$7.3~Wh \\
+Usable battery (0.9 cold derate) & 22.6~Wh & 22.6~Wh \\
+Margin & 1.70$\times$ & $\sim$3.1$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{Power budget before and after the review correction}
+\end{table}
+
+The corrected budget, referred to the battery: Coral $\sim$0.76~W (measured
+158--180~mA idle; inference adds $\sim$0.3~A for 2--2.4~ms, negligible in
+the 1~Hz average), Nucleo + sensors + LoRa $\sim$0.40~W, regulator quiescent
+and series losses $\sim$0.03~W -- \textbf{$\sim$1.2~W total}. Over MR-002's
+six-hour flight this is $\sim$7.3~Wh against $\sim$22.6~Wh usable, a
+$\sim$3.1$\times$ margin against the PR-008 floor of 1.5$\times$.
+
+\section{Power Architecture}
+\label{sec:eps-architecture}
+
+The battery's 2P pack feeds a 4~A polyfuse (FUZETEC FRG40016F), an SI2301
+P-MOSFET reverse-polarity stage, and a Pololu U3V40F5 5~V boost regulator.
+The regulator output feeds the Coral payload (gated by a GPIO-switched
+high-side P-MOSFET) and the Nucleo's E5V input; the Nucleo derives 3.3~V
+on-board for the sensors, SD card, and LoRa module. A 22~k$\Omega$-top
+voltage divider taps the post-fuse battery line to an OBC ADC input
+(IF-008) at a firmware multiplier of 3.2.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{eps_schematic.png}
+  \caption{EPS and OBC schematic (KiCad).}
+\end{figure}
+
+\textbf{Protection} is layered: the 4~A polyfuse handles over-current
+(SR-001); the SI2301 stage is the sole reverse-polarity protection
+(SR-002), the regulator itself provides none; over-discharge (SR-003) is
+layered firmware-first (orderly shutdown at $\sim$3.0~V/cell via IF-008
+telemetry -- close the SD log, send a final frame, halt) with a hardware
+EN-pin UVLO backstop below that. One interaction between the two layers was
+found and closed: the UVLO recovery point sits above the firmware shutdown
+threshold, so at end of discharge the relaxing open-circuit cell voltage
+could restart the converter and reboot the OBC into a loop. The fix is a
+boot-time guard -- read the battery voltage first and stay halted if it is
+still below the recovery point -- making the hardware backstop alone
+sufficient to prevent over-discharge regardless of firmware state.
+
+\textbf{Payload power control} uses the same GPIO-switched P-MOSFET as true
+cutoff (the RT1176 cannot software-cut its own supply), paired with a UART
+\texttt{SHUTDOWN} command so the payload quiesces before the rail is cut. A
+bulk capacitor originally planned at the Coral connector was dropped after
+bench measurement showed the real inference transient to be roughly five
+times gentler than the worst-case assumption the budget had carried
+(Section~\ref{sec:eps-verification}); the regulator's own capacitance
+absorbs the load step without help.
+
+The platform stacks as a 10$\times$10$\times$15~cm 1U volume: TT\&C and CDH
+on top, batteries, EPS, OBC, and the Coral payload below. The EPS is a
+hand-wired perfboard carrying the battery input, polyfuse, reverse-polarity
+MOSFET, boost regulator, and telemetry divider, with header rows broken out
+for the Coral power connector and the OBC power/telemetry lines.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.75\textwidth]{eps_perfboard.png}
+  \caption{EPS perfboard layout, as built.}
+\end{figure}
+
+\section{Verification}
+\label{sec:eps-verification}
+
+The EPS was bench-tested 2026-07-07 against a bring-up ladder: visual
+inspection, continuity, current-limited power-up, battery power-up,
+increasingly realistic loads, ending with the Coral integration test. The
+rail regulates at a constant 5.06~V across the full 3.0--4.2~V battery
+range; the telemetry divider is exact; the SI2301 stage fully blocks a
+reversed input; and the measured inference transient
+($\sim$0.3~A above baseline, 2.0--2.4~ms, self-contained) is far gentler
+than the multi-amp spike the original budget assumed.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{p{2.1cm}p{3.3cm}p{8.0cm}}
+\toprule
+\textbf{Req.} & \textbf{Requirement} & \textbf{Verification} \\
+\midrule
+MR-002 & Operate 6~h without external power & Analysis: budgeted demand
+(7.3~Wh) is a third of usable capacity (22.6~Wh); steady 5.06~V regulation
+and no throttling observed through bench testing. \\
+PR-008 & Margin $\geq 1.5\times$ at 6~h, 0.9 cold derate & $\sim$3.1$\times$
+shown by analysis, comfortable even under the conservative derate
+assumption. \\
+IF-008 & Battery telemetry within 5\% & Divider ratio measured exact
+(3.2$\times$ at 3.7~V); combined with the STM32 ADC's sub-1\% typical
+error, the chain sits well inside the 5\% budget. \\
+IF-009 & 5~V rail $\geq$4.5~V under 2~A peak & Static 5.06~V across the full
+battery range; $\sim$30~mV dip against a 160~mV budget ($\sim$5$\times$
+margin) at the Coral connector during inference, confirmed on two
+independent setups. \\
+SR-001 & Over-current protection & 4~A hold test passed (5~min, no trip);
+the FRG40016F's $\sim$8~A trip point is a manufacturer-guaranteed datasheet
+spec, so hold test plus trip-curve analysis is sufficient closure. \\
+SR-002 & Reverse-polarity protection & Reversed input draws zero current,
+rail stays at 0~V. \\
+SR-003 & Over-discharge protection with hysteresis & Hardware UVLO backstop
+(2.8~V cut, 3.1~V recover) is independently sufficient regardless of
+firmware state; firmware adds an earlier orderly shutdown, with the
+boot-time guard (Section~\ref{sec:eps-architecture}) closing the one
+threshold interaction found. \\
+PR-006 & Boot $\leq$30~s (EPS share $\leq$2~s) & Regulator soft-start and
+the clean, hiccup-free power-up observed throughout bench testing give
+large margin against the 2~s allocation. \\
+MR-007 / MR-009 & Subsystems within rated ranges & EPS scope verified: the
+battery is rated to $-20$\textdegree{}C, well clear of any platform
+requirement, so it is not a thermal bottleneck. The payload's separate
+0\textdegree{}C floor is its own subsystem's concern, covered in the
+Machine-Learning Payload chapter. \\
+MR-008 / CR-001 & Flyable mass $\leq$650~g & EPS assembly (board + pack)
+measured 15.09~g, well inside its 200~g sub-budget. \\
+\bottomrule
+\end{tabular}
+\caption{EPS requirement verification summary}
+\end{table}

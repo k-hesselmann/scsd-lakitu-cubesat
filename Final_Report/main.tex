@@ -6,6 +6,7 @@
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
+\usepackage{microtype}
 \usepackage[english]{babel}
 \usepackage{graphicx}
 \usepackage[margin=2.5cm]{geometry}
@@ -16,9 +17,12 @@
 \usepackage{listings}
 \usepackage{xcolor}
 \usepackage{amsmath}
+\usepackage{float}
 \usepackage[colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue]{hyperref}
 
 \graphicspath{{../}{./figures/}}
+\emergencystretch=3em
+\renewcommand{\arraystretch}{1.2}
 
 \lstset{
   basicstyle=\ttfamily\footnotesize,
@@ -37,7 +41,7 @@
 % ---------------------------------------------------------------------------
 \title{%
   \includegraphics[width=0.35\textwidth]{scsd_lakitu_logo.png}\\[1.5em]
-  Spacecraft Computer, Software and Data\\Final Report
+  Lab Course:\\Spacecraft Computer, Software and Data\\Final Report
 }
 \author{%
   \small Andrei Arteev \\
@@ -62,12 +66,12 @@
 % Chapters
 % ---------------------------------------------------------------------------
 \input{chapters/introduction}
+\input{chapters/payload}
 \input{chapters/cdh}
 \input{chapters/ttc}
 \input{chapters/obc}
 \input{chapters/eps}
 \input{chapters/fsw}
-\input{chapters/payload}
 \input{chapters/structures}
 
 \end{document}
