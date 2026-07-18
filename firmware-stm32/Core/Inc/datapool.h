@@ -4,9 +4,13 @@
 #include <stdint.h>
 #include <limits.h>
 
-/* SCV_MAGIC is a recognizable runtime sanity marker. Persistence is owned by
- * a separate integration and is intentionally outside this module. */
+/* SCV_MAGIC is a recognizable sanity marker. Erased STM32 flash reads as
+ * 0xFFFF, so 0xCAFE lets boot code distinguish an initialized SCV record from
+ * blank/corrupt storage before checking crc16. */
 #define SCV_MAGIC                 0xCAFEU
+
+#define SCV_FLASH_ADDR            0x080FF800UL
+#define SCV_FLASH_SIZE            0x00000800UL
 
 #define SCV_INVALID_U8            0xFFU
 #define SCV_INVALID_U16           0xFFFFU
