@@ -177,12 +177,6 @@ int main(void)
     }
 
     FDIR_Update(&g_datapool, &g_scv);
-<<<<<<< HEAD
-    FSW_Update(&g_datapool);
-    SD_Logger_Update(&g_datapool, &g_scv);
-    TTC_Service();
-    if (TTC_TelemetryDue())
-=======
 
     if ((now_ms - last_sd_ms) >= LOOP_SD_PERIOD_MS)
     {
@@ -191,8 +185,12 @@ int main(void)
         SD_Logger_Update(&g_datapool, &g_scv);
     }
 
+    /* TTC_Service() must run every tick, even while FDIR_SUBSYS_TTC is
+     * disabled: it is what carries out FDIR-requested isolation/recovery/
+     * rx-restart actions to completion (see TTC_FDIR_Request*() in ttc.h). */
+    TTC_Service();
+
     if (FDIR_SubsystemEnabled(FDIR_SUBSYS_TTC) && TTC_TelemetryDue())
->>>>>>> origin/main
     {
       FSW_BuildTelemetryPacket(&g_datapool, &g_scv, &tx_packet);
       TTC_Transmit(&tx_packet);
@@ -201,8 +199,10 @@ int main(void)
 
     /* Kick at the END of the loop, so a blocked task above is recovered by
      * reset; FDIR withholds the kick to escalate a stuck datapool (C10).
-     * IWDG timeout must be < 10 s (FR-011) yet tolerate the worst-case ~5 s
-     * blocking LoRa transmit inside TTC_Transmit. */
+     * IWDG timeout must be < 10 s (FR-011). TTC_Transmit()/TTC_Service() are
+     * now non-blocking (queued, advanced by LoRa_Service() over subsequent
+     * ticks), so correctness here depends on TTC_Service() being called
+     * every loop iteration rather than tolerating one long blocking send. */
     if (FDIR_SystemHealthyEnoughToKickWatchdog())
       (void)HAL_IWDG_Refresh(&hiwdg);
   }
