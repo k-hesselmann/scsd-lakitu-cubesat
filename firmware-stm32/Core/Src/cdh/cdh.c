@@ -8,6 +8,7 @@
 #include "cdh/cdh_fdir.h"
 #include "cdh/coral.h"
 #include "cdh/sensor_validation.h"
+#include "fdir/fdir.h"
 
 #include "main.h"
 #include <math.h>
@@ -44,6 +45,15 @@ void CDH_Init(void)
 void CDH_Update(SensorData_t *dp, SCV_t *scv)
 {
     dp->timestamp_ms = HAL_GetTick();
+
+    /* Consume FDIR-requested I2C bus restart (FMECA C7/C10 escalation).
+     * Fire-and-forget: ack on acceptance, CDH_FDIR_BusRestart_Process below
+     * advances the (already in-progress-safe) state machine every tick. */
+    if (FDIR_GetReinitRequests() & FDIR_REQUEST_I2C_BUS_RESTART)
+    {
+        CDH_FDIR_BusRestart_Start(&s_fdir);
+        FDIR_AcknowledgeReinit(FDIR_REQUEST_I2C_BUS_RESTART);
+    }
 
     /* ---- IMU ---- */
     s_imu = MPU6050_EquipmentHandler_Update(s_imu, &hi2c1);
