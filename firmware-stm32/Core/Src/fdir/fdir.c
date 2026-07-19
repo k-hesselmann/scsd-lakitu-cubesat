@@ -45,8 +45,10 @@ static FDIR_LoraWindow_t s_lora;
 
 /* One row per FMECA Section 4 debounce monitor. Escalation rules
  * (IMU ∧ baro -> bus restart, freshness, LoRa) stay explicit below.
- * TODO(FMECA C4/C6): IMU plausibility and GPS/baro altitude cross-check
- * monitors pending threshold agreement with the CDH owner. */
+ * FMECA C4/C6 (IMU plausibility, GPS/baro altitude cross-check) are
+ * implemented in cdh/sensor_validation.c: both clear dp->imu_valid /
+ * dp->baro_valid on failure, so they flow through the ordinary IMU/BARO
+ * timeout monitors below rather than needing their own table rows here. */
 static FDIR_Monitor_t s_monitors[] = {
     { EQUIPMENT_GPS,     FDIR_GPS_TIMEOUT_MS,   &g_datapool.gps_valid,
       &g_scv.gps_timeout_count,   FDIR_GPS_REINIT_PERIOD_MS, 0U, 0U },

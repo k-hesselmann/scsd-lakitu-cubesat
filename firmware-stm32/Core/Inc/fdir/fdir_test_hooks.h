@@ -19,14 +19,24 @@
  *   HOOK SCV ERASE               erase the SCV flash page now (F3)
  *   HOOK STATUS                  print currently active hooks
  *   HOOK CLEAR                   cancel all active hooks
- */
+ *
+ * Two call sites, both inside CDH_Update() (cdh.c) rather than main.c: the
+ * IMU/baro overrides must land in the datapool *before*
+ * SensorValidation_Update() runs, or the C4/C6 plausibility checks never see
+ * the injected fault before the next real sensor read overwrites it; the ADC
+ * override must land *after* BatteryADC_Read(), for the same reason in
+ * reverse. A single post-CDH_Update call site cannot satisfy both. */
 
 void FDIR_TestHooks_Init(void);
 
-/* Call once per superloop iteration, after CDH_Update/FSW_Update (if they ran
- * this iteration) and before FDIR_Update — so an injected value survives the
- * cycle's real sensor read and is what FDIR actually evaluates. No-op build
- * (empty function) when FDIR_TEST_HOOKS is not defined. */
-void FDIR_TestHooks_Poll(SensorData_t *dp, SCV_t *scv);
+/* Call once per CDH_Update(), after the raw GPS/IMU/Baro copies and before
+ * SensorValidation_Update(). Polls the UART command console and applies any
+ * active IMU/baro override. No-op build when FDIR_TEST_HOOKS is not defined. */
+void FDIR_TestHooks_PreValidation(SensorData_t *dp);
+
+/* Call once per CDH_Update(), immediately after BatteryADC_Read(). Applies
+ * an active ADC-fault override. No-op build when FDIR_TEST_HOOKS is not
+ * defined. */
+void FDIR_TestHooks_PostAdcRead(SensorData_t *dp);
 
 #endif /* FDIR_FDIR_TEST_HOOKS_H */

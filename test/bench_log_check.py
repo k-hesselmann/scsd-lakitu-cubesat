@@ -50,6 +50,16 @@ CROSS_CHECK_TOLERANCE = {
 SD_EXPECTED_PERIOD_MS = 1000  # LOOP_SD_PERIOD_MS in main.c
 SD_GAP_WARN_FACTOR = 1.5      # flag a gap wider than 1.5x the expected period
 
+# Protocol v8 (92-byte packet) dropped the raw datapool_timestamp_ms field
+# that earlier versions carried; obc_uptime_ms is now only second-resolution
+# (tx_uptime_s * 1000, see ttc_telemetry.c). Reconstruct the millisecond
+# dp->timestamp_ms the transmitted sample was actually read at by
+# subtracting sample_age_ms (how stale the sample already was when the
+# packet was built), then match against the nearest SD row within
+# CROSS_CHECK_MATCH_TOLERANCE_MS -- an exact match is no longer possible at
+# second resolution.
+CROSS_CHECK_MATCH_TOLERANCE_MS = 1000
+
 
 def load_ground_csv(path):
     with open(path, newline="") as f:
@@ -118,17 +128,41 @@ def check_ground_stats(ground_rows):
           f"tracking) = {total_lost}")
 
 
+def _nearest_sd_row(sd_timestamps, sd_rows, target_ms, tolerance_ms):
+    """Binary-search sd_timestamps (sorted) for the closest entry to
+    target_ms; returns None if nothing is within tolerance_ms."""
+    import bisect
+
+    i = bisect.bisect_left(sd_timestamps, target_ms)
+    candidates = [j for j in (i - 1, i) if 0 <= j < len(sd_timestamps)]
+    if not candidates:
+        return None
+    best = min(candidates, key=lambda j: abs(sd_timestamps[j] - target_ms))
+    if abs(sd_timestamps[best] - target_ms) > tolerance_ms:
+        return None
+    return sd_rows[best]
+
+
 def cross_check(ground_rows, sd_rows):
-    sd_by_ts = {}
-    for r in sd_rows:
-        sd_by_ts.setdefault(int(r["record_timestamp_ms"]), r)
+    sd_timestamps = [int(r["record_timestamp_ms"]) for r in sd_rows]
 
     matched = 0
+    unmatched = 0
     mismatches = []
     for g in ground_rows:
-        ts = int(g.get("datapool_timestamp_ms") or -1)
-        sd = sd_by_ts.get(ts)
+        try:
+            uptime_ms = int(g.get("obc_uptime_ms") or -1)
+            sample_age_ms = int(g.get("sample_age_ms") or 0)
+        except (ValueError, TypeError):
+            continue
+        if uptime_ms < 0:
+            continue
+        target_ms = uptime_ms - sample_age_ms
+
+        sd = _nearest_sd_row(sd_timestamps, sd_rows, target_ms,
+                              CROSS_CHECK_MATCH_TOLERANCE_MS)
         if sd is None:
+            unmatched += 1
             continue
         matched += 1
         for sd_field, (ground_field, scale) in SD_SCALE.items():
@@ -141,13 +175,15 @@ def cross_check(ground_rows, sd_rows):
                 continue
             tol = CROSS_CHECK_TOLERANCE.get(ground_field, 0.5)
             if abs(sd_val - ground_val) > tol:
-                mismatches.append((ts, ground_field, sd_val, ground_val))
+                mismatches.append((target_ms, ground_field, sd_val, ground_val))
 
-    print(f"Cross-check: {matched} timestamps present in both logs "
-          f"(most SD rows won't match -- SD logs at 1 Hz, telemetry at 1/20s)")
+    print(f"Cross-check: {matched} ground packets matched to an SD row "
+          f"within {CROSS_CHECK_MATCH_TOLERANCE_MS} ms "
+          f"({unmatched} unmatched -- expected if the SD log doesn't fully "
+          f"overlap the telemetry session)")
     print(f"Cross-check: {len(mismatches)} field(s) diverged beyond tolerance")
     for ts, field, sd_val, ground_val in mismatches[:20]:
-        print(f"    t={ts} {field}: SD={sd_val:.3f} ground={ground_val:.3f}")
+        print(f"    t~={ts} {field}: SD={sd_val:.3f} ground={ground_val:.3f}")
     if len(mismatches) > 20:
         print(f"    ... and {len(mismatches) - 20} more")
 

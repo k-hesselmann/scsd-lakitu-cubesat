@@ -182,10 +182,6 @@ int main(void)
         FSW_Update(&g_datapool);
     }
 
-    /* Applied after CDH/FSW so an injected value survives this cycle's real
-     * sensor read and is what FDIR actually evaluates below. */
-    FDIR_TestHooks_Poll(&g_datapool, &g_scv);
-
     FDIR_Update(&g_datapool, &g_scv);
 
     if (FDIR_SubsystemEnabled(FDIR_SUBSYS_CDH))

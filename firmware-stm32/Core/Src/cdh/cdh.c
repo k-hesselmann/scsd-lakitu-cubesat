@@ -9,6 +9,7 @@
 #include "cdh/coral.h"
 #include "cdh/sensor_validation.h"
 #include "fdir/fdir.h"
+#include "fdir/fdir_test_hooks.h"
 
 #include "main.h"
 #include <math.h>
@@ -55,6 +56,29 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
         FDIR_AcknowledgeReinit(FDIR_REQUEST_I2C_BUS_RESTART);
     }
 
+    /* Consume FDIR-requested single-device reinit (FMECA C1-C3, C5): distinct
+     * from the bus-wide restart above, this runs when only one sensor has
+     * timed out. Done before the per-sensor _Update() calls below, so a
+     * recovered device can deliver valid data in the same tick. */
+    {
+        uint16_t device_requests = FDIR_GetReinitRequests();
+        if (device_requests & EQUIPMENT_IMU)
+        {
+            CDH_FDIR_RecoverIMU(&hi2c1);
+            FDIR_AcknowledgeReinit(EQUIPMENT_IMU);
+        }
+        if (device_requests & EQUIPMENT_BARO)
+        {
+            CDH_FDIR_RecoverBaro(&hi2c1);
+            FDIR_AcknowledgeReinit(EQUIPMENT_BARO);
+        }
+        if (device_requests & EQUIPMENT_GPS)
+        {
+            s_gps = GPS_EquipmentHandler_Init(&hi2c1);
+            FDIR_AcknowledgeReinit(EQUIPMENT_GPS);
+        }
+    }
+
     /* ---- IMU ---- */
     s_imu = MPU6050_EquipmentHandler_Update(s_imu, &hi2c1);
     if (s_imu.imu_valid)
@@ -97,6 +121,12 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
     dp->gps_fix_type       = s_gps.data.fix_type;
     dp->gps_valid          = s_gps.gps_valid ? 1U : 0U;
 
+    /* Bench-only: apply any active IMU/baro fault injection before
+     * validation runs, so FMECA C4/C6 can actually be exercised (see
+     * fdir_test_hooks.h for why this must run here, not after CDH_Update
+     * returns). No-op in the flight build. */
+    FDIR_TestHooks_PreValidation(dp);
+
     /* Validate sensor data and handle faults (before printing so validation matches printed values) */
     SensorValidation_Update(dp, scv);
 
@@ -111,6 +141,9 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
     /* ---- Battery voltage (PA0 = ADC1_IN5, 22k/10k divider) ---- */
     dp->batt_valid = BatteryADC_Read(&hadc1, &dp->batt_voltage_mv);
 
+    /* Bench-only: apply an active ADC fault injection after the real read,
+     * so it isn't immediately overwritten. No-op in the flight build. */
+    FDIR_TestHooks_PostAdcRead(dp);
 }
 
 /* ------------------------------------------------------------------ */

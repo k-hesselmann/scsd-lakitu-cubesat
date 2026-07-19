@@ -189,9 +189,8 @@ void FDIR_TestHooks_Init(void)
     hook_print("\r\nFDIR_TEST_HOOKS build - bench-only, HOOK STATUS for help\r\n");
 }
 
-void FDIR_TestHooks_Poll(SensorData_t *dp, SCV_t *scv)
+void FDIR_TestHooks_PreValidation(SensorData_t *dp)
 {
-    (void)scv;
     hook_poll_uart();
 
     uint32_t now_ms = HAL_GetTick();
@@ -217,17 +216,20 @@ void FDIR_TestHooks_Poll(SensorData_t *dp, SCV_t *scv)
     {
         dp->baro_alt_m += s_baro_offset_m;
     }
+}
 
-    if (s_adc_fault_active)
+void FDIR_TestHooks_PostAdcRead(SensorData_t *dp)
+{
+    if (!s_adc_fault_active)
+        return;
+
+    if (HAL_GetTick() >= s_adc_fault_end_ms)
     {
-        if (now_ms >= s_adc_fault_end_ms)
-        {
-            s_adc_fault_active = 0U;
-        }
-        else
-        {
-            dp->batt_valid = 0U;
-        }
+        s_adc_fault_active = 0U;
+    }
+    else
+    {
+        dp->batt_valid = 0U;
     }
 }
 
@@ -237,10 +239,14 @@ void FDIR_TestHooks_Init(void)
 {
 }
 
-void FDIR_TestHooks_Poll(SensorData_t *dp, SCV_t *scv)
+void FDIR_TestHooks_PreValidation(SensorData_t *dp)
 {
     (void)dp;
-    (void)scv;
+}
+
+void FDIR_TestHooks_PostAdcRead(SensorData_t *dp)
+{
+    (void)dp;
 }
 
 #endif /* FDIR_TEST_HOOKS */
