@@ -26,10 +26,13 @@ rail target.
 
 The initial budget overestimated the payload: it modelled the Edge TPU at
 full inference power (1.8~W) for 40\% of the flight. A review corrected
-this to the datasheet active-power figure ($\sim$3~W) at a realistic
-duty -- Edge TPU inference latency is millisecond-scale against a 1~Hz
-capture cycle, so the TPU is only briefly active per second -- and removed
-a duplicated boost-efficiency term from the battery-referred conversion.
+this to the datasheet active-power figure ($\sim$3~W) at a conservative
+5\% duty -- Edge TPU inference latency is millisecond-scale against a
+1~Hz capture cycle, so the TPU is only briefly active per second -- and
+removed a duplicated boost-efficiency term from the battery-referred
+conversion. The 5\% assumption has since been confirmed conservative by
+about 20$\times$: the bench campaign measured $\sim$0.25\% actual TPU
+duty (Section~\ref{sec:eps-verification}).
 
 \begin{table}[H]
 \centering
@@ -74,20 +77,24 @@ voltage divider taps the post-fuse battery line to an OBC ADC input
 (SR-001); the SI2301 stage is the sole reverse-polarity protection
 (SR-002), the regulator itself provides none; over-discharge (SR-003) is
 handled by the hardware EN-pin UVLO backstop alone (2.8~V/cell cut,
-3.1~V/cell recover), independent of firmware state. A firmware-side
-orderly shutdown (close the SD log, send a final frame, halt on a low
-IF-008 reading) was scoped during design but not built -- the FDIR
-architecture has no existing notion of a persistent power-off state, and
-the independent watchdog cannot be disabled once armed, so a naive halt
-would simply reboot into itself rather than stay off. This is a managed
-risk: the FMECA records over-discharge isolation as ``none possible -- no
-load shedding or power switching exists,'' accepted and mitigated
-pre-flight through battery sizing margin rather than firmware.
+3.1~V/cell recover, 300~mV hysteresis, all measured), independent of
+firmware state. A firmware-side orderly shutdown (close the SD log, send
+a final frame, halt on a low IF-008 reading) was scoped during design but
+not built -- the FDIR architecture has no existing notion of a persistent
+power-off state, and the independent watchdog cannot be disabled once
+armed, so a naive halt would simply reboot into itself rather than stay
+off. This is a managed risk: the FMECA records over-discharge isolation
+as ``none possible -- no load shedding or power switching exists,''
+accepted and mitigated pre-flight through battery sizing margin rather
+than firmware.
 
 \textbf{Payload power control} uses a GPIO-switched P-MOSFET as true
-cutoff (the RT1176 cannot software-cut its own supply). The cut is
-unconditional -- no command warns the payload beforehand, so cutoff drops
-Coral's rail regardless of what it is doing. A bulk capacitor originally
+cutoff (the RT1176 cannot software-cut its own supply); measured
+reconnect inrush when the Coral rail switches on is $\sim$2.5~A decaying
+over $\sim$100~$\mu$s, comfortably within polyfuse and regulator ratings.
+The cut is unconditional -- no command warns the payload beforehand, so
+cutoff drops Coral's rail regardless of what it is doing. A bulk capacitor
+originally
 planned at the Coral connector was dropped after bench measurement showed
 the real inference transient to be roughly five times gentler than the
 worst-case assumption the budget had carried
@@ -116,7 +123,8 @@ rail regulates at a constant 5.06~V across the full 3.0--4.2~V battery
 range; the telemetry divider is exact; the SI2301 stage fully blocks a
 reversed input; and the measured inference transient
 ($\sim$0.3~A above baseline, 2.0--2.4~ms, self-contained) is far gentler
-than the multi-amp spike the original budget assumed.
+than the multi-amp spike the original budget assumed. The full
+test-by-test campaign is in Appendix~\ref{app:eps-tests}.
 
 \begin{table}[H]
 \centering

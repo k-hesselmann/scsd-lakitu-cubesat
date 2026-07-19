@@ -174,11 +174,13 @@ unsigned fields use their maximum. Ground must therefore interpret validity,
 the FDIR fault mask and the equipment-enabled mask together.
 
 \section{Protocol-v8 Telemetry Frame}
+\label{sec:ttc-protocol-v8}
 
 The downlink is a packed, little-endian, fixed-width 92-byte binary frame.
 Engineering values are scaled and clamped to integer units; ground reverses the
 scaling. Figure~\ref{fig:ttc-packet-groups} shows the allocation and
-Table~\ref{tab:ttc-wire-layout} gives the complete definition.
+Appendix~\ref{app:ttc-wire} (Table~\ref{tab:ttc-wire-layout}) gives the
+complete definition.
 
 \begin{figure}[H]
 \centering
@@ -197,66 +199,6 @@ Table~\ref{tab:ttc-wire-layout} gives the complete definition.
 \caption{Protocol-v8 byte allocation by information group.}
 \label{fig:ttc-packet-groups}
 \end{figure}
-
-\begin{longtable}{r r p{4.2cm} p{7.0cm}}
-\caption{Complete protocol-v8 telemetry wire layout.}\label{tab:ttc-wire-layout}\\
-\toprule
-\textbf{Offset} & \textbf{Bytes} & \textbf{Wire field} & \textbf{Meaning and scale} \\
-\midrule
-\endfirsthead
-\toprule
-\textbf{Offset} & \textbf{Bytes} & \textbf{Wire field} & \textbf{Meaning and scale} \\
-\midrule
-\endhead
-\bottomrule
-\endfoot
-0 & 1 & \ttcfield{packet_type} & \texttt{0x01} identifies telemetry \\
-1 & 1 & \ttcfield{protocol_version} & \texttt{0x08}; ground accepts v8 only \\
-2 & 2 & \ttcfield{sequence_number} & Unsigned sequence; unchanged on retry \\
-4 & 4 & \ttcfield{tx_uptime_s} & OBC uptime in seconds \\
-8 & 4 & \ttcfield{mission_elapsed_s} & Persistent mission time in seconds \\
-12 & 2 & \ttcfield{boot_count_sat} & Boot count, saturated at 65,535 \\
-14 & 1 & \ttcfield{flight_phase} & Six-state flight-phase enum \\
-15 & 1 & \ttcfield{reset_reason} & Unknown, power-on, watchdog or software reset \\
-16 & 1 & \ttcfield{validity_flags} & Bits 0--4: GNSS, IMU, baro, battery, Coral \\
-17 & 1 & \ttcfield{i2c_bus_state} & 0 idle, 1 restart, 2 hold \\
-18 & 2 & \ttcfield{equipment_enabled} & Policy mask for enabled equipment \\
-20 & 2 & \ttcfield{equipment_faults} & Debounced FDIR fault mask \\
-22 & 2 & \ttcfield{sample_age_ms_sat} & Packet tick minus datapool tick; 65,535 unknown/overflow \\
-24 & 1 & \ttcfield{watchdog_reset_count} & Persisted watchdog-reset count \\
-25 & 1 & \ttcfield{sd_fault_count} & Persisted SD fault count \\
-26 & 4 & \ttcfield{latitude_e7} & Latitude, degrees $\times 10^7$ \\
-30 & 4 & \ttcfield{longitude_e7} & Longitude, degrees $\times 10^7$ \\
-34 & 4 & \ttcfield{gnss_altitude_dm} & GNSS altitude in decimetres \\
-38 & 2 & \ttcfield{vertical_speed_cms} & cm/s, positive upward \\
-40 & 2 & \ttcfield{ground_speed_cms} & Horizontal speed in cm/s \\
-42 & 2 & \ttcfield{course_cdeg} & Course in centidegrees, 0--35,999 \\
-44 & 4 & \ttcfield{gnss_utc_sod} & UTC seconds of day \\
-48 & 1 & \ttcfield{gnss_satellites} & Satellites used in solution \\
-49 & 1 & \ttcfield{gnss_fix_type} & GNSS fix-type enum \\50 & 2 & \ttcfield{accel_x_mg} & X acceleration in milli-g \\
-52 & 2 & \ttcfield{accel_y_mg} & Y acceleration in milli-g \\
-54 & 2 & \ttcfield{accel_z_mg} & Z acceleration in milli-g \\
-56 & 2 & \ttcfield{gyro_x_ddeg_s} & X angular rate in 0.1 degrees/s \\
-58 & 2 & \ttcfield{gyro_y_ddeg_s} & Y angular rate in 0.1 degrees/s \\
-60 & 2 & \ttcfield{gyro_z_ddeg_s} & Z angular rate in 0.1 degrees/s \\
-62 & 4 & \ttcfield{baro_pressure_pa} & Barometric pressure in pascals \\
-66 & 4 & \ttcfield{baro_altitude_dm} & Ground-relative altitude in decimetres \\
-70 & 2 & \ttcfield{baro_temperature_cdeg} & Temperature in 0.01 degrees C \\
-72 & 2 & \ttcfield{battery_mv} & Battery voltage in millivolts \\
-74 & 2 & \ttcfield{coral_sequence_low} & Low 16 bits of payload result sequence \\
-76 & 2 & \ttcfield{coral_fraction_q16} & Cloud fraction, 0--65,535 maps to 0--100\% \\
-78 & 1 & \ttcfield{coral_status} & Coral status bit mask \\
-79 & 2 & \ttcfield{coral_age_s_sat} & Coral result age in seconds; saturated \\
-81 & 1 & \ttcfield{lora_last_event} & Latest modem event enum \\
-82 & 1 & \shortstack[l]{\ttcfield{lora_consecutive_}\\\ttcfield{failures}} & Consecutive radio failures \\
-83 & 1 & \ttcfield{lora_recovery_count} & Recovery attempts since boot \\
-84 & 1 & \ttcfield{lora_rx_state} & Bits 0--2 RX status; bit 3 continuous RX active \\
-85 & 1 & \shortstack[l]{\ttcfield{lora_tx_fault_}\\\ttcfield{count_sat}} & Lifetime failed TX attempts, saturated \\
-86 & 1 & \shortstack[l]{\ttcfield{lora_ack_timeout_}\\\ttcfield{count_sat}} & Exhausted ACK budgets, saturated \\
-87 & 2 & \ttcfield{last_command_id} & Last command ID observed by flight \\
-89 & 1 & \ttcfield{uplink_state} & Bits 0--2 command status; 3--5 ACK status \\
-90 & 2 & \ttcfield{crc16} & CRC-16/CCITT-FALSE over bytes 0--89 \\
-\end{longtable}
 
 The CRC uses polynomial \texttt{0x1021} and initial value \texttt{0xFFFF}.
 Ground first rejects any payload not exactly 92 bytes, then checks packet type,

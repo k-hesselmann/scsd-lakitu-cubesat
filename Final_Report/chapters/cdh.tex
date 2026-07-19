@@ -126,59 +126,12 @@ units (degrees, g, Pa, mV) and engineering conversions are pushed to the
 ground station, keeping the flight CPU free of unnecessary floating-point
 formatting -- the same philosophy the telemetry packet follows.
 
-The full field-level layout is given in Table~\ref{tab:cdh-fields}. The
-structure is declared \texttt{\_\_attribute\_\_((packed))}, so it carries no
-padding and its 98-byte size is exactly the sum of its fields -- which
-matters because those fields feed straight into the downlink telemetry
-packet and the SD housekeeping row with no repacking.
-
-\begin{longtable}{@{}llr p{6.2cm}@{}}
-\caption{\texttt{SensorData\_t} datapool field layout (packed, 98~bytes).}
-\label{tab:cdh-fields}\\
-\toprule
-\textbf{Field} & \textbf{Type} & \textbf{B} & \textbf{Description} \\
-\midrule
-\endfirsthead
-\multicolumn{4}{l}{\small\itshape Table~\ref{tab:cdh-fields} continued}\\
-\toprule
-\textbf{Field} & \textbf{Type} & \textbf{B} & \textbf{Description} \\
-\midrule
-\endhead
-\multicolumn{4}{l}{\textit{Time / GPS}}\\
-\texttt{timestamp\_ms}        & \texttt{u32}        & 4  & Snapshot time, \texttt{HAL\_GetTick()} ms \\
-\texttt{gps\_lat\_deg}        & \texttt{f32}        & 4  & Latitude, degrees WGS-84 \\
-\texttt{gps\_lon\_deg}        & \texttt{f32}        & 4  & Longitude, degrees WGS-84 \\
-\texttt{gps\_alt\_m}          & \texttt{f32}        & 4  & Altitude (mean sea level), m \\
-\texttt{gps\_speed\_mps}      & \texttt{f32}        & 4  & 2-D ground speed, m/s \\
-\texttt{gps\_vel\_down\_mps}  & \texttt{f32}        & 4  & Vertical velocity (down +), m/s \\
-\texttt{gps\_heading\_deg}    & \texttt{f32}        & 4  & Heading of motion, deg \\
-\texttt{gps\_utc\_time}       & \texttt{u32}        & 4  & UTC time, HHMMSS \\
-\texttt{gps\_num\_satellites} & \texttt{u8}         & 1  & Satellites used in solution \\
-\texttt{gps\_fix\_type}       & \texttt{u8}         & 1  & Fix type (0 none, 2 = 2-D, 3 = 3-D) \\
-\texttt{gps\_valid}           & \texttt{u8}         & 1  & GPS group validity \\
-\midrule
-\multicolumn{4}{l}{\textit{IMU}}\\
-\texttt{imu\_accel\_\{x,y,z\}\_g} & \texttt{f32}$\times$3 & 12 & Acceleration per axis, g \\
-\texttt{imu\_accel\_mag\_g}   & \texttt{f32}        & 4  & Acceleration magnitude, g \\
-\texttt{imu\_gyro\_\{x,y,z\}\_dps} & \texttt{f32}$\times$3 & 12 & Angular rate per axis, deg/s \\
-\texttt{imu\_valid}           & \texttt{u8}         & 1  & IMU group validity \\
-\midrule
-\multicolumn{4}{l}{\textit{Barometer}}\\
-\texttt{baro\_pressure\_pa}   & \texttt{f32}        & 4  & Pressure, Pa \\
-\texttt{baro\_alt\_m}         & \texttt{f32}        & 4  & Altitude above launch baseline, m \\
-\texttt{baro\_temp\_c}        & \texttt{f32}        & 4  & Temperature, \textdegree C \\
-\texttt{baro\_valid}          & \texttt{u8}         & 1  & Barometer validity \\
-\midrule
-\multicolumn{4}{l}{\textit{Bus / EPS / Payload}}\\
-\texttt{i2c\_bus\_state}      & \texttt{u8}         & 1  & Shared-bus recovery state (from FDIR) \\
-\texttt{batt\_voltage\_mv}    & \texttt{u16}        & 2  & Battery pack voltage, mV \\
-\texttt{batt\_valid}          & \texttt{u8}         & 1  & Battery reading validity \\
-\texttt{coral\_block[16]}     & \texttt{u8[16]}     & 16 & Opaque Coral payload status block \\
-\texttt{coral\_valid}         & \texttt{u8}         & 1  & Payload block validity \\
-\midrule
-\textbf{Total}                &                     & \textbf{98} & \\
-\bottomrule
-\end{longtable}
+The full field-level layout is given in Appendix~\ref{app:cdh-datapool}
+(Table~\ref{tab:cdh-fields}). The structure is declared
+\texttt{\_\_attribute\_\_((packed))}, so it carries no padding and its
+98-byte size is exactly the sum of its fields -- which matters because
+those fields feed straight into the downlink telemetry packet and the SD
+housekeeping row with no repacking.
 
 Alongside the volatile datapool, CDH contributes to the \texttt{SCV\_t}
 (spacecraft configuration vector), the 33-byte structure that FSW/FDIR
