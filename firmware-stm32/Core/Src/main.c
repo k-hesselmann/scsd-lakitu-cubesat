@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "cdh/cdh.h"
+#include "cdh/coral.h"
 #include "cdh/gps_diag.h"
 #include "cdh/baro_diag.h"
 #include "datapool.h"
@@ -177,6 +178,9 @@ int main(void)
     }
 
     FDIR_Update(&g_datapool, &g_scv);
+
+    if (FDIR_SubsystemEnabled(FDIR_SUBSYS_CDH))
+      Coral_Update(&g_datapool);
 
     if ((now_ms - last_sd_ms) >= LOOP_SD_PERIOD_MS)
     {
@@ -461,7 +465,7 @@ static void MX_USART3_UART_Init(void)
 
   /* USER CODE END USART3_Init 1 */
   huart3.Instance = USART3;
-  huart3.Init.BaudRate = 9600;
+  huart3.Init.BaudRate = 115200;
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
   huart3.Init.StopBits = UART_STOPBITS_1;
   huart3.Init.Parity = UART_PARITY_NONE;
