@@ -27,6 +27,8 @@ static uint32_t s_last_bus_restart_ms;
 static uint32_t s_prev_datapool_timestamp_ms;
 static uint32_t s_stale_since_ms;       /* 0 = datapool timestamp currently advancing */
 
+#define FDIR_DISABLE_SD_EQUIPMENT 1
+
 /* LoRa TX outcome ring buffer (FMECA T1): tracks the last
  * FDIR_LORA_RECOVERY_WINDOW attempts to evaluate both the recovery and SCV
  * fault failure-rate rules. Populated by edge-detecting changes in TTC's
@@ -207,6 +209,12 @@ static void FDIR_ApplyReducedMode(SCV_t *scv)
         if (!s_subsys_enabled[i])
             scv->equipment_enabled &= (uint16_t)~s_subsys_equipment[i];
     }
+
+#if FDIR_DISABLE_SD_EQUIPMENT
+    s_subsys_enabled[FDIR_SUBSYS_SD] = 0U;
+    scv->equipment_enabled &= (uint16_t)~EQUIPMENT_SD;
+    scv->equipment_faults &= (uint16_t)~EQUIPMENT_SD;
+#endif
 }
 
 void FDIR_Init(SCV_t *scv)
