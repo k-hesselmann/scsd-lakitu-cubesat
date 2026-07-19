@@ -20,3 +20,207 @@ Landing & System touches down. All motion stops. Terminal state, no further FSM 
 \end{tabular}
 \caption{Mission phases and physical description}
 \end{table}
+
+\section{Complete Finite State Machine}
+\label{sec:fsw-fsm}
+
+The FSM is a bare-metal Moore machine, implemented as a single control
+loop running at 1~Hz on the STM32L476RG. It consists of six states and
+five transition paths, including one direct path from Ascent to Descent
+used if the balloon bursts before float is reached.
+
+\subsection{State Transition Table}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{2.1cm}p{2.0cm}p{9.6cm}}
+\toprule
+\textbf{Current state} & \textbf{Next state} & \textbf{Transition condition} \\
+\midrule
+Standby & Launch & IMU total acceleration magnitude $>$1.5g (median
+filtered, 2 consecutive seconds) AND barometric altitude increase
+$>$10~m above $P_\text{ground}$ baseline over the same window. \\
+Launch & Ascent & Barometric altitude $>$100~m above $P_\text{ground}$
+baseline AND GPS vertical velocity $>$2~m/s upward (fallback:
+barometric-derived vertical velocity if GPS fix invalid), sustained
+3~s. \\
+Ascent & Cruise & GPS vertical velocity $<$0.5~m/s (fallback:
+barometric-derived) AND barometric altitude bounded within
+$\pm$50~m over window, sustained 30~s. \\
+Ascent & Descent & Direct path if Cruise never detected (balloon burst
+before float). Same condition as Cruise to Descent below, applied
+directly from Ascent. \\
+Cruise & Descent & IMU total acceleration deviates $>$0.3g from running
+float median AND GPS vertical velocity $<-5$~m/s (fallback:
+barometric-derived), sustained 5~s. \\
+Descent & Landing & GPS total 3D speed $<$2~m/s (fallback: GPS vertical
+velocity, then barometric-derived) AND barometric altitude $<$50~m
+above $P_\text{ground}$ baseline, sustained 5~s. \\
+Landing & Terminal & No further transitions. Shutdown timer starts on
+entry; non-essential systems powered down after a defined period. \\
+\bottomrule
+\end{tabular}
+\caption{FSW finite state machine: states, transitions, and conditions}
+\label{tab:fsw-transitions}
+\end{table}
+
+\section{Sensor Parameter Reference}
+\label{sec:fsw-sensors}
+
+Three sensors are used for phase detection: MPU-6050 (IMU), u-blox
+MAX-M10S (GPS), MS5607 (barometer). Each provides direct measurements
+and, where relevant, derived parameters obtained through
+differentiation.
+
+\subsection{IMU (MPU-6050)}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{3.2cm}p{2.3cm}p{2.1cm}p{6.4cm}}
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Reliability} & \textbf{Notes} \\
+\midrule
+Acceleration X/Y/Z & Direct & High & Reads $\sim$1g at rest on the
+Z axis (normal force), not 0. Cannot distinguish steady ascent from
+stationary. \\
+Total acceleration magnitude & Derived (1 step) & High &
+Orientation-independent event detection. Used for Standby to Launch and
+Cruise to Descent burst. \\
+Angular rate X/Y/Z & Direct & High & Near zero at rest and during smooth
+flight. Not useful for altitude-based phases. \\
+Velocity (integrated) & Derived (1 step) & Low & Drift accumulates
+rapidly; only reliable over a few seconds. Not used for phase
+detection. \\
+Position (double integrated) & Derived (2 steps) & Very low & Not used;
+drift makes this unreliable beyond seconds. \\
+\bottomrule
+\end{tabular}
+\caption{IMU parameters}
+\label{tab:fsw-imu}
+\end{table}
+
+\subsection{GPS (u-blox MAX-M10S)}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{3.2cm}p{2.3cm}p{2.1cm}p{6.4cm}}
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Reliability} & \textbf{Notes} \\
+\midrule
+Altitude (WGS84) & Direct & Medium & Vertical accuracy $\sim$5--15~m
+error, worse than horizontal. Unreliable if no fix. \\
+Vertical velocity & Direct & High & Doppler-based direct measurement.
+Requires valid fix; cold-start delay at power-on; COCOM limit above
+18~km if not in Airborne mode. \\
+Total 3D speed & Derived (1 step) & High & Primary condition for
+Descent to Landing; catches horizontal drift as well as vertical. \\
+Fix status & Direct & High & Gate condition: all other GPS parameters
+ignored if fix invalid, fallback to barometer applies. \\
+GPS-derived acceleration & Derived (1 step) & Medium & Cross-check
+against IMU acceleration for fault detection. \\
+\bottomrule
+\end{tabular}
+\caption{GPS parameters}
+\label{tab:fsw-gps}
+\end{table}
+
+\subsection{Barometer (MS5607)}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{3.2cm}p{2.3cm}p{2.1cm}p{6.4cm}}
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Reliability} & \textbf{Notes} \\
+\midrule
+Pressure & Direct & High & Raw input, not used directly in phase
+logic. Requires temperature compensation using factory calibration
+coefficients. \\
+Altitude (relative to $P_\text{ground}$) & Derived (1 step) & High &
+Primary altitude source for most transitions. Valid across the full
+0--30$+$~km range. \\
+Vertical velocity (derived) & Derived (2 steps) & Medium & Noisier than
+GPS direct; used as a fallback confirming condition when GPS fix is
+invalid. \\
+Vertical acceleration (derived) & Derived (2 steps) & Low & Not used as
+primary; too noisy for sharp event detection. \\
+\bottomrule
+\end{tabular}
+\caption{Barometer parameters}
+\label{tab:fsw-baro}
+\end{table}
+
+\section{Threshold Values and Justification}
+\label{sec:fsw-thresholds}
+
+All threshold values are set conservatively relative to observed ranges
+from real stratospheric balloon flight telemetry where available, or
+from engineering margin based on sensor characteristics where a specific
+citable figure was not found.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{p{2.1cm}p{2.7cm}p{1.9cm}p{7.0cm}}
+\toprule
+\textbf{Transition} & \textbf{Condition} & \textbf{Threshold} & \textbf{Justification} \\
+\midrule
+Standby to Launch & IMU acceleration magnitude (primary) & $>$1.5g, 2~s
+& Resting value $\sim$1.026g \cite{safonova2016}. Threshold set as
+engineering margin above resting noise to reliably capture the release
+jerk. \\
+Standby to Launch & Barometric altitude change (confirm) & $>$10~m &
+MS5607 altitude resolution 20~cm per datasheet \cite{ms5607}. Ground
+level noise typically 1--2~m; 10~m provides clear margin above this. \\
+Launch to Ascent & Barometric altitude (primary) & $>$100~m & Real
+ascent rates of 4.6--5.9~m/s \cite{safonova2016, winterballoon2018}
+reach 100~m within 20--25~s of release. \\
+Launch to Ascent & GPS vertical velocity (confirm) & $>$2~m/s, 3~s & Set
+conservatively below the observed 4.6--5.9~m/s ascent rate range
+\cite{safonova2016, winterballoon2018}, ensuring the transition fires
+even for a slower-filling balloon. \\
+Ascent to Cruise & GPS vertical velocity (primary) & $<$0.5~m/s, 30~s &
+A sharp stop at float altitude of 33{,}200~m with no overshoot was
+recorded, confirming the ascent-to-float transition is abrupt rather
+than gradual \cite{winterballoon2018}. 0.5~m/s set as engineering margin
+below this. \\
+Ascent to Cruise & Barometric altitude bounded (confirm) & $\pm$50~m &
+Engineering margin; no specific citable oscillation figure identified
+for this exact bound. \\
+Cruise to Descent & IMU deviation from float baseline (primary) &
+$>$0.3g, 5~s & Float acceleration is stable and low-noise, average
+1.026g with low RMS motion \cite{safonova2016}. Threshold set as
+engineering margin above this stable baseline to detect burst onset. \\
+Cruise to Descent & GPS vertical velocity (confirm) & $<-5$~m/s & Real
+burst events produce descent rates up to $-52$~m/s immediately after
+burst, stabilising around $-10$~m/s under parachute \cite{oh3vhh2021}.
+$-5$~m/s set conservatively above the stable descent rate. \\
+Descent to Landing & GPS total 3D speed (primary) & $<$2~m/s, 5~s &
+Terminal velocity under parachute of 5.5~m/s confirmed \cite{cusfnova1}.
+2~m/s set as engineering margin well below this. \\
+Descent to Landing & Barometric altitude (confirm) & $<$50~m & MS5607
+resolution of 20~cm per datasheet \cite{ms5607} makes 50~m an
+unambiguous near-ground indicator. \\
+\bottomrule
+\end{tabular}
+\caption{Threshold values and justification}
+\label{tab:fsw-thresholds}
+\end{table}
+
+\section{FSM Classification: Moore Machine}
+\label{sec:fsw-moore}
+
+The FSW FSM is classified as a Moore machine.
+
+FSW's outputs and behaviours -- baseline recording, watchdog servicing,
+GPS Airborne-mode monitoring, IMU float-baseline tracking, shutdown
+timer -- are determined solely by the current state, not by the specific
+instantaneous sensor input value. Sensor readings are used only as
+inputs to evaluate transition conditions; they do not themselves alter
+the output behaviour while the system remains in a given state. For
+example, whether the IMU reads 1.02g or 1.04g while in Ascent, the
+system's actions (poll, filter, check watchdog) remain identical; only
+whether a transition condition is satisfied changes. This differs from a
+Mealy machine, where outputs would depend on the specific input value in
+addition to the state. Logging rate and telemetry rate, owned by CDH and
+TT\&C respectively, are keyed to current phase rather than instantaneous
+sensor values, consistent with this classification.
