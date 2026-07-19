@@ -1,9 +1,399 @@
 \chapter{Command and Data Handling (CDH)}
 
-% TODO(CDH owner): responsibilities, sensor suite, datapool, fault handling.
-
 \section{Responsibilities}
+
+CDH is the sensor-acquisition and data-management layer of the flight
+software. Once per 1~Hz major cycle it reads every sensor on the platform,
+condenses the results into a single shared data structure -- the
+\emph{datapool} -- and hands that snapshot to the rest of the flight
+software (FSW, FDIR, TT\&C, and SD logging) to consume. Its
+responsibilities are:
+
+\begin{itemize}[nosep]
+  \item \textbf{Sensor acquisition.} Drive the GPS (u-blox MAX-M10S), the
+        IMU (MPU-6050), the barometer (MS5607), and the EPS battery-voltage
+        monitor, each through a dedicated equipment handler.
+  \item \textbf{Datapool ownership.} Be the sole writer of the
+        \texttt{SensorData\_t} datapool: every field is (re)written once per
+        tick so that all downstream consumers read one internally consistent
+        snapshot (Section~\ref{sec:cdh-datapool}).
+  \item \textbf{Data validation.} Range-, plausibility-, and timeout-check
+        every sensor stream, and publish a per-sensor \texttt{*\_valid} flag
+        so consumers never act on stale or impossible data
+        (Section~\ref{sec:cdh-validation}).
+  \item \textbf{Shared-bus ownership.} Own the I2C1 hardware that the
+        environmental sensors share, and execute the multi-tick bus-restart
+        sequence when FDIR requests recovery -- CDH is the sole writer of
+        \texttt{i2c\_bus\_state}.
+  \item \textbf{Payload ingest.} Timestamp and copy the Coral payload status
+        block into the datapool, since the payload has no clock of its own.
+\end{itemize}
 
 \section{Interfaces}
 
+The primary interface CDH exposes is not a bus but a data structure. CDH is
+a producer: it turns raw peripheral traffic into the datapool, and every
+other subsystem is a consumer of that datapool (Table~\ref{tab:cdh-flow}).
+The GPS, IMU, and barometer share a single I2C bus that CDH owns; the
+battery pack voltage is read on an ADC input from the EPS telemetry divider
+(IF-008, described in the EPS chapter). The overall software structure --
+equipment handlers feeding the datapool, and the datapool feeding every
+other subsystem -- is shown in Figure~\ref{fig:cdh-architecture}.
+
+\begin{figure}[H]
+  \centering
+  % TODO: drop figures/cdh_architecture.png in, then restore the line below
+  % and delete the placeholder \fbox.
+  % \includegraphics[width=\textwidth]{cdh_architecture.png}
+  \fbox{\parbox[c][4.5cm][c]{0.98\textwidth}{\centering\itshape
+    CDH software-structure diagram --- placeholder\\[0.3em]
+    \normalfont\small add \texttt{figures/cdh\_architecture.png}}}
+  \caption{CDH software structure. Each sensor is acquired by its own
+  equipment handler (\texttt{Init}/\texttt{Update}, with a datapool validity
+  flag) into the central datapool; FSW, FDIR, TT\&C, and the SD logger
+  consume that datapool, while the SCV persists configuration and health
+  state across resets.}
+  \label{fig:cdh-architecture}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Direction} & \textbf{Peer} & \textbf{Contents} \\
+\midrule
+Sensors $\rightarrow$ CDH   & MAX-M10S, MPU-6050, MS5607, EPS & raw position, motion, pressure, voltage \\
+CDH $\rightarrow$ datapool  & \texttt{g\_datapool}            & validated \texttt{SensorData\_t} snapshot \\
+datapool $\rightarrow$ FSW  & flight state machine            & altitude, acceleration, validity flags \\
+datapool $\rightarrow$ FDIR & fault management                & \texttt{*\_valid} flags, fault counts \\
+datapool $\rightarrow$ TT\&C & telemetry                      & full snapshot for downlink \\
+datapool $\rightarrow$ SD   & SD logger                       & full snapshot for the 1~Hz housekeeping log \\
+\bottomrule
+\end{tabular}
+\caption{CDH data flow: one producer, many consumers.}
+\label{tab:cdh-flow}
+\end{table}
+
+The entry points are deliberately narrow. \texttt{CDH\_Init()} brings up
+every handler once before the superloop starts and records the ground
+pressure baseline; \texttt{CDH\_Update(dp, scv)} runs the entire
+acquire-validate-publish cycle for one tick; and
+\texttt{CDH\_RequestBusRestart()} is the single call FDIR uses to ask CDH to
+recover the I2C bus.
+
 \section{Design Decisions}
+
+\subsection{The Datapool}
+\label{sec:cdh-datapool}
+
+All inter-subsystem state lives in one packed structure,
+\texttt{SensorData\_t}, defined once in the interface-control header
+(\texttt{datapool.h}) and shared as the single global \texttt{g\_datapool}.
+Rather than have each subsystem poll sensors on its own schedule, CDH
+writes the whole structure once per cycle and everyone else reads it. The
+structure is grouped by source, and every sensor group carries its own
+validity flag (Table~\ref{tab:cdh-datapool}).
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Group} & \textbf{Representative fields} & \textbf{Validity} \\
+\midrule
+Time      & \texttt{timestamp\_ms}                                          & --- \\
+GPS       & \texttt{gps\_lat\_deg}, \texttt{gps\_alt\_m}, \texttt{gps\_fix\_type}, \texttt{gps\_num\_satellites} & \texttt{gps\_valid} \\
+IMU       & \texttt{imu\_accel\_\{x,y,z\}\_g}, \texttt{imu\_accel\_mag\_g}, \texttt{imu\_gyro\_\{x,y,z\}\_dps} & \texttt{imu\_valid} \\
+Barometer & \texttt{baro\_pressure\_pa}, \texttt{baro\_alt\_m}, \texttt{baro\_temp\_c} & \texttt{baro\_valid} \\
+EPS       & \texttt{batt\_voltage\_mv}                                       & \texttt{batt\_valid} \\
+Payload   & \texttt{coral\_block[16]}                                        & \texttt{coral\_valid} \\
+Bus       & \texttt{i2c\_bus\_state}                                         & --- \\
+\bottomrule
+\end{tabular}
+\caption{\texttt{SensorData\_t} datapool groups. Consumers check the
+validity flag before using any field in a group.}
+\label{tab:cdh-datapool}
+\end{table}
+
+Three decisions define the datapool contract. First, \textbf{one writer}:
+only \texttt{CDH\_Update} writes \texttt{g\_datapool}, which removes any
+need for locking in the single-threaded superloop and guarantees a
+consistent snapshot. Second, \textbf{validity is explicit}: a sensor that
+fails a check has its group's \texttt{*\_valid} flag cleared while the last
+values are left in place, so a consumer that honours the flag degrades
+gracefully and one that ignores it at least sees the last good reading
+rather than a zero. Third, \textbf{raw units}: fields are stored in source
+units (degrees, g, Pa, mV) and engineering conversions are pushed to the
+ground station, keeping the flight CPU free of unnecessary floating-point
+formatting -- the same philosophy the telemetry packet follows.
+
+The full field-level layout is given in Table~\ref{tab:cdh-fields}. The
+structure is declared \texttt{\_\_attribute\_\_((packed))}, so it carries no
+padding and its 98-byte size is exactly the sum of its fields -- which
+matters because those fields feed straight into the downlink telemetry
+packet and the SD housekeeping row with no repacking.
+
+\begin{longtable}{@{}llr p{6.2cm}@{}}
+\caption{\texttt{SensorData\_t} datapool field layout (packed, 98~bytes).}
+\label{tab:cdh-fields}\\
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{B} & \textbf{Description} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{l}{\small\itshape Table~\ref{tab:cdh-fields} continued}\\
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{B} & \textbf{Description} \\
+\midrule
+\endhead
+\multicolumn{4}{l}{\textit{Time / GPS}}\\
+\texttt{timestamp\_ms}        & \texttt{u32}        & 4  & Snapshot time, \texttt{HAL\_GetTick()} ms \\
+\texttt{gps\_lat\_deg}        & \texttt{f32}        & 4  & Latitude, degrees WGS-84 \\
+\texttt{gps\_lon\_deg}        & \texttt{f32}        & 4  & Longitude, degrees WGS-84 \\
+\texttt{gps\_alt\_m}          & \texttt{f32}        & 4  & Altitude (mean sea level), m \\
+\texttt{gps\_speed\_mps}      & \texttt{f32}        & 4  & 2-D ground speed, m/s \\
+\texttt{gps\_vel\_down\_mps}  & \texttt{f32}        & 4  & Vertical velocity (down +), m/s \\
+\texttt{gps\_heading\_deg}    & \texttt{f32}        & 4  & Heading of motion, deg \\
+\texttt{gps\_utc\_time}       & \texttt{u32}        & 4  & UTC time, HHMMSS \\
+\texttt{gps\_num\_satellites} & \texttt{u8}         & 1  & Satellites used in solution \\
+\texttt{gps\_fix\_type}       & \texttt{u8}         & 1  & Fix type (0 none, 2 = 2-D, 3 = 3-D) \\
+\texttt{gps\_valid}           & \texttt{u8}         & 1  & GPS group validity \\
+\midrule
+\multicolumn{4}{l}{\textit{IMU}}\\
+\texttt{imu\_accel\_\{x,y,z\}\_g} & \texttt{f32}$\times$3 & 12 & Acceleration per axis, g \\
+\texttt{imu\_accel\_mag\_g}   & \texttt{f32}        & 4  & Acceleration magnitude, g \\
+\texttt{imu\_gyro\_\{x,y,z\}\_dps} & \texttt{f32}$\times$3 & 12 & Angular rate per axis, deg/s \\
+\texttt{imu\_valid}           & \texttt{u8}         & 1  & IMU group validity \\
+\midrule
+\multicolumn{4}{l}{\textit{Barometer}}\\
+\texttt{baro\_pressure\_pa}   & \texttt{f32}        & 4  & Pressure, Pa \\
+\texttt{baro\_alt\_m}         & \texttt{f32}        & 4  & Altitude above launch baseline, m \\
+\texttt{baro\_temp\_c}        & \texttt{f32}        & 4  & Temperature, \textdegree C \\
+\texttt{baro\_valid}          & \texttt{u8}         & 1  & Barometer validity \\
+\midrule
+\multicolumn{4}{l}{\textit{Bus / EPS / Payload}}\\
+\texttt{i2c\_bus\_state}      & \texttt{u8}         & 1  & Shared-bus recovery state (from FDIR) \\
+\texttt{batt\_voltage\_mv}    & \texttt{u16}        & 2  & Battery pack voltage, mV \\
+\texttt{batt\_valid}          & \texttt{u8}         & 1  & Battery reading validity \\
+\texttt{coral\_block[16]}     & \texttt{u8[16]}     & 16 & Opaque Coral payload status block \\
+\texttt{coral\_valid}         & \texttt{u8}         & 1  & Payload block validity \\
+\midrule
+\textbf{Total}                &                     & \textbf{98} & \\
+\bottomrule
+\end{longtable}
+
+Alongside the volatile datapool, CDH contributes to the \texttt{SCV\_t}
+(spacecraft configuration vector), the 33-byte structure that FSW/FDIR
+persist to flash across resets. CDH updates its health-related fields
+(equipment fault flags, the last battery reading) each cycle while FSW/FDIR
+own flight phase and reset bookkeeping.
+
+\textbf{Memory footprint.} The datapool is deliberately small enough to be
+irrelevant to the memory budget of the platform's STM32L476RG
+(Table~\ref{tab:cdh-memory}). The live datapool and its persistent shadow
+together occupy 131~B of the 128~KB SRAM -- under 0.1\,\%; even the full
+downlink packet that re-serializes them adds only $\sim$155~B. Storing raw
+fixed-width types rather than expanded engineering structures keeps it that
+way; the platform's real SRAM pressure comes from the payload image frame
+(streamed in 512-byte chunks, never buffered whole), not from housekeeping
+state. The persistent \texttt{SCV\_t} is written to the last 2~KB flash page
+at \texttt{0x080FF800}, at the very top of the 1~MB flash and clear of the
+firmware image, with a magic word and CRC-16 so a blank or corrupt page is
+detected on boot.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrl}
+\toprule
+\textbf{Item} & \textbf{Size} & \textbf{Footprint} \\
+\midrule
+STM32L476RG SRAM (SRAM1 96~KB + SRAM2 32~KB) & 128~KB & --- \\
+\texttt{g\_datapool} (\texttt{SensorData\_t}, live)     & 98~B  & 0.07\,\% of SRAM \\
+\texttt{g\_scv} (\texttt{SCV\_t}, RAM copy)             & 33~B  & 0.03\,\% of SRAM \\
+\texttt{TelemetryPacket\_t} (downlink serialization)    & 155~B & 0.12\,\% of SRAM \\
+\midrule
+STM32L476RG flash                                       & 1~MB  & firmware image \\
+SCV persistence page @ \texttt{0x080FF800}              & 2~KB  & last flash page; holds the 33-B SCV (CRC incl.) \\
+\bottomrule
+\end{tabular}
+\caption{CDH data structures against STM32L476RG memory.}
+\label{tab:cdh-memory}
+\end{table}
+
+\subsection{Non-Volatile Datapool Backup}
+\label{sec:cdh-nvm}
+
+The SD card holds the primary housekeeping record, but a card may be absent,
+develop filesystem corruption, or cease to acknowledge on the SPI bus. To
+retain a recoverable flight history under any of these failures, CDH mirrors
+the datapool into the microcontroller's internal flash over a data path that is
+fully independent of the SD subsystem: the write engages only the CPU and the
+on-chip flash controller -- no SPI transaction and no removable media -- so a
+usable record persists even when the SD path is inoperative. The datapool is
+stored unfiltered, so each record additionally preserves the fault condition
+itself: the cleared validity flags and the \texttt{timestamp\_ms} that CDH
+writes at the head of every cycle irrespective of sensor health.
+
+\textbf{Flash budget.} The store occupies a reserved 80~KB region -- 40 of the
+device's 2~KB flash pages -- at the top of the 1~MB flash, immediately below
+the 2~KB SCV page. Both regions are excluded from the firmware image by
+reducing the usable flash declared to the linker to 942~KB
+(\texttt{STM32L476RGTX\_FLASH.ld}), so the linker cannot place code or
+constants within them. The allocation is conservative: the linked image
+measures approximately 109~KB, roughly one-ninth of the available flash,
+leaving the backup region separated from the image by more than 800~KB of
+unused flash (Table~\ref{tab:cdh-nvm-budget}).
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrr}
+\toprule
+\textbf{Region} & \textbf{Size} & \textbf{Share} \\
+\midrule
+Firmware image (\texttt{.text}/\texttt{.rodata}/\texttt{.data})   & $\sim$109~KB & $\sim$10.6\,\% \\
+Unused / available                                                & $\sim$833~KB & $\sim$81.4\,\% \\
+Datapool backup (\texttt{0x080EB800}--\texttt{0x080FF7FF})        & 80~KB        & 7.8\,\% \\
+SCV persistence (\texttt{0x080FF800}--\texttt{0x080FFFFF})        & 2~KB         & 0.2\,\% \\
+\midrule
+\textbf{Total flash}                                              & \textbf{1024~KB} & \textbf{100\,\%} \\
+\bottomrule
+\end{tabular}
+\caption{STM32L476RG flash budget, including the reserved non-volatile regions.}
+\label{tab:cdh-nvm-budget}
+\end{table}
+
+\textbf{Storage scheme.} The region is operated as a circular log of fixed
+104-byte records, each comprising a 16-bit magic word, a 16-bit sequence
+number, the 98-byte datapool, and a CRC-16; nineteen records occupy each 2~KB
+page. One record is appended every 30~s. A page is erased exactly once per lap
+of the ring -- when the write cursor first enters it -- so the cost is one
+erase per page per lap rather than one erase per record, the same wear-limiting
+strategy employed by the SCV store. Record ordering and write-position recovery
+rely on the sequence number rather than the datapool timestamp, because
+\texttt{HAL\_GetTick()} is reset to zero at every boot, whereas the recorder is
+required to remain coherent across precisely those resets.
+
+\textbf{Interval and capacity.} At a 30~s interval the 760 available slots span
+6.3~h; the complete six-hour flight therefore fits within a single lap with
+margin, and no data is lost even should the SD card fail at lift-off. A longer
+flight wraps and retains the most recent 6.3~h, and the worst-case loss
+following an unclean reset is bounded to one 30~s interval. As one lap
+corresponds to approximately one flight, each page is erased on the order of
+once per flight, yielding of order $10^{4}$ flights against the guaranteed
+flash erase endurance; endurance is therefore not a constraint at this rate.
+The interval trades flash capacity against temporal resolution: the identical
+scheme requires 128~KB at a 20~s interval, or 40~KB at 60~s.
+
+\textbf{Retrieval.} The record is recovered through the ST-Link debug interface
+integral to the Nucleo board, without removable media. A memory read of the
+reserved range (for example
+\texttt{STM32\_Programmer\_CLI -r 0x080EB800 0x14000 dump.bin}) transfers the
+region to a host file, after which an offline utility traverses it in 104-byte
+records, retains those bearing a valid magic word and CRC, and orders them by
+sequence number to reconstruct the flight time-line.
+
+\subsection{Equipment Handler Pattern}
+\label{sec:cdh-handlers}
+
+Each sensor is wrapped in an \emph{equipment handler} that follows one
+uniform value-semantics pattern:
+
+\begin{lstlisting}[language=C]
+Handler H_Init(bus);              /* construct + first read      */
+H = H_Update(H, bus);             /* re-read, returns new state  */
+\end{lstlisting}
+
+The handler struct carries everything that sensor needs to manage itself:
+its latest reading, its previous reading, a local health flag, and the
+timestamps that drive its cadence. Passing the handler by value in and out
+of \texttt{Update} makes each sensor's state self-contained and its update a
+pure state transition, which keeps \texttt{CDH\_Update} a flat, readable
+sequence of calls with no hidden global sensor state. Each handler also
+owns its own \emph{rate}: the 1~Hz major cycle is the outer clock, but a
+handler may sample faster or run an availability check on its own interval
+(Table~\ref{tab:cdh-handlers}).
+
+\begin{table}[H]
+\centering
+\begin{tabular}{llll}
+\toprule
+\textbf{Handler} & \textbf{Device} & \textbf{Read rate} & \textbf{Health check} \\
+\midrule
+GPS       & u-blox MAX-M10S & 1~Hz (on new message) & fix + timeout \\
+IMU       & MPU-6050        & 10~Hz (100~ms)        & 0.5~Hz presence + flatline \\
+Barometer & MS5607          & 2~Hz (500~ms)         & 0.5~Hz presence \\
+EPS       & battery divider & 1~Hz                  & conversion success \\
+\bottomrule
+\end{tabular}
+\caption{Equipment handlers and their internal cadences.}
+\label{tab:cdh-handlers}
+\end{table}
+
+\textbf{GPS (MAX-M10S).} The receiver is driven over I2C in u-blox's native
+UBX binary protocol rather than NMEA text. At start-up the handler
+configures the module through the M10 configuration interface
+(UBX-CFG-VALSET, RAM layer): it enables UBX output on I2C, disables the
+NMEA protocol, requests the \texttt{NAV-PVT} navigation solution at 1~Hz,
+and selects the \emph{Airborne $<$1\,g} dynamic model so the navigation
+filter does not clamp the rapid altitude changes of flight. Each 100-byte
+\texttt{NAV-PVT} message delivers position, ellipsoidal and mean-sea-level
+altitude, the three velocity components, ground speed, heading, fix type,
+satellite count, and per-solution accuracy estimates in a single
+checksum-protected frame -- replacing the multi-sentence NMEA parse with
+one binary decode and giving the FSW a directly usable vertical velocity.
+The binary path also fixed a latent driver bug: the u-blox
+bytes-available register is 16~bit (\texttt{0xFD}/\texttt{0xFE}), and
+reading only the high byte -- which the earlier NMEA driver did -- returns
+the pending count divided by~256 and starves the comparatively low-rate
+UBX stream.
+
+\textbf{IMU (MPU-6050).} Sampled at 10~Hz so the FSW sees acceleration
+well above the 1~Hz cycle rate; the handler also runs a slow presence check
+and a flatline detector that flags the sensor if its output stops changing.
+
+\textbf{Barometer (MS5607).} Sampled at 2~Hz. At initialization the handler
+captures the ground pressure and altitude as a baseline, so
+\texttt{baro\_alt\_m} is reported as height above the launch site rather
+than absolute pressure altitude.
+
+\textbf{EPS battery monitor.} The battery pack voltage is read on an ADC
+input through the EPS telemetry divider (22\,k$\Omega$ high side,
+10\,k$\Omega$ low side, IF-008): the ADC sees
+$V_\text{pack}\times R_\text{low}/(R_\text{high}+R_\text{low}) =
+V_\text{pack}\times0.3125$, which the firmware scales back by the
+$3.2\times$ multiplier to recover the pack voltage in millivolts and store
+it as \texttt{batt\_voltage\_mv}. The two-cell parallel pack spans
+3.0--4.2~V (see the EPS chapter), so the divider output stays near 1.3~V,
+well within the 3.3~V ADC range, and the chain meets the 5\% telemetry
+accuracy of IF-008.
+
+\subsection{Sensor Validation and Fault Handling}
+\label{sec:cdh-validation}
+
+Validation is layered. Each handler catches faults local to its own device
+-- a GPS with no fix, an IMU whose output has flatlined, a barometer that
+fails to acknowledge on the bus. On top of that, a central validation pass
+(\texttt{SensorValidation\_Update}) runs every cycle after all handlers
+have reported and applies cross-checks that need the assembled datapool:
+
+\begin{itemize}[nosep]
+  \item \textbf{Barometer.} Reject non-physical pressure
+        ($<0$ or $>1519$~hPa) or temperature ($<-100$\,\textdegree C).
+  \item \textbf{GPS.} Require a non-zero fix; reject altitude outside
+        $0$--$40$~km; reject a solution more than 1000~km from the launch
+        site (a coarse geofence around Munich); and declare the receiver
+        stale if no new fix arrives for 60~s.
+  \item \textbf{IMU.} Declare the sensor failed if the acceleration
+        magnitude stays below the flatline threshold for longer than 4~s.
+\end{itemize}
+
+A failed check clears the datapool validity flag for that group and
+increments a persistent fault counter, but leaves the last values in place.
+Recovery is graded by how many sensors are affected. A \emph{single} failed
+sensor triggers a recovery attempt that is then retried no more than once
+per 60~s, avoiding a tight retry loop that would starve the rest of the
+cycle. \emph{Multiple} simultaneous sensor failures are read as a
+shared-bus problem rather than independent device faults, so validation
+calls \texttt{CDH\_RequestBusRestart()}; because CDH owns the I2C hardware,
+it -- not the validation code -- carries out the restart across subsequent
+ticks and republishes \texttt{i2c\_bus\_state}. The whole scheme is
+fail-soft: a degraded sensor removes its own data from the solution without
+ever stalling the 1~Hz cycle or the subsystems downstream of it.
