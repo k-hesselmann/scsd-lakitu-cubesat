@@ -196,7 +196,7 @@ int main(void)
 
     if (FDIR_SubsystemEnabled(FDIR_SUBSYS_TTC) && TTC_TelemetryDue())
     {
-      FSW_BuildTelemetryPacket(&g_datapool, &g_scv, &tx_packet);
+      TTC_BuildTelemetryPacket(&g_datapool, &g_scv, &tx_packet);
       TTC_Transmit(&tx_packet);
     }
     SCV_Update(&g_scv);   /* periodic + event-driven flash backup */
