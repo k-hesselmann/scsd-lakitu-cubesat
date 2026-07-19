@@ -118,6 +118,7 @@ static void FDIR_InitDefaults(SCV_t *scv)
     scv->reset_reason = RESET_REASON_UNKNOWN;
     scv->equipment_enabled = EQUIPMENT_ALL_NOMINAL;
     scv->equipment_faults = 0U;
+    scv->equipment_manual_disable = 0U;
     scv->gps_timeout_count = 0U;
     scv->imu_timeout_count = 0U;
     scv->baro_timeout_count = 0U;
@@ -199,11 +200,13 @@ static void FDIR_ApplyReducedMode(SCV_t *scv)
 {
     uint8_t resets = scv->watchdog_reset_count;
 
-    scv->equipment_enabled = EQUIPMENT_ALL_NOMINAL;
+    scv->equipment_enabled = EQUIPMENT_ALL_NOMINAL & (uint16_t)~scv->equipment_manual_disable;
     for (uint8_t i = 0U; i < (uint8_t)FDIR_SUBSYS_COUNT; i++)
     {
-        s_subsys_enabled[i] =
-            (resets < (uint8_t)(FDIR_WATCHDOG_RESET_LIMIT + i)) ? 1U : 0U;
+        uint8_t staged_off   = (resets >= (uint8_t)(FDIR_WATCHDOG_RESET_LIMIT + i));
+        uint8_t manually_off = (scv->equipment_manual_disable & s_subsys_equipment[i]) != 0U;
+
+        s_subsys_enabled[i] = (staged_off || manually_off) ? 0U : 1U;
         if (!s_subsys_enabled[i])
             scv->equipment_enabled &= (uint16_t)~s_subsys_equipment[i];
     }

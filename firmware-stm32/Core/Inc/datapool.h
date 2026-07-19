@@ -99,6 +99,11 @@ typedef struct __attribute__((packed)) {
 
     uint16_t equipment_enabled;
     uint16_t equipment_faults;
+    /* Ground/bench-settable equipment disable, independent of reduced-mode
+     * staging. Persists across boots as-is (unlike equipment_enabled, which
+     * FDIR_ApplyReducedMode() rebuilds from EQUIPMENT_ALL_NOMINAL every
+     * boot) — folded into equipment_enabled/s_subsys_enabled[] there. */
+    uint16_t equipment_manual_disable;
 
     uint8_t  gps_timeout_count;
     uint8_t  imu_timeout_count;
