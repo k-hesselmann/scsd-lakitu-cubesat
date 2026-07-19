@@ -104,14 +104,10 @@ typedef struct __attribute__((packed)) {
     uint8_t  imu_timeout_count;
     uint8_t  baro_timeout_count;
     uint8_t  coral_timeout_count;
-    /* Mirror of TTC's consecutive TX failure count (FMECA T1). Persisted in
-     * the SCV; NOT yet in TelemetryPacket_t (v3) or the CSV — add both at
-     * the next coordinated format revision (v4). */
+    /* Mirror of TTC's consecutive TX failure count (FMECA T1). */
     uint8_t  lora_timeout_count;
     /* Lifetime (not consecutive) count of failed LoRa TX attempts since boot,
-     * mirrored from TTC_FDIR_Health_t.lora_tx_fault_counter. Persisted in the
-     * SCV; not yet in TelemetryPacket_t (v3) or the CSV — same deferred-v4
-     * treatment as lora_timeout_count above. */
+     * mirrored from TTC_FDIR_Health_t.lora_tx_fault_counter. */
     uint16_t lora_tx_fault_counter;
     uint8_t  sd_fault_count;
     uint8_t  watchdog_reset_count;
@@ -165,8 +161,9 @@ typedef enum {
     LORA_RX_HEALTH_MODE_ERROR
 } LoRaRxHealthStatus_t;
 
-/* Most recent ground command observed by TTC. The flight computer echoes this
- * snapshot in telemetry so ground can confirm a received uplink. */
+/* Most recent ground command and telemetry acknowledgement state observed by
+ * TTC. Command and ACK statuses are independent so an ACK cannot hide command
+ * confirmation before ground receives it. */
 typedef enum {
     UPLINK_COMMAND_NONE = 0,
     UPLINK_COMMAND_REQUEST_TELEMETRY,
@@ -183,73 +180,88 @@ typedef enum {
 } UplinkStatus_t;
 
 typedef struct __attribute__((packed)) {
-    uint8_t  last_command;       /* UplinkCommand_t */
-    uint8_t  last_status;        /* UplinkStatus_t */
-    uint16_t last_command_id;    /* ID supplied by CMD,<id>,<verb> */
-    uint16_t last_ack_sequence;  /* Sequence supplied by ACK,<sequence> */
-    uint16_t command_count;      /* Valid uplinks received since boot */
+    uint8_t  last_command;        /* UplinkCommand_t for last CMD packet */
+    uint8_t  last_command_status; /* UplinkStatus_t; ACK never overwrites it */
+    uint8_t  last_ack_status;     /* UplinkStatus_t for last ACK packet */
+    uint16_t last_command_id;     /* ID supplied by CMD,<id>,<verb> */
+    uint16_t last_ack_sequence;   /* Last accepted/duplicate ACK sequence */
+    uint16_t command_count;       /* Unique valid commands since boot */
 } UplinkState_t;
 
-/* Raw downlink telemetry v7. Selected fields are copied from SensorData_t and
- * SCV_t. Engineering-unit conversions are intentionally performed by the
- * ground station, not by the flight CPU. */
+/* Compact downlink telemetry v8. Every member is a fixed-width integer so the
+ * 92-byte wire format is compiler-independent once packed. Invalid/never-seen
+ * signed measurements use INT16_MIN/INT32_MIN; invalid unsigned measurements
+ * use their maximum value. Validity flags remain authoritative. */
+#define TELEMETRY_PACKET_TYPE               0x01U
+#define TELEMETRY_PROTOCOL_VERSION          0x08U
+#define TELEMETRY_PACKET_V8_SIZE            92U
+
+#define TELEMETRY_VALID_GPS                 (1U << 0)
+#define TELEMETRY_VALID_IMU                 (1U << 1)
+#define TELEMETRY_VALID_BARO                (1U << 2)
+#define TELEMETRY_VALID_BATTERY             (1U << 3)
+#define TELEMETRY_VALID_CORAL               (1U << 4)
+
+#define TELEMETRY_LORA_RX_STATUS_MASK       0x07U
+#define TELEMETRY_LORA_RX_ACTIVE            (1U << 3)
+
+#define TELEMETRY_UPLINK_STATUS_MASK        0x07U
+#define TELEMETRY_UPLINK_ACK_STATUS_SHIFT   3U
+
 typedef struct __attribute__((packed)) {
-    uint8_t  packet_type;        /* 0x01 = telemetry */
-    uint8_t  protocol_version;   /* 0x07 = ACK-timeout/replay-safe TTC layout */
+    uint8_t  packet_type;
+    uint8_t  protocol_version;
     uint16_t sequence_number;
-    uint32_t tx_uptime_ms;       /* HAL_GetTick() when this frame was built */
-
-    /* SensorData_t snapshot (raw source units and validity flags). */
-    uint32_t datapool_timestamp_ms;
-    float    gps_lat_deg;
-    float    gps_lon_deg;
-    float    gps_alt_m;
-    float    gps_vvel_mps;       /* positive = upward */
-    float    gps_speed_mps;
-    uint8_t  gps_valid;
-    float    imu_accel_x_g;
-    float    imu_accel_y_g;
-    float    imu_accel_z_g;
-    float    imu_accel_mag_g;
-    float    imu_gyro_x_dps;
-    float    imu_gyro_y_dps;
-    float    imu_gyro_z_dps;
-    uint8_t  imu_valid;
-    float    baro_pressure_pa;
-    float    baro_alt_m;
-    float    baro_temp_c;
-    uint8_t  baro_valid;
+    uint32_t tx_uptime_s;
+    uint32_t mission_elapsed_s;
+    uint16_t boot_count_sat;
+    uint8_t  flight_phase;
+    uint8_t  reset_reason;
+    uint8_t  validity_flags;
     uint8_t  i2c_bus_state;
-    uint16_t batt_voltage_mv;
-    uint8_t  batt_valid;
-    uint8_t  coral_block[16];
-    uint8_t  coral_valid;
+    uint16_t equipment_enabled;
+    uint16_t equipment_faults;
+    uint16_t sample_age_ms_sat;
+    uint8_t  watchdog_reset_count;
+    uint8_t  sd_fault_count;
 
-    /* Runtime SCV_t snapshot, including the persistence-owned CRC field. */
-    uint16_t scv_magic;
-    uint32_t scv_boot_count;
-    uint32_t scv_mission_elapsed_ms;
-    uint8_t  scv_flight_phase;
-    uint8_t  scv_reset_reason;
-    uint16_t scv_equipment_enabled;
-    uint16_t scv_equipment_faults;
-    uint8_t  scv_gps_timeout_count;
-    uint8_t  scv_imu_timeout_count;
-    uint8_t  scv_baro_timeout_count;
-    uint8_t  scv_coral_timeout_count;
-    uint8_t  scv_sd_fault_count;
-    uint8_t  scv_watchdog_reset_count;
-    uint16_t scv_last_batt_mv;
-    int32_t  scv_baro_ground_alt_cm;
-    uint16_t scv_crc16;
+    int32_t  latitude_e7;
+    int32_t  longitude_e7;
+    int32_t  gnss_altitude_dm;
+    int16_t  vertical_speed_cms; /* positive = upward */
+    uint16_t ground_speed_cms;
+    uint16_t course_cdeg;
+    uint32_t gnss_utc_sod;
+    uint8_t  gnss_satellites;
+    uint8_t  gnss_fix_type;
 
-    /* Ground-to-flight command/acknowledgement snapshot. */
-    UplinkState_t uplink;
+    int16_t  accel_x_mg;
+    int16_t  accel_y_mg;
+    int16_t  accel_z_mg;
+    int16_t  gyro_x_ddeg_s;
+    int16_t  gyro_y_ddeg_s;
+    int16_t  gyro_z_ddeg_s;
 
-    /* Volatile minimal LoRa FDIR health snapshot. */
-    LoRaHealth_t lora;
+    uint32_t baro_pressure_pa;
+    int32_t  baro_altitude_dm;
+    int16_t  baro_temperature_cdeg;
+    uint16_t battery_mv;
 
-    uint16_t crc16;              /* CRC-16/CCITT over every preceding byte */
+    uint16_t coral_sequence_low;
+    uint16_t coral_fraction_q16;
+    uint8_t  coral_status;
+    uint16_t coral_age_s_sat;
+
+    uint8_t  lora_last_event;
+    uint8_t  lora_consecutive_failures;
+    uint8_t  lora_recovery_count;
+    uint8_t  lora_rx_state;
+    uint8_t  lora_tx_fault_count_sat;
+    uint8_t  lora_ack_timeout_count_sat;
+    uint16_t last_command_id;
+    uint8_t  uplink_state;       /* CMD status bits 0..2, ACK status bits 3..5 */
+
+    uint16_t crc16;              /* CRC-16/CCITT over bytes 0..89 */
 } TelemetryPacket_t;
 
 /* Shared datapool instance — defined in datapool.c, extern everywhere else */

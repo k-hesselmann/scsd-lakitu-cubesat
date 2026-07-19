@@ -44,8 +44,8 @@
  *   [12..13] FRAME_CNT  uint16 -- good-frame counter (wraps at 65535)
  *   [14..15] reserved   zero
  *
- * TelemetryPacket_t carries the full 16-byte coral_block snapshot.
- * (SEQ + FRAC_RAW + FRAC_PCT + STATUS)
+ * Telemetry v8 carries SEQ low 16 bits, FRAC_RAW, STATUS, and result age;
+ * the full block remains available in the SD log.
  * ---------------------------------------------------------------------- */
 #define CORAL_STATUS_OK          0x00U
 #define CORAL_STATUS_TIMEOUT     0x01U   /* UART receive timeout               */

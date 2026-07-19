@@ -127,12 +127,9 @@ do not flash CubeIDE-built images). Explicit reset: build once with
 | baro_ground_alt_cm | FSW/CDH — still unwritten today; owner TBD |
 | sd_fault_count | SD logger |
 
-Pending for the next coordinated format revision (telemetry v4): `SCV_t` has
-`lora_timeout_count` and `lora_tx_fault_counter` (persisted to flash only).
-Adding either to the downlink needs a joint bump — new `scv_*` fields in
-`TelemetryPacket_t` + `protocol_version 0x04` (FSW), the `_Static_assert`
-size check (TTC), the CSV column (SD), and the ground-station parser. Until
-then both fields fly in the SCV/flash only.
+Protocol v8 now downlinks the consecutive LoRa failure count and a saturated
+8-bit view of `lora_tx_fault_counter`. The full-width SCV counter remains in
+flash/SD for post-flight analysis.
 
 Rules:
 - **Never compute or write `crc16`.** It is computed once per flash backup by

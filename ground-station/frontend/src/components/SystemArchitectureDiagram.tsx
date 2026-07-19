@@ -1,7 +1,9 @@
 import { Badge } from "@/components/ui/badge"
-import { fmt } from "@/lib/format"
+import { fmt, formatGnssUtc } from "@/lib/format"
 import {
   EQUIPMENT_BARO,
+  EQUIPMENT_CORAL,
+  EQUIPMENT_EPS_ADC,
   EQUIPMENT_GPS,
   EQUIPMENT_IMU,
   EQUIPMENT_LORA,
@@ -9,8 +11,9 @@ import {
   LORA_EVENT_CONFIG_FAIL,
   LORA_EVENT_INIT_OK,
   hasEquipmentFault,
+  isEquipmentEnabled,
   rawFlagIsValid,
-} from "@/lib/v4Telemetry"
+} from "@/lib/telemetryHealth"
 import type { BackendStatus, TelemetryRow } from "@/types/telemetry"
 
 type Variant = "nominal" | "warning" | "critical" | "unknown"
@@ -30,8 +33,13 @@ function badgeVariant(variant: Variant) {
   return variant === "critical" ? "destructive" : variant === "nominal" ? "default" : "secondary"
 }
 
-function statusFromValidity(valid: boolean, fault: boolean | undefined): Variant {
+function statusFromValidity(
+  valid: boolean,
+  fault: boolean | undefined,
+  enabled: boolean | undefined,
+): Variant {
   if (fault) return "critical"
+  if (enabled === false) return "warning"
   return valid ? "nominal" : "warning"
 }
 
@@ -58,7 +66,7 @@ export function SystemArchitectureDiagram({
   backendStatus?: BackendStatus | null
 }) {
   if (!latest) {
-    return <div className="flex h-full items-center justify-center rounded-xl border bg-slate-50 text-sm text-muted-foreground">Waiting for a raw-v7 telemetry packet.</div>
+    return <div className="flex h-full items-center justify-center rounded-xl border bg-slate-50 text-sm text-muted-foreground">Waiting for a protocol-v8 telemetry packet.</div>
   }
 
   const receiver = backendStatus?.receiver
@@ -66,13 +74,20 @@ export function SystemArchitectureDiagram({
   const gpsFault = hasEquipmentFault(latest, EQUIPMENT_GPS)
   const imuFault = hasEquipmentFault(latest, EQUIPMENT_IMU)
   const baroFault = hasEquipmentFault(latest, EQUIPMENT_BARO)
+  const batteryFault = hasEquipmentFault(latest, EQUIPMENT_EPS_ADC)
+  const coralFault = hasEquipmentFault(latest, EQUIPMENT_CORAL)
   const sdFault = hasEquipmentFault(latest, EQUIPMENT_SD)
   const loraFault = hasEquipmentFault(latest, EQUIPMENT_LORA)
-  const gps = statusFromValidity(rawFlagIsValid(latest.gps_valid_raw), gpsFault)
-  const imu = statusFromValidity(rawFlagIsValid(latest.imu_valid_raw), imuFault)
-  const baro = statusFromValidity(rawFlagIsValid(latest.baro_valid_raw), baroFault)
-  const battery = statusFromValidity(rawFlagIsValid(latest.batt_valid_raw), false)
-  const coral = statusFromValidity(rawFlagIsValid(latest.coral_valid_raw), false)
+  const gpsEnabled = isEquipmentEnabled(latest, EQUIPMENT_GPS)
+  const imuEnabled = isEquipmentEnabled(latest, EQUIPMENT_IMU)
+  const baroEnabled = isEquipmentEnabled(latest, EQUIPMENT_BARO)
+  const batteryEnabled = isEquipmentEnabled(latest, EQUIPMENT_EPS_ADC)
+  const coralEnabled = isEquipmentEnabled(latest, EQUIPMENT_CORAL)
+  const gps = statusFromValidity(rawFlagIsValid(latest.gps_valid_raw), gpsFault, gpsEnabled)
+  const imu = statusFromValidity(rawFlagIsValid(latest.imu_valid_raw), imuFault, imuEnabled)
+  const baro = statusFromValidity(rawFlagIsValid(latest.baro_valid_raw), baroFault, baroEnabled)
+  const battery = statusFromValidity(rawFlagIsValid(latest.batt_valid_raw), batteryFault, batteryEnabled)
+  const coral = statusFromValidity(rawFlagIsValid(latest.coral_valid_raw), coralFault, coralEnabled)
 
   // This packet arriving proves a successful flight-to-ground transmission.
   // The embedded values are the onboard snapshot taken before that transmission.
@@ -98,7 +113,7 @@ export function SystemArchitectureDiagram({
   const commandOutcome = receiver?.last_command_outcome
   const commandUnconfirmed = commandOutcome === "retrying" || commandOutcome === "unacknowledged"
   const ackTxFailed = receiver?.last_telemetry_ack_ok === false
-  const unexpectedAck = latest.uplink_last_status_name === "UNEXPECTED_ACK"
+  const unexpectedAck = latest.uplink_last_ack_status_name === "UNEXPECTED_ACK"
 
   let flightRx: Variant = "nominal"
   if (!rxModeActive || rxHardwareFailure) flightRx = "critical"
@@ -121,17 +136,17 @@ export function SystemArchitectureDiagram({
     <div className="h-full overflow-auto rounded-xl border bg-slate-50 p-3">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-sm font-bold">Raw-v7 subsystem status</h2>
+          <h2 className="text-sm font-bold">Protocol-v8 subsystem status</h2>
           <p className="text-xs text-muted-foreground">Flight radio TX and RX are evaluated separately using onboard telemetry and live protocol evidence.</p>
         </div>
         <Badge variant={badgeVariant(obc)}>OBC {obc.toUpperCase()}</Badge>
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <StatusCard title="GPS" variant={gps} detail={`Altitude ${fmt(latest.gnss_altitude_m, " m", 1)} · Vertical speed ${fmt(latest.vertical_speed_ms, " m/s", 2)}`} tags={[`valid ${fmt(latest.gps_valid_raw)}`, `timeouts ${fmt(latest.scv_gps_timeout_count)}`]} />
-        <StatusCard title="IMU" variant={imu} detail={`Acceleration magnitude ${fmt(latest.imu_accel_mag_g, " g", 3)}`} tags={[`valid ${fmt(latest.imu_valid_raw)}`, `timeouts ${fmt(latest.scv_imu_timeout_count)}`]} />
-        <StatusCard title="Barometer" variant={baro} detail={`${fmt(latest.baro_pressure_pa, " Pa")} · ${fmt(latest.baro_altitude_m, " m", 1)}`} tags={[`valid ${fmt(latest.baro_valid_raw)}`, `timeouts ${fmt(latest.scv_baro_timeout_count)}`]} />
-        <StatusCard title="Battery" variant={battery} detail={`${fmt(latest.battery_v, " V", 2)} · SCV last ${fmt(latest.scv_last_batt_mv, " mV")}`} tags={[`valid ${fmt(latest.batt_valid_raw)}`]} />
-        <StatusCard title="Coral" variant={coral} detail={fmt(latest.coral_payload_text)} tags={[`valid ${fmt(latest.coral_valid_raw)}`, `timeouts ${fmt(latest.scv_coral_timeout_count)}`]} />
+        <StatusCard title="GNSS" variant={gps} detail={`Altitude ${fmt(latest.gnss_altitude_m, " m", 1)} · Vertical speed ${fmt(latest.vertical_speed_ms, " m/s", 2)}`} tags={[`enabled ${fmt(gpsEnabled)}`, `valid ${fmt(latest.gps_valid_raw)}`, `fix ${fmt(latest.gnss_fix_type)}`, `satellites ${fmt(latest.gnss_satellites_used)}`, `UTC ${formatGnssUtc(latest.gnss_utc_sod)}`, `course ${fmt(latest.course_deg, "°", 2)}`]} />
+        <StatusCard title="IMU" variant={imu} detail={`Accel X ${fmt(latest.imu_accel_x_g, " g", 3)} · Y ${fmt(latest.imu_accel_y_g, " g", 3)} · Z ${fmt(latest.imu_accel_z_g, " g", 3)}`} tags={[`enabled ${fmt(imuEnabled)}`, `valid ${fmt(latest.imu_valid_raw)}`, `gyro X ${fmt(latest.imu_gyro_x_dps, " deg/s", 1)}`, `Y ${fmt(latest.imu_gyro_y_dps, " deg/s", 1)}`, `Z ${fmt(latest.imu_gyro_z_dps, " deg/s", 1)}`]} />
+        <StatusCard title="Barometer" variant={baro} detail={`${fmt(latest.baro_pressure_pa, " Pa")} · ${fmt(latest.baro_altitude_m, " m", 1)}`} tags={[`enabled ${fmt(baroEnabled)}`, `valid ${fmt(latest.baro_valid_raw)}`, `temperature ${fmt(latest.baro_temperature_c, " °C", 2)}`]} />
+        <StatusCard title="Battery ADC" variant={battery} detail={fmt(latest.battery_v, " V", 2)} tags={[`enabled ${fmt(batteryEnabled)}`, `valid ${fmt(latest.batt_valid_raw)}`, `fault ${fmt(batteryFault)}`]} />
+        <StatusCard title="Coral" variant={coral} detail={`Cloud fraction ${fmt(latest.coral_fraction_percent, "%", 2)}`} tags={[`enabled ${fmt(coralEnabled)}`, `valid ${fmt(latest.coral_valid_raw)}`, `sequence low ${fmt(latest.coral_sequence_low)}`, `age ${fmt(latest.coral_result_age_s, " s")}`, `status ${fmt(latest.coral_status)}`]} />
         <StatusCard
           title="Flight TX Health (Downlink)"
           variant={flightTx}
@@ -141,7 +156,7 @@ export function SystemArchitectureDiagram({
             `register check ${registerCheck}`,
             `event ${fmt(latest.lora_last_event_name)} (${fmt(latest.lora_last_event)})`,
             `preceding failures ${fmt(latest.lora_consecutive_failures)}`,
-            `last TX success ${fmt(latest.lora_last_success_ms, " ms")}`,
+            `lifetime TX failures ${fmt(latest.lora_tx_fault_count)}`,
             `recoveries ${fmt(latest.lora_recovery_count)}`,
           ]}
         />
@@ -152,24 +167,20 @@ export function SystemArchitectureDiagram({
           tags={[
             `RX mode ${rxModeActive ? "ACTIVE" : "INACTIVE"}`,
             `RX status ${fmt(latest.lora_last_rx_status_name)}`,
-            `uplink packets ${fmt(latest.lora_rx_packet_count)}`,
-            `uplink CRC errors ${fmt(latest.lora_rx_crc_error_count)}`,
             `telemetry ACK timeouts ${fmt(latest.lora_ack_timeout_count)}`,
-            `last onboard RX ${fmt(latest.lora_last_rx_ms, " ms")}`,
             `last command ${receiver?.last_command_id ?? "—"}: ${commandOutcome ?? "NONE"}`,
             `command attempt ${receiver?.last_command_attempt ?? "—"}`,
             `flight command status ${fmt(latest.uplink_last_status_name)}`,
-            `flight confirmed ACK seq ${fmt(latest.uplink_last_ack_sequence)}`,
+            `flight ACK status ${fmt(latest.uplink_last_ack_status_name)}`,
             `ground ACK seq ${receiver?.last_telemetry_ack_sequence ?? "—"}: ${receiver?.last_telemetry_ack_ok === true ? "TX DONE" : receiver?.last_telemetry_ack_ok === false ? "FAILED" : "NONE"}`,
             `ground ACK TxDone ${receiver?.telemetry_ack_tx_count ?? 0}`,
             `ground ACK failures ${receiver?.telemetry_ack_tx_failures ?? 0}`,
-            `flight accepted commands ${fmt(latest.uplink_command_count)}`,
             `duplicate streak ${fmt(latest.consecutive_duplicate_packets)}`,
             `duplicates total ${stats?.total_duplicate_packets ?? latest.total_duplicate_packets ?? 0}`,
           ]}
         />
-        <StatusCard title="SD / SCV" variant={sd} detail={`SD faults ${fmt(latest.scv_sd_fault_count)} · watchdog resets ${fmt(latest.scv_watchdog_reset_count)}`} tags={[`fault ${sdFault === undefined ? "—" : sdFault ? "YES" : "NO"}`, `state ${fmt(latest.flight_state_name)}`]} />
-        <StatusCard title="Packet validation" variant={obc} detail={`Sequence ${fmt(latest.sequence_number)} · CRC ${fmt(latest.crc_ok)}`} tags={[`type ${fmt(latest.packet_type)}`, `version ${fmt(latest.protocol_version)}`, `fault mask ${fmt(latest.scv_equipment_faults)}`]} />
+        <StatusCard title="SD / FSW" variant={sd} detail={`SD faults ${fmt(latest.scv_sd_fault_count)} · watchdog resets ${fmt(latest.scv_watchdog_reset_count)}`} tags={[`enabled ${fmt(isEquipmentEnabled(latest, EQUIPMENT_SD))}`, `fault ${fmt(sdFault)}`, `phase ${fmt(latest.flight_state_name)}`]} />
+        <StatusCard title="OBC / Packet" variant={obc} detail={`Sequence ${fmt(latest.sequence_number)} · sample age ${fmt(latest.sample_age_ms, " ms")}`} tags={[`CRC ${fmt(latest.crc_ok)}`, `version ${fmt(latest.protocol_version)}`, `uptime ${fmt(latest.obc_uptime_ms, " ms")}`, `mission ${fmt(latest.scv_mission_elapsed_ms, " ms")}`, `I2C state ${fmt(latest.i2c_bus_state_raw)}`, `boot ${fmt(latest.boot_count)}`, `reset ${fmt(latest.reset_reason_name)}`, `fault mask ${fmt(latest.scv_equipment_faults)}`]} />
       </div>
     </div>
   )

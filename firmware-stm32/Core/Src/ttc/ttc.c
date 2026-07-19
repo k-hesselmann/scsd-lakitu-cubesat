@@ -7,8 +7,8 @@
 
 #include <string.h>
 
-_Static_assert(sizeof(TelemetryPacket_t) == 155U,
-               "TelemetryPacket_t must match the raw v7 wire format");
+_Static_assert(sizeof(TelemetryPacket_t) == TELEMETRY_PACKET_V8_SIZE,
+               "TelemetryPacket_t must match the compact v8 wire format");
 
 #ifndef TTC_CDC_BINARY_MIRROR
 #define TTC_CDC_BINARY_MIRROR 0
@@ -316,12 +316,9 @@ static uint8_t TTC_ParseCommandEnvelope(const uint8_t *data, uint8_t length,
 
 static void TTC_ProcessAcknowledgement(uint16_t acknowledged_sequence)
 {
-    s_uplink.last_command = UPLINK_COMMAND_ACKNOWLEDGE;
-    s_uplink.last_command_id = 0U;
-
     if (s_pending_valid && acknowledged_sequence == s_pending_packet.sequence_number)
     {
-        s_uplink.last_status = UPLINK_STATUS_ACCEPTED;
+        s_uplink.last_ack_status = UPLINK_STATUS_ACCEPTED;
         s_uplink.last_ack_sequence = acknowledged_sequence;
         s_pending_valid = 0U;
         s_pending_awaiting_ack = 0U;
@@ -329,11 +326,11 @@ static void TTC_ProcessAcknowledgement(uint16_t acknowledged_sequence)
     }
     else if (acknowledged_sequence == s_uplink.last_ack_sequence)
     {
-        s_uplink.last_status = UPLINK_STATUS_DUPLICATE;
+        s_uplink.last_ack_status = UPLINK_STATUS_DUPLICATE;
     }
     else
     {
-        s_uplink.last_status = UPLINK_STATUS_UNEXPECTED_ACK;
+        s_uplink.last_ack_status = UPLINK_STATUS_UNEXPECTED_ACK;
     }
 }
 
@@ -357,11 +354,11 @@ static void TTC_ProcessUplink(const uint8_t *data, uint8_t length)
             s_uplink.last_command_id = value;
             if (!TTC_AcceptCommandId(value))
             {
-                s_uplink.last_status = UPLINK_STATUS_DUPLICATE;
+                s_uplink.last_command_status = UPLINK_STATUS_DUPLICATE;
             }
             else
             {
-                s_uplink.last_status = UPLINK_STATUS_ACCEPTED;
+                s_uplink.last_command_status = UPLINK_STATUS_ACCEPTED;
                 s_uplink.command_count = TTC_IncrementU16(s_uplink.command_count);
             }
             TTC_RequestTelemetry();
@@ -370,17 +367,23 @@ static void TTC_ProcessUplink(const uint8_t *data, uint8_t length)
 
         s_uplink.last_command = UPLINK_COMMAND_NONE;
         s_uplink.last_command_id = value;
-        s_uplink.last_status = UPLINK_STATUS_UNSUPPORTED;
+        s_uplink.last_command_status = UPLINK_STATUS_UNSUPPORTED;
         TTC_RequestTelemetry();
         return;
     }
 
-    s_uplink.last_command = UPLINK_COMMAND_NONE;
-    s_uplink.last_command_id = 0U;
-    s_uplink.last_status = (length >= 4U &&
-                            (memcmp(data, "ACK,", 4U) == 0 ||
-                             memcmp(data, "CMD,", 4U) == 0)) ?
-                           UPLINK_STATUS_INVALID_FORMAT : UPLINK_STATUS_UNSUPPORTED;
+    if (length >= 4U && memcmp(data, "ACK,", 4U) == 0)
+    {
+        s_uplink.last_ack_status = UPLINK_STATUS_INVALID_FORMAT;
+    }
+    else
+    {
+        s_uplink.last_command = UPLINK_COMMAND_NONE;
+        s_uplink.last_command_id = 0U;
+        s_uplink.last_command_status =
+            (length >= 4U && memcmp(data, "CMD,", 4U) == 0) ?
+            UPLINK_STATUS_INVALID_FORMAT : UPLINK_STATUS_UNSUPPORTED;
+    }
     TTC_RequestTelemetry();
 }
 

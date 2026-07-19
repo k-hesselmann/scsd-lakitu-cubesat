@@ -6,7 +6,7 @@ export type TelemetryRow = {
   lora_downlink_snr_db?: number | null
   lora_crc_error?: boolean
 
-  // Raw-v7 packet envelope and ground-side validation.
+  // V8 packet envelope and ground-side validation.
   packet_type?: number
   protocol_version?: number
   packet_type_ok?: boolean
@@ -22,17 +22,23 @@ export type TelemetryRow = {
   consecutive_duplicate_packets?: number
   total_duplicate_packets?: number
 
-  // Engineering values derived directly from raw-v7 source units.
+  // Engineering values normalized from the active wire revision.
   obc_uptime_ms?: number
+  utc_timestamp?: number | null
+  sample_age_ms?: number | null
+  gnss_utc_sod?: number | null
   flight_state?: number
   flight_state_name?: string
   battery_mv?: number
   battery_v?: number
+  gnss_fix_type?: number | null
+  gnss_satellites_used?: number | null
   latitude_deg?: number
   longitude_deg?: number
   gnss_altitude_m?: number
   ground_speed_ms?: number
   vertical_speed_ms?: number
+  course_deg?: number | null
   baro_pressure_pa?: number
   baro_temperature_c?: number
   baro_altitude_m?: number
@@ -43,13 +49,25 @@ export type TelemetryRow = {
   gyro_y_rads?: number
   gyro_z_rads?: number
 
-  // Raw-v7 datapool snapshot.
-  datapool_timestamp_ms?: number
+  // Raw v8 fixed-point and derived engineering values.
+  latitude_e7?: number | null
+  longitude_e7?: number | null
+  gnss_altitude_dm?: number | null
+  vertical_speed_cms?: number | null
+  ground_speed_cms?: number | null
+  course_cdeg?: number | null
+  accel_x_mg?: number | null
+  accel_y_mg?: number | null
+  accel_z_mg?: number | null
+  gyro_x_ddeg_s?: number | null
+  gyro_y_ddeg_s?: number | null
+  gyro_z_ddeg_s?: number | null
+  baro_altitude_dm?: number | null
+  baro_temperature_cdeg?: number | null
   gps_valid_raw?: number
   imu_accel_x_g?: number
   imu_accel_y_g?: number
   imu_accel_z_g?: number
-  imu_accel_mag_g?: number
   imu_gyro_x_dps?: number
   imu_gyro_y_dps?: number
   imu_gyro_z_dps?: number
@@ -57,50 +75,40 @@ export type TelemetryRow = {
   baro_valid_raw?: number
   i2c_bus_state_raw?: number
   batt_valid_raw?: number
-  coral_payload_text?: string
-  coral_payload_hex?: string
+  coral_sequence_low?: number | null
+  coral_fraction_q16?: number | null
+  coral_fraction_percent?: number | null
+  coral_result_age_s?: number | null
+  coral_status?: number
   coral_valid_raw?: number
 
-  // Raw-v7 SCV snapshot.
-  scv_magic?: string
+  // V8 spacecraft-health values.
   boot_count?: number
   scv_mission_elapsed_ms?: number
   reset_cause_raw?: number
   reset_reason_name?: string
   scv_equipment_enabled?: string
   scv_equipment_faults?: string
-  scv_gps_timeout_count?: number
-  scv_imu_timeout_count?: number
-  scv_baro_timeout_count?: number
-  scv_coral_timeout_count?: number
   scv_sd_fault_count?: number
   scv_watchdog_reset_count?: number
-  scv_last_batt_mv?: number
-  scv_baro_ground_alt_cm?: number
-  scv_crc16?: string
 
-  // Raw-v7 spacecraft reliable uplink/acknowledgement snapshot.
-  uplink_last_command?: number
-  uplink_last_command_name?: string
+  // Spacecraft command/acknowledgement state.
   uplink_last_status?: number
   uplink_last_status_name?: string
   uplink_last_command_id?: number
-  uplink_last_ack_sequence?: number
-  uplink_command_count?: number
+  uplink_last_ack_status?: number
+  uplink_last_ack_status_name?: string
 
-  // Raw-v7 spacecraft LoRa TX/RX-health snapshot.
+  // Spacecraft LoRa TX/RX health.
   lora_last_event?: number
   lora_last_event_name?: string
   lora_consecutive_failures?: number
   lora_recovery_count?: number
-  lora_last_success_ms?: number
   lora_rx_mode_active?: number
   lora_last_rx_status?: number
   lora_last_rx_status_name?: string
-  lora_rx_packet_count?: number
-  lora_rx_crc_error_count?: number
   lora_ack_timeout_count?: number
-  lora_last_rx_ms?: number
+  lora_tx_fault_count?: number | null
 
   [key: string]: unknown
 }

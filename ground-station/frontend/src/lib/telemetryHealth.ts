@@ -12,16 +12,26 @@ export function rawFlagIsValid(value: unknown) {
   return value === 1 || value === true
 }
 
-export function equipmentFaultMask(row: TelemetryRow | null) {
-  const value = row?.scv_equipment_faults
-
+function parseEquipmentMask(value: unknown) {
   if (typeof value === "number" && Number.isInteger(value)) return value
   if (typeof value === "string") {
     const parsed = Number.parseInt(value, 0)
     return Number.isNaN(parsed) ? null : parsed
   }
-
   return null
+}
+
+export function equipmentEnabledMask(row: TelemetryRow | null) {
+  return parseEquipmentMask(row?.scv_equipment_enabled)
+}
+
+export function isEquipmentEnabled(row: TelemetryRow | null, equipment: number) {
+  const mask = equipmentEnabledMask(row)
+  return mask === null ? undefined : (mask & equipment) !== 0
+}
+
+export function equipmentFaultMask(row: TelemetryRow | null) {
+  return parseEquipmentMask(row?.scv_equipment_faults)
 }
 
 export function hasEquipmentFault(row: TelemetryRow | null, equipment: number) {

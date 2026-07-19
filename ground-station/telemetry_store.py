@@ -113,6 +113,8 @@ class TelemetryStore:
             # Time and state
             "utc_timestamp",
             "obc_uptime_ms",
+            "sample_age_ms",
+            "gnss_utc_sod",
             "flight_state",
             "flight_state_name",
 
@@ -145,11 +147,15 @@ class TelemetryStore:
             "latitude_deg",
             "longitude_deg",
             "gnss_altitude_m",
-            "gnss_hdop",
-            "gnss_vdop",
             "ground_speed_ms",
             "vertical_speed_ms",
             "course_deg",
+            "latitude_e7",
+            "longitude_e7",
+            "gnss_altitude_dm",
+            "vertical_speed_cms",
+            "ground_speed_cms",
+            "course_cdeg",
 
             # Barometer
             "baro_pressure_pa",
@@ -163,8 +169,14 @@ class TelemetryStore:
             "gyro_x_rads",
             "gyro_y_rads",
             "gyro_z_rads",
-            "imu_temperature_c",
-            "mcu_temperature_c",
+            "accel_x_mg",
+            "accel_y_mg",
+            "accel_z_mg",
+            "gyro_x_ddeg_s",
+            "gyro_y_ddeg_s",
+            "gyro_z_ddeg_s",
+            "baro_altitude_dm",
+            "baro_temperature_cdeg",
 
             # Reset cause
             "reset_cause_raw",
@@ -179,17 +191,11 @@ class TelemetryStore:
 
             # System counters
             "boot_count",
-            "sd_log_record_counter",
             "sd_error_counter",
-            "sensor_error_counter",
-            "command_counter",
 
             # Uplink quality reported by OBC
-            "last_uplink_rssi_dbm",
-            "last_uplink_snr_db",
 
-            # Raw v7 datapool and SCV snapshot
-            "datapool_timestamp_ms",
+            # V8 validity, engineering, and spacecraft-health values
             "gps_valid_raw",
             "imu_accel_x_g",
             "imu_accel_y_g",
@@ -203,47 +209,37 @@ class TelemetryStore:
             "i2c_bus_state_raw",
             "batt_valid_raw",
             "coral_valid_raw",
-            "scv_magic",
             "scv_mission_elapsed_ms",
             "scv_equipment_enabled",
             "scv_equipment_faults",
-            "scv_gps_timeout_count",
-            "scv_imu_timeout_count",
-            "scv_baro_timeout_count",
-            "scv_coral_timeout_count",
             "scv_sd_fault_count",
             "scv_watchdog_reset_count",
-            "scv_last_batt_mv",
-            "scv_baro_ground_alt_cm",
-            "scv_crc16",
             "reset_reason_name",
 
             # Ground-to-flight command/acknowledgement snapshot
-            "uplink_last_command",
-            "uplink_last_command_name",
             "uplink_last_status",
             "uplink_last_status_name",
             "uplink_last_command_id",
-            "uplink_last_ack_sequence",
-            "uplink_command_count",
+            "uplink_last_ack_status",
+            "uplink_last_ack_status_name",
 
             # Minimal LoRa FDIR snapshot
             "lora_last_event",
             "lora_last_event_name",
             "lora_consecutive_failures",
             "lora_recovery_count",
-            "lora_last_success_ms",
             "lora_rx_mode_active",
             "lora_last_rx_status",
             "lora_last_rx_status_name",
-            "lora_rx_packet_count",
-            "lora_rx_crc_error_count",
             "lora_ack_timeout_count",
-            "lora_last_rx_ms",
+            "lora_tx_fault_count",
 
             # Coral payload
             "coral_status",
             "coral_result_age_s",
+            "coral_sequence_low",
+            "coral_fraction_q16",
+            "coral_fraction_percent",
             "coral_payload_text",
             "coral_payload_hex",
         ]
@@ -386,6 +382,8 @@ class TelemetryStore:
             # Time and state
             "utc_timestamp": telemetry_packet.utc_timestamp,
             "obc_uptime_ms": telemetry_packet.obc_uptime_ms,
+            "sample_age_ms": telemetry_packet.sample_age_ms,
+            "gnss_utc_sod": telemetry_packet.gnss_utc_sod,
             "flight_state": telemetry_packet.flight_state,
             "flight_state_name": telemetry_packet.flight_state_name,
 
@@ -418,11 +416,15 @@ class TelemetryStore:
             "latitude_deg": telemetry_packet.latitude_deg,
             "longitude_deg": telemetry_packet.longitude_deg,
             "gnss_altitude_m": telemetry_packet.gnss_altitude_m,
-            "gnss_hdop": telemetry_packet.gnss_hdop,
-            "gnss_vdop": telemetry_packet.gnss_vdop,
             "ground_speed_ms": telemetry_packet.ground_speed_ms,
             "vertical_speed_ms": telemetry_packet.vertical_speed_ms,
             "course_deg": telemetry_packet.course_deg,
+            "latitude_e7": telemetry_packet.latitude_e7,
+            "longitude_e7": telemetry_packet.longitude_e7,
+            "gnss_altitude_dm": telemetry_packet.gnss_altitude_dm,
+            "vertical_speed_cms": telemetry_packet.vertical_speed_cms,
+            "ground_speed_cms": telemetry_packet.ground_speed_cms,
+            "course_cdeg": telemetry_packet.course_cdeg,
 
             # Barometer
             "baro_pressure_pa": telemetry_packet.baro_pressure_pa,
@@ -436,8 +438,14 @@ class TelemetryStore:
             "gyro_x_rads": telemetry_packet.gyro_x_rads,
             "gyro_y_rads": telemetry_packet.gyro_y_rads,
             "gyro_z_rads": telemetry_packet.gyro_z_rads,
-            "imu_temperature_c": telemetry_packet.imu_temperature_c,
-            "mcu_temperature_c": telemetry_packet.mcu_temperature_c,
+            "accel_x_mg": telemetry_packet.accel_x_mg,
+            "accel_y_mg": telemetry_packet.accel_y_mg,
+            "accel_z_mg": telemetry_packet.accel_z_mg,
+            "gyro_x_ddeg_s": telemetry_packet.gyro_x_ddeg_s,
+            "gyro_y_ddeg_s": telemetry_packet.gyro_y_ddeg_s,
+            "gyro_z_ddeg_s": telemetry_packet.gyro_z_ddeg_s,
+            "baro_altitude_dm": telemetry_packet.baro_altitude_dm,
+            "baro_temperature_cdeg": telemetry_packet.baro_temperature_cdeg,
 
             # Reset cause
             "reset_cause_raw": telemetry_packet.reset_cause_raw,
@@ -452,23 +460,19 @@ class TelemetryStore:
 
             # System counters
             "boot_count": telemetry_packet.boot_count,
-            "sd_log_record_counter": telemetry_packet.sd_log_record_counter,
             "sd_error_counter": telemetry_packet.sd_error_counter,
-            "sensor_error_counter": telemetry_packet.sensor_error_counter,
-            "command_counter": telemetry_packet.command_counter,
 
-            # Uplink link quality reported by OBC
-            "last_uplink_rssi_dbm": telemetry_packet.last_uplink_rssi_dbm,
-            "last_uplink_snr_db": telemetry_packet.last_uplink_snr_db,
 
             # Coral
             "coral_status": telemetry_packet.coral_status,
             "coral_result_age_s": telemetry_packet.coral_result_age_s,
+            "coral_sequence_low": telemetry_packet.coral_sequence_low,
+            "coral_fraction_q16": telemetry_packet.coral_fraction_q16,
+            "coral_fraction_percent": telemetry_packet.coral_fraction_percent,
             "coral_payload_text": telemetry_packet.coral_payload_text,
             "coral_payload_hex": telemetry_packet.coral_payload_raw.hex(" "),
 
-            # Raw v7 datapool and SCV snapshot (no flight-side unit conversion).
-            "datapool_timestamp_ms": telemetry_packet.datapool_timestamp_ms,
+            # V8 raw wire and spacecraft-health values.
             "gps_valid_raw": telemetry_packet.gps_valid_raw,
             "imu_accel_x_g": telemetry_packet.imu_accel_x_g,
             "imu_accel_y_g": telemetry_packet.imu_accel_y_g,
@@ -482,39 +486,26 @@ class TelemetryStore:
             "i2c_bus_state_raw": telemetry_packet.i2c_bus_state_raw,
             "batt_valid_raw": telemetry_packet.batt_valid_raw,
             "coral_valid_raw": telemetry_packet.coral_valid_raw,
-            "scv_magic": f"0x{telemetry_packet.scv_magic:04X}",
             "scv_mission_elapsed_ms": telemetry_packet.scv_mission_elapsed_ms,
             "scv_equipment_enabled": f"0x{telemetry_packet.scv_equipment_enabled:04X}",
             "scv_equipment_faults": f"0x{telemetry_packet.scv_equipment_faults:04X}",
-            "scv_gps_timeout_count": telemetry_packet.scv_gps_timeout_count,
-            "scv_imu_timeout_count": telemetry_packet.scv_imu_timeout_count,
-            "scv_baro_timeout_count": telemetry_packet.scv_baro_timeout_count,
-            "scv_coral_timeout_count": telemetry_packet.scv_coral_timeout_count,
             "scv_sd_fault_count": telemetry_packet.scv_sd_fault_count,
             "scv_watchdog_reset_count": telemetry_packet.scv_watchdog_reset_count,
-            "scv_last_batt_mv": telemetry_packet.scv_last_batt_mv,
-            "scv_baro_ground_alt_cm": telemetry_packet.scv_baro_ground_alt_cm,
-            "scv_crc16": f"0x{telemetry_packet.scv_crc16:04X}",
             "reset_reason_name": telemetry_packet.reset_reason_name,
-            "uplink_last_command": telemetry_packet.uplink_last_command,
-            "uplink_last_command_name": telemetry_packet.uplink_last_command_name,
             "uplink_last_status": telemetry_packet.uplink_last_status,
             "uplink_last_status_name": telemetry_packet.uplink_last_status_name,
             "uplink_last_command_id": telemetry_packet.uplink_last_command_id,
-            "uplink_last_ack_sequence": telemetry_packet.uplink_last_ack_sequence,
-            "uplink_command_count": telemetry_packet.uplink_command_count,
+            "uplink_last_ack_status": telemetry_packet.uplink_last_ack_status,
+            "uplink_last_ack_status_name": telemetry_packet.uplink_last_ack_status_name,
             "lora_last_event": telemetry_packet.lora_last_event,
             "lora_last_event_name": telemetry_packet.lora_last_event_name,
             "lora_consecutive_failures": telemetry_packet.lora_consecutive_failures,
             "lora_recovery_count": telemetry_packet.lora_recovery_count,
-            "lora_last_success_ms": telemetry_packet.lora_last_success_ms,
             "lora_rx_mode_active": telemetry_packet.lora_rx_mode_active,
             "lora_last_rx_status": telemetry_packet.lora_last_rx_status,
             "lora_last_rx_status_name": telemetry_packet.lora_last_rx_status_name,
-            "lora_rx_packet_count": telemetry_packet.lora_rx_packet_count,
-            "lora_rx_crc_error_count": telemetry_packet.lora_rx_crc_error_count,
             "lora_ack_timeout_count": telemetry_packet.lora_ack_timeout_count,
-            "lora_last_rx_ms": telemetry_packet.lora_last_rx_ms,
+            "lora_tx_fault_count": telemetry_packet.lora_tx_fault_count,
         }
 
         return row

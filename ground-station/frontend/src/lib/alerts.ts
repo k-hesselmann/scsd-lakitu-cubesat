@@ -2,6 +2,8 @@ import type { BackendStatus, TelemetryRow } from "@/types/telemetry"
 import { packetAgeSeconds } from "@/lib/format"
 import {
   EQUIPMENT_BARO,
+  EQUIPMENT_CORAL,
+  EQUIPMENT_EPS_ADC,
   EQUIPMENT_GPS,
   EQUIPMENT_IMU,
   EQUIPMENT_LORA,
@@ -10,7 +12,7 @@ import {
   hasEquipmentFault,
   isLoraFailureEvent,
   rawFlagIsValid,
-} from "@/lib/v4Telemetry"
+} from "@/lib/telemetryHealth"
 import {
   defaultAlertThresholds,
   type AlertThresholds,
@@ -83,8 +85,8 @@ export function buildMissionAlerts({
     alerts.push({
       id: "no-telemetry",
       level: "warning",
-      title: "No v7 telemetry received",
-      message: "The backend has not received a valid raw-v7 telemetry packet.",
+      title: "No v8 telemetry received",
+      message: "The backend has not received a valid protocol-v8 telemetry packet.",
     })
     return alerts
   }
@@ -122,7 +124,7 @@ export function buildMissionAlerts({
       id: "unsupported-packet",
       level: "critical",
       title: "Unsupported telemetry packet",
-      message: "The packet is not the expected raw-v7 telemetry layout.",
+      message: "The packet is not the expected protocol-v8 telemetry layout.",
     })
   }
 
@@ -131,7 +133,7 @@ export function buildMissionAlerts({
       id: "gps-invalid",
       level: "warning",
       title: "GPS data invalid",
-      message: "The raw-v7 GPS validity flag is not set.",
+      message: "The v8 GNSS validity flag is not set.",
     })
   }
 
@@ -146,7 +148,7 @@ export function buildMissionAlerts({
         id,
         level: "warning",
         title,
-        message: "The corresponding raw-v7 validity flag is not set.",
+        message: "The corresponding v8 validity flag is not set.",
       })
     }
   }
@@ -173,6 +175,8 @@ export function buildMissionAlerts({
     ["gps-fault", "GPS equipment fault", EQUIPMENT_GPS],
     ["imu-fault", "IMU equipment fault", EQUIPMENT_IMU],
     ["baro-fault", "Barometer equipment fault", EQUIPMENT_BARO],
+    ["battery-adc-fault", "Battery ADC equipment fault", EQUIPMENT_EPS_ADC],
+    ["coral-fault", "Coral equipment fault", EQUIPMENT_CORAL],
     ["sd-fault", "SD equipment fault", EQUIPMENT_SD],
   ] as const) {
     if (hasEquipmentFault(latest, equipment)) {
@@ -180,7 +184,7 @@ export function buildMissionAlerts({
         id,
         level: "critical",
         title,
-        message: "The raw-v7 SCV equipment-fault mask reports this subsystem fault.",
+        message: "The v8 equipment-fault mask reports this subsystem fault.",
       })
     }
   }
@@ -254,12 +258,12 @@ export function buildMissionAlerts({
     })
   }
 
-  if (latest.uplink_last_status_name === "UNEXPECTED_ACK") {
+  if (latest.uplink_last_ack_status_name === "UNEXPECTED_ACK") {
     alerts.push({
       id: "unexpected-telemetry-ack",
       level: "warning",
       title: "Flight received an unexpected telemetry ACK",
-      message: `The ACK did not match the outstanding flight telemetry sequence. Last ACK sequence: ${latest.uplink_last_ack_sequence ?? "unknown"}.`,
+      message: "The ACK did not match the outstanding flight telemetry sequence.",
     })
   }
 

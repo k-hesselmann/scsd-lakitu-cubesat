@@ -3,7 +3,7 @@ import { fmt } from "@/lib/format"
 import type { TelemetryRow } from "@/types/telemetry"
 
 export function LatestPacketTable({ latest }: { latest: TelemetryRow | null }) {
-  if (!latest) return <p className="text-sm text-muted-foreground">No raw-v7 telemetry received yet.</p>
+  if (!latest) return <p className="text-sm text-muted-foreground">No protocol-v8 telemetry received yet.</p>
 
   const rows: [string, string][] = [
     ["Ground receive time", fmt(latest.pc_receive_time_iso)], ["Sequence", fmt(latest.sequence_number)],
@@ -14,7 +14,8 @@ export function LatestPacketTable({ latest }: { latest: TelemetryRow | null }) {
     ["Pressure", fmt(latest.baro_pressure_pa, " Pa")], ["Barometer temperature", fmt(latest.baro_temperature_c, " °C", 2)],
     ["Ground RX RSSI", fmt(latest.lora_downlink_rssi_dbm, " dBm")], ["Ground RX SNR", fmt(latest.lora_downlink_snr_db, " dB", 1)],
     ["Telemetry CRC valid", fmt(latest.crc_ok)], ["SCV equipment faults", fmt(latest.scv_equipment_faults)],
-    ["Spacecraft LoRa event", fmt(latest.lora_last_event_name)], ["Coral payload", fmt(latest.coral_payload_text)],
+    ["Spacecraft LoRa event", fmt(latest.lora_last_event_name)], ["Coral cloud fraction", fmt(latest.coral_fraction_percent, "%", 2)],
+    ["Coral status", fmt(latest.coral_status)], ["Coral result age", fmt(latest.coral_result_age_s, " s")],
   ]
 
   return <Table><TableBody>{rows.map(([name, value]) => <TableRow key={name}><TableCell className="font-medium">{name}</TableCell><TableCell>{value}</TableCell></TableRow>)}</TableBody></Table>
