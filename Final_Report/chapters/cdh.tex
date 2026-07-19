@@ -9,7 +9,7 @@ condenses the results into a single shared data structure -- the
 software (FSW, FDIR, TT\&C, and SD logging) to consume. Its
 responsibilities are:
 
-\begin{itemize}[nosep]
+\begin{itemize}
   \item \textbf{Sensor acquisition.} Drive the GPS (u-blox MAX-M10S), the
         IMU (MPU-6050), the barometer (MS5607), and the EPS battery-voltage
         monitor, each through a dedicated equipment handler.
@@ -58,16 +58,16 @@ other subsystem -- is shown in Figure~\ref{fig:cdh-architecture}.
 
 \begin{table}[H]
 \centering
-\begin{tabular}{lll}
+\begin{tabular}{p{3.8cm}p{3.8cm}p{6.2cm}}
 \toprule
 \textbf{Direction} & \textbf{Peer} & \textbf{Contents} \\
 \midrule
-Sensors $\rightarrow$ CDH   & MAX-M10S, MPU-6050, MS5607, EPS & raw position, motion, pressure, voltage \\
-CDH $\rightarrow$ datapool  & \texttt{g\_datapool}            & validated \texttt{SensorData\_t} snapshot \\
-datapool $\rightarrow$ FSW  & flight state machine            & altitude, acceleration, validity flags \\
-datapool $\rightarrow$ FDIR & fault management                & \texttt{*\_valid} flags, fault counts \\
-datapool $\rightarrow$ TT\&C & telemetry                      & full snapshot for downlink \\
-datapool $\rightarrow$ SD   & SD logger                       & full snapshot for the 1~Hz housekeeping log \\
+Sensors $\rightarrow$ CDH & MAX-M10S, MPU-6050, MS5607, EPS & raw position, motion, pressure, voltage \\
+CDH $\rightarrow$ datapool & \texttt{g\_datapool} & validated \texttt{SensorData\_t} snapshot \\
+datapool $\rightarrow$ FSW & flight state machine & altitude, acceleration, validity flags \\
+datapool $\rightarrow$ FDIR & fault management & \texttt{*\_valid} flags, fault counts \\
+datapool $\rightarrow$ TT\&C & telemetry & full snapshot for downlink \\
+datapool $\rightarrow$ SD & SD logger & full snapshot for the 1~Hz housekeeping log \\
 \bottomrule
 \end{tabular}
 \caption{CDH data flow: one producer, many consumers.}
@@ -96,17 +96,17 @@ validity flag (Table~\ref{tab:cdh-datapool}).
 
 \begin{table}[H]
 \centering
-\begin{tabular}{lll}
+\begin{tabular}{p{2.1cm}p{8.9cm}p{2.6cm}}
 \toprule
 \textbf{Group} & \textbf{Representative fields} & \textbf{Validity} \\
 \midrule
-Time      & \texttt{timestamp\_ms}                                          & --- \\
-GPS       & \texttt{gps\_lat\_deg}, \texttt{gps\_alt\_m}, \texttt{gps\_fix\_type}, \texttt{gps\_num\_satellites} & \texttt{gps\_valid} \\
-IMU       & \texttt{imu\_accel\_\{x,y,z\}\_g}, \texttt{imu\_accel\_mag\_g}, \texttt{imu\_gyro\_\{x,y,z\}\_dps} & \texttt{imu\_valid} \\
+Time & \texttt{timestamp\_ms} & --- \\
+GPS & \texttt{gps\_lat\_deg}, \texttt{gps\_alt\_m}, \texttt{gps\_fix\_type}, \texttt{gps\_num\_satellites} & \texttt{gps\_valid} \\
+IMU & \texttt{imu\_accel\_\{x,y,z\}\_g}, \texttt{imu\_accel\_mag\_g}, \texttt{imu\_gyro\_\{x,y,z\}\_dps} & \texttt{imu\_valid} \\
 Barometer & \texttt{baro\_pressure\_pa}, \texttt{baro\_alt\_m}, \texttt{baro\_temp\_c} & \texttt{baro\_valid} \\
-EPS       & \texttt{batt\_voltage\_mv}                                       & \texttt{batt\_valid} \\
-Payload   & \texttt{coral\_block[16]}                                        & \texttt{coral\_valid} \\
-Bus       & \texttt{i2c\_bus\_state}                                         & --- \\
+EPS & \texttt{batt\_voltage\_mv} & \texttt{batt\_valid} \\
+Payload & \texttt{coral\_block[16]} & \texttt{coral\_valid} \\
+Bus & \texttt{i2c\_bus\_state} & --- \\
 \bottomrule
 \end{tabular}
 \caption{\texttt{SensorData\_t} datapool groups. Consumers check the
@@ -189,7 +189,7 @@ own flight phase and reset bookkeeping.
 \textbf{Memory footprint.} The datapool is deliberately small enough to be
 irrelevant to the memory budget of the platform's STM32L476RG
 (Table~\ref{tab:cdh-memory}). The live datapool and its persistent shadow
-together occupy 131~B of the 128~KB SRAM -- under 0.1\,\%; even the full
+together occupy 131~B of the 128~KB SRAM -- under 0.1\%; even the full
 downlink packet that re-serializes them adds only $\sim$155~B. Storing raw
 fixed-width types rather than expanded engineering structures keeps it that
 way; the platform's real SRAM pressure comes from the payload image frame
@@ -201,17 +201,17 @@ detected on boot.
 
 \begin{table}[H]
 \centering
-\begin{tabular}{lrl}
+\begin{tabular}{p{6.3cm}rp{6.0cm}}
 \toprule
 \textbf{Item} & \textbf{Size} & \textbf{Footprint} \\
 \midrule
 STM32L476RG SRAM (SRAM1 96~KB + SRAM2 32~KB) & 128~KB & --- \\
-\texttt{g\_datapool} (\texttt{SensorData\_t}, live)     & 98~B  & 0.07\,\% of SRAM \\
-\texttt{g\_scv} (\texttt{SCV\_t}, RAM copy)             & 33~B  & 0.03\,\% of SRAM \\
-\texttt{TelemetryPacket\_t} (downlink serialization)    & 155~B & 0.12\,\% of SRAM \\
+\texttt{g\_datapool} (\texttt{SensorData\_t}, live) & 98~B & 0.07\% of SRAM \\
+\texttt{g\_scv} (\texttt{SCV\_t}, RAM copy) & 33~B & 0.03\% of SRAM \\
+\texttt{TelemetryPacket\_t} (downlink serialization) & 155~B & 0.12\% of SRAM \\
 \midrule
-STM32L476RG flash                                       & 1~MB  & firmware image \\
-SCV persistence page @ \texttt{0x080FF800}              & 2~KB  & last flash page; holds the 33-B SCV (CRC incl.) \\
+STM32L476RG flash & 1~MB & firmware image \\
+SCV persistence page @ \texttt{0x080FF800} & 2~KB & last flash page; holds the 33-B SCV (CRC incl.) \\
 \bottomrule
 \end{tabular}
 \caption{CDH data structures against STM32L476RG memory.}
@@ -248,12 +248,12 @@ some 800~KB of unused flash (Table~\ref{tab:cdh-nvm-budget}).
 \toprule
 \textbf{Region} & \textbf{Size} & \textbf{Share} \\
 \midrule
-Firmware image (\texttt{.text}/\texttt{.rodata}/\texttt{.data})   & $\sim$109~KB & $\sim$10.6\,\% \\
-Unused / available                                                & $\sim$809~KB & $\sim$79.0\,\% \\
-Datapool backup (\texttt{0x080E5800}--\texttt{0x080FF7FF})        & 104~KB       & 10.2\,\% \\
-SCV persistence (\texttt{0x080FF800}--\texttt{0x080FFFFF})        & 2~KB         & 0.2\,\% \\
+Firmware image (\texttt{.text}/\texttt{.rodata}/\texttt{.data})   & $\sim$109~KB & $\sim$10.6\% \\
+Unused / available                                                & $\sim$809~KB & $\sim$79.0\% \\
+Datapool backup (\texttt{0x080E5800}--\texttt{0x080FF7FF})        & 104~KB       & 10.2\% \\
+SCV persistence (\texttt{0x080FF800}--\texttt{0x080FFFFF})        & 2~KB         & 0.2\% \\
 \midrule
-\textbf{Total flash}                                              & \textbf{1024~KB} & \textbf{100\,\%} \\
+\textbf{Total flash}                                              & \textbf{1024~KB} & \textbf{100\%} \\
 \bottomrule
 \end{tabular}
 \caption{STM32L476RG flash budget, including the reserved non-volatile regions.}
@@ -379,7 +379,7 @@ fails to acknowledge on the bus. On top of that, a central validation pass
 (\texttt{SensorValidation\_Update}) runs every cycle after all handlers
 have reported and applies cross-checks that need the assembled datapool:
 
-\begin{itemize}[nosep]
+\begin{itemize}
   \item \textbf{Barometer.} Reject non-physical pressure
         ($<0$ or $>1519$~hPa) or temperature ($<-100$\,\textdegree C).
   \item \textbf{GPS.} Require a non-zero fix; reject altitude outside
