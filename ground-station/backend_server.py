@@ -36,7 +36,7 @@ class BackendConfig:
     history = 1000
     log_dir = "logs"
 
-    frequency_hz = 868100000
+    frequency_hz = 868000000
     spreading_factor = 9
     sync_word = 0x12
     tx_power_dbm = 10
