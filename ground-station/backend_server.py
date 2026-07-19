@@ -36,7 +36,7 @@ class BackendConfig:
     history = 1000
     log_dir = "logs"
 
-    frequency_hz = 868100000
+    frequency_hz = 868000000
     spreading_factor = 9
     sync_word = 0x12
     tx_power_dbm = 10
@@ -601,7 +601,7 @@ def telemetry_receiver_worker():
             )
             log_ground_event(
                 "telemetry_received",
-                message=f"Received raw-v7 telemetry sequence {telemetry.sequence_number}",
+                message=f"Received v{telemetry.protocol_version} telemetry sequence {telemetry.sequence_number}",
                 sequence_number=telemetry.sequence_number,
                 lora_rssi_dbm=packet.get("rssi_dbm"),
                 lora_snr_db=packet.get("snr_db"),

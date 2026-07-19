@@ -18,11 +18,16 @@ void TTC_RequestTelemetry(void);
 /* Return 1 when a new telemetry packet should be built and queued. */
 uint8_t TTC_TelemetryDue(void);
 
+/* Assemble a protocol-v8 telemetry packet (with CRC) from the current
+ * datapool and SCV state. Call before TTC_Transmit(). */
+void TTC_BuildTelemetryPacket(const SensorData_t *dp, const SCV_t *scv,
+                              TelemetryPacket_t *pkt);
+
 /* Queue one telemetry packet. It never waits for the modem or elapsed time. */
 void TTC_Transmit(const TelemetryPacket_t *pkt);
 
-/* Existing volatile telemetry snapshots. Their layout is intentionally
- * unchanged for protocol-v7 compatibility. */
+/* Volatile health and independently latched command/ACK state consumed by the
+ * compact protocol-v8 packet builder. */
 const LoRaHealth_t *TTC_GetHealth(void);
 const UplinkState_t *TTC_GetUplinkState(void);
 

@@ -8,19 +8,25 @@ The project can be used with:
 
 ## RFM95W raw telemetry downlink
 
-The normal superloop builds and sends a **155-byte protocol-v7** telemetry frame
-from the latest `g_datapool` and `g_scv` values. The packet contains direct
-copies of selected source values, validity flags, Coral block, all SCV fields, and a compact volatile LoRa FDIR health snapshot;
-the flight MCU performs no engineering-unit rescaling. CRC-16/CCITT is the only
-additional processing. The ground station converts accelerometer g values to
-m/s? and gyro deg/s values to rad/s for display.
+The normal superloop builds and sends a **92-byte protocol-v8** telemetry frame
+from the latest `g_datapool`, `g_scv`, and TTC health values. The packed wire
+format contains only fixed-width integers, explicit fixed-point scaling,
+validity bits, operational FDIR masks, compact Coral results, and CRC-16/CCITT.
+The ground station accepts only this 92-byte v8 frame and converts its wire
+values back to engineering units.
 
-TTC normally transmits every 20 seconds, but queues an immediate packet after a flight-state transition or a valid ground command. It accepts reliable `CMD,<id>,REQ_TELEMETRY` commands and `ACK,<sequence>` telemetry acknowledgements. Flight retries an unacknowledged packet up to three times using the same sequence, while ground retries commands with the same ID until flight echoes acceptance.
-After the third unacknowledged attempt, flight records `ACK_TIMEOUT` and increments `lora_ack_timeout_count`. A separate 16-ID sliding replay window rejects repeated or stale command IDs even when a later telemetry ACK changes the displayed uplink state.
+TTC normally transmits every 20 seconds, but queues an immediate packet after a
+flight-state transition or valid ground command. It accepts reliable
+`CMD,<id>,REQ_TELEMETRY` commands and `ACK,<sequence>` telemetry
+acknowledgements. Flight retries an unacknowledged packet up to three times
+using the exact same bytes and sequence. Command confirmation and telemetry-ACK
+status are independently latched, so ACK processing cannot hide a command
+response before ground receives it.
 
-Some legacy ground-station fields (UTC, GNSS fix quality/HDOP/course, IMU/MCU
-temperatures, command/link counters) are deliberately marked unavailable until
-those sources exist in `SensorData_t` or `SCV_t`.
+V8 includes GNSS UTC, fix type, satellites, and course; all IMU axes; barometer
+pressure/altitude/temperature; battery voltage; Coral cloud fraction/status;
+and the health values used by the dashboard. HDOP/VDOP and IMU/MCU temperatures
+remain unavailable because no onboard producer currently supplies them.
 
 The radio uses SPI1: PA5/D13 = SCK, PA6/D12 = MISO, and PA7/D11 = MOSI.
 Connect RFM95W NSS to PB6/D10 and RESET to PC7/D9. The SD card uses SPI2.
@@ -28,8 +34,8 @@ Connect RFM95W NSS to PB6/D10 and RESET to PC7/D9. The SD card uses SPI2.
 
 ### LoRa FDIR
 
-The packet also carries `lora_last_event`, consecutive-failure count,
-recovery-attempt count, and the tick of the latest successful `TxDone`.
+The packet also carries `lora_last_event`, consecutive and lifetime TX-failure
+counts, recovery-attempt count, RX state, and telemetry-ACK timeout count.
 `EQUIPMENT_LORA` remains the high-level SCV fault bit.  TTC resets and
 reinitializes the RFM95W after three consecutive SPI/TX failures; further
 recovery attempts are rate-limited to one per minute.  These fields describe

@@ -35,7 +35,7 @@ void CDH_Init(void)
     if (s_baro.baro_valid)
         s_ground_baro_alt_m = s_baro.data.altitude;
 
-    Coral_Init();   /* UART5 already init by MX_UART5_Init() in main.c */
+    Coral_Init();   /* USART3 already init by MX_USART3_UART_Init() in main.c */
 
 }
 
@@ -111,7 +111,6 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
     /* ---- Battery voltage (PA0 = ADC1_IN5, 22k/10k divider) ---- */
     dp->batt_valid = BatteryADC_Read(&hadc1, &dp->batt_voltage_mv);
 
-    Coral_Update(dp);
 }
 
 /* ------------------------------------------------------------------ */

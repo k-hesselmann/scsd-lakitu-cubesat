@@ -8,7 +8,7 @@ import { useCurrentTime } from "@/hooks/useCurrentTime"
 import { useGroundEventLogger } from "@/hooks/useGroundEventLogger"
 import { buildMissionAlerts } from "@/lib/alerts"
 import { fmt, packetAgeSeconds } from "@/lib/format"
-import { rawFlagIsValid } from "@/lib/v4Telemetry"
+import { rawFlagIsValid } from "@/lib/telemetryHealth"
 import type { BackendStatus, TelemetryRow } from "@/types/telemetry"
 
 type SpokenAlert = { level: "warning" | "critical"; title: string }
@@ -125,7 +125,7 @@ export function MissionStrip({
         <div><div className="text-muted-foreground">Phase</div><div className="font-semibold">{fmt(latest?.flight_state_name)}</div></div>
         <div><div className="text-muted-foreground">Battery</div><div className="font-semibold">{fmt(latest?.battery_v, " V", 2)}</div></div>
         <div><div className="text-muted-foreground">GPS</div><div className="font-semibold"><Satellite className="mr-1 inline h-3 w-3" />{latest ? (gpsValid ? "VALID" : "INVALID") : "—"}</div></div>
-        <div><div className="text-muted-foreground">GPS altitude</div><div className="font-semibold">{fmt(latest?.gnss_altitude_m, " m", 1)}</div></div>
+        <div><div className="text-muted-foreground">Sensor sample age</div><div className="font-semibold">{fmt(latest?.sample_age_ms, " ms")}</div></div>
         <div><div className="text-muted-foreground">Ground RX RSSI</div><div className="font-semibold">{fmt(latest?.lora_downlink_rssi_dbm, " dBm")}</div></div>
         <div><div className="text-muted-foreground">Ground RX SNR</div><div className="font-semibold">{fmt(latest?.lora_downlink_snr_db, " dB", 1)}</div></div>
         <div><div className="text-muted-foreground">Packet age</div><div className="font-semibold">{age === null ? "—" : `${age.toFixed(1)} s`}</div></div>

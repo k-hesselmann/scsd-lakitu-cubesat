@@ -1,9 +1,11 @@
 /* ============================================================================
- * coral.h  —  OBC <-> Coral Dev Board Micro UART5 interface header
+ * coral.h  —  OBC <-> Coral Dev Board Micro USART3 interface header
  *
  * Protocol reference: UART_PROTOCOL.md v1.0 (interface_docs/)
  *
- * Transport : UART5   PC12=TX (OBC->Coral)   PD2=RX (Coral->OBC)   115200 8N1
+ * Transport : USART3  PC10=TX (OBC->Coral)   PC11=RX (Coral->OBC)  115200 8N1
+ *             PC10 (TX) is OPEN-DRAIN + external 2.2k pull-up to the Coral 1.8 V
+ *             rail (3.3 V/1.8 V level shift). See UART_PROTOCOL.md section 1.1.
  * ========================================================================== */
 
 #ifndef CDH_CORAL_H
@@ -22,6 +24,8 @@
 /* ---- OBC -> Coral command bytes (no SOF prefix, UART_PROTOCOL.md section 4) */
 #define CORAL_CMD_TRIGGER        0x10U   /* trigger immediate inference         */
 #define CORAL_CMD_SET_INTERVAL   0x11U   /* set periodic interval (uint32 ms)  */
+#define CORAL_CMD_SLEEP          0x17U   /* suspend inference (auto-wakes 5 min) */
+#define CORAL_CMD_WAKE           0x18U   /* resume inference                    */
 
 /* ---- Image geometry (224x224 Y8 grayscale) ------------------------------ */
 #define CORAL_IMAGE_W            224U
@@ -40,8 +44,8 @@
  *   [12..13] FRAME_CNT  uint16 -- good-frame counter (wraps at 65535)
  *   [14..15] reserved   zero
  *
- * TelemetryPacket_t carries the full 16-byte coral_block snapshot.
- * (SEQ + FRAC_RAW + FRAC_PCT + STATUS)
+ * Telemetry v8 carries SEQ low 16 bits, FRAC_RAW, STATUS, and result age;
+ * the full block remains available in the SD log.
  * ---------------------------------------------------------------------- */
 #define CORAL_STATUS_OK          0x00U
 #define CORAL_STATUS_TIMEOUT     0x01U   /* UART receive timeout               */
@@ -51,7 +55,7 @@
 
 /* ---- Public API --------------------------------------------------------- */
 
-/* Call once after MX_UART5_Init() -- before the superloop. */
+/* Call once after MX_USART3_UART_Init() -- before the superloop. */
 void Coral_Init(void);
 
 /* Call every CDH_Update() tick. Non-blocking poll; blocks only when a frame
@@ -63,5 +67,12 @@ void Coral_SendTrigger(void);
 
 /* Change the Coral autonomous inference interval (milliseconds). */
 void Coral_SendSetInterval(uint32_t interval_ms);
+
+/* Suspend the Coral's inference (SLEEP). The Coral auto-wakes after 5 min if no
+ * WAKE arrives, so to keep it asleep re-send this within that window. */
+void Coral_SendSleep(void);
+
+/* Resume the Coral's inference (WAKE); triggers one immediate capture. */
+void Coral_SendWake(void);
 
 #endif /* CDH_CORAL_H */
