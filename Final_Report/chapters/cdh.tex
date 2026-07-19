@@ -232,15 +232,15 @@ stored unfiltered, so each record additionally preserves the fault condition
 itself: the cleared validity flags and the \texttt{timestamp\_ms} that CDH
 writes at the head of every cycle irrespective of sensor health.
 
-\textbf{Flash budget.} The store occupies a reserved 80~KB region -- 40 of the
+\textbf{Flash budget.} The store occupies a reserved 104~KB region -- 52 of the
 device's 2~KB flash pages -- at the top of the 1~MB flash, immediately below
-the 2~KB SCV page. Both regions are excluded from the firmware image by
-reducing the usable flash declared to the linker to 942~KB
-(\texttt{STM32L476RGTX\_FLASH.ld}), so the linker cannot place code or
-constants within them. The allocation is conservative: the linked image
-measures approximately 109~KB, roughly one-ninth of the available flash,
-leaving the backup region separated from the image by more than 800~KB of
-unused flash (Table~\ref{tab:cdh-nvm-budget}).
+the 2~KB SCV page, and is sized to hold the entire logging window (below).
+Both regions are excluded from the firmware image by reducing the usable flash
+declared to the linker to 918~KB (\texttt{STM32L476RGTX\_FLASH.ld}), so the
+linker cannot place code or constants within them. The allocation is
+conservative: the linked image measures approximately 109~KB, roughly a ninth
+of the available flash, leaving the backup region separated from the image by
+some 800~KB of unused flash (Table~\ref{tab:cdh-nvm-budget}).
 
 \begin{table}[H]
 \centering
@@ -249,8 +249,8 @@ unused flash (Table~\ref{tab:cdh-nvm-budget}).
 \textbf{Region} & \textbf{Size} & \textbf{Share} \\
 \midrule
 Firmware image (\texttt{.text}/\texttt{.rodata}/\texttt{.data})   & $\sim$109~KB & $\sim$10.6\,\% \\
-Unused / available                                                & $\sim$833~KB & $\sim$81.4\,\% \\
-Datapool backup (\texttt{0x080EB800}--\texttt{0x080FF7FF})        & 80~KB        & 7.8\,\% \\
+Unused / available                                                & $\sim$809~KB & $\sim$79.0\,\% \\
+Datapool backup (\texttt{0x080E5800}--\texttt{0x080FF7FF})        & 104~KB       & 10.2\,\% \\
 SCV persistence (\texttt{0x080FF800}--\texttt{0x080FFFFF})        & 2~KB         & 0.2\,\% \\
 \midrule
 \textbf{Total flash}                                              & \textbf{1024~KB} & \textbf{100\,\%} \\
@@ -271,21 +271,26 @@ rely on the sequence number rather than the datapool timestamp, because
 \texttt{HAL\_GetTick()} is reset to zero at every boot, whereas the recorder is
 required to remain coherent across precisely those resets.
 
-\textbf{Interval and capacity.} At a 30~s interval the 760 available slots span
-6.3~h; the complete six-hour flight therefore fits within a single lap with
-margin, and no data is lost even should the SD card fail at lift-off. A longer
-flight wraps and retains the most recent 6.3~h, and the worst-case loss
-following an unclean reset is bounded to one 30~s interval. As one lap
-corresponds to approximately one flight, each page is erased on the order of
-once per flight, yielding of order $10^{4}$ flights against the guaranteed
-flash erase endurance; endurance is therefore not a constraint at this rate.
-The interval trades flash capacity against temporal resolution: the identical
-scheme requires 128~KB at a 20~s interval, or 40~KB at 60~s.
+\textbf{Interval, capacity, and cut-off.} At a 30~s interval the 988 available
+slots span 8.2~h. A simple timer bounds the recording: after eight hours of run
+time the recorder stops writing and the flash contents are frozen. The region
+is sized so those eight hours -- 960 records -- fill the ring without wrapping,
+so the whole flight is captured from lift-off, launch and ascent included, and
+nothing is overwritten; the $\sim$14-minute margin between the 8.2~h capacity
+and the 8~h cut-off ensures the timer halts the log before the ring can lap.
+Should the timer be disabled, the log falls back to circular behaviour and
+retains the most recent 8.2~h. Worst-case loss following an unclean reset is
+bounded to one 30~s interval. Because the ring fills once per flight, each of
+the 52 pages is erased about once per flight -- of order $10^{4}$ flights
+against the guaranteed flash erase endurance -- so endurance is not a
+constraint. The interval trades flash capacity against temporal resolution:
+covering the same eight hours costs 152~KB at a 20~s interval, or 52~KB at
+60~s.
 
 \textbf{Retrieval.} The record is recovered through the ST-Link debug interface
 integral to the Nucleo board, without removable media. A memory read of the
 reserved range (for example
-\texttt{STM32\_Programmer\_CLI -r 0x080EB800 0x14000 dump.bin}) transfers the
+\texttt{STM32\_Programmer\_CLI -r 0x080E5800 0x1A000 dump.bin}) transfers the
 region to a host file, after which an offline utility traverses it in 104-byte
 records, retains those bearing a valid magic word and CRC, and orders them by
 sequence number to reconstruct the flight time-line.
