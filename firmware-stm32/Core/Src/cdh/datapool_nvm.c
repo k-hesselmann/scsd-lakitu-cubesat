@@ -177,6 +177,12 @@ void DatapoolNVM_Store(const SensorData_t *dp)
 
 void DatapoolNVM_Update(const SensorData_t *dp)
 {
+    /* Stop after the logging window: the region is sized to hold it without
+     * wrapping, so this freezes a complete flight in flash. Manual
+     * DatapoolNVM_Store() still works (e.g. a final snapshot on shutdown). */
+    if (HAL_GetTick() >= DATAPOOL_NVM_STOP_MS)
+        return;
+
     if ((uint32_t)(HAL_GetTick() - s_last_store_ms) >= DATAPOOL_NVM_PERIOD_MS)
         DatapoolNVM_Store(dp);
 }

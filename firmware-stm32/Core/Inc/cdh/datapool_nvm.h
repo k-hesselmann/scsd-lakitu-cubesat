@@ -17,38 +17,46 @@
  * sensor values; it is a coarser record than the SD log (see the interval
  * below), which is the price of fitting a wear-safe ring in on-chip flash.
  *
- * Storage is a circular log across a reserved 80 KB region (40 x 2 KB pages)
- * at the top of flash, sized to hold an entire flight. Each snapshot carries a
- * monotonic sequence number and is appended to the next slot; a page is erased
- * once, when the write cursor first enters it on a lap -- the same
+ * Storage is a circular log across a reserved 104 KB region (52 x 2 KB pages)
+ * at the top of flash, sized to hold the whole logging window. Each snapshot
+ * carries a monotonic sequence number and is appended to the next slot; a page
+ * is erased once, when the write cursor first enters it on a lap -- the same
  * wear-friendly scheme the SCV uses (fdir/scv.c), one erase per page per lap
  * rather than one per write. The sequence number recovers the write position
  * and chronological order after a reset, when HAL_GetTick() (and thus
  * timestamp_ms) restarts from zero.
  *
- * Sizing for a 6-hour flight
- * --------------------------
+ * Logging stops after DATAPOOL_NVM_STOP_MS (8 h) of run time: the region holds
+ * more than 8 h, so the whole flight is captured from lift-off (launch and
+ * ascent included) without the ring wrapping, then the contents are frozen.
+ * The stop is on HAL_GetTick(), so a CPU reset restarts the 8 h window; the
+ * ring itself is the fallback and would keep the most recent 8.2 h if the
+ * timer never fired.
+ *
+ * Sizing
+ * ------
  *   record   = magic(2) + seq(2) + SensorData_t(98) + CRC-16(2)  = 104 B
  *              (already an 8-byte multiple: no padding, 19 fit per 2 KB page)
- *   region   = 80 KB = 40 pages -> 40 x 19                       = 760 slots
- *   capacity = 760 x 30 s                                        = 6.3 h
- *   writes   = 6 h / 30 s                                        = 720/flight
+ *   region   = 104 KB = 52 pages -> 52 x 19                      = 988 slots
+ *   capacity = 988 x 30 s                                        = 8.2 h
+ *   cut-off  = 8 h / 30 s                                        = 960 records
  *
- * The whole 6 h flight fits in one lap with margin, so nothing is lost even if
- * the SD card fails at t=0; a longer flight simply wraps and keeps the most
- * recent 6.3 h. Because a lap is roughly one flight, each page is erased about
- * once per flight -- ~10 000 flights against the guaranteed flash endurance --
- * and worst-case loss on an unclean reset is one 30 s interval.
+ * 960 records fill 988 slots without wrapping (~14 min margin), so nothing is
+ * lost even if the SD card fails at t=0. The ring fills once per flight, so
+ * each of the 52 pages is erased about once per flight -- ~10 000 flights
+ * against the guaranteed flash endurance -- and worst-case loss on an unclean
+ * reset is one 30 s interval.
  */
 #define DATAPOOL_NVM_PERIOD_MS   30000U
+#define DATAPOOL_NVM_STOP_MS     28800000U   /* 8 h: stop logging after this */
 
-/* Reserved region: the top 80 KB of flash, directly below the SCV page.
- * DP  occupies 0x080EB800..0x080FF7FF (40 pages, bank 2).
- * SCV occupies 0x080FF800..0x080FFFFF (1 page,  bank 2), immediately above.
+/* Reserved region: the top 104 KB of flash, directly below the SCV page.
+ * DP  occupies 0x080E5800..0x080FF7FF (52 pages, bank 2).
+ * SCV occupies 0x080FF800..0x080FFFFF (1 page,   bank 2), immediately above.
  * Both are excluded from the firmware image by the reduced FLASH length in
  * STM32L476RGTX_FLASH.ld. */
-#define DATAPOOL_NVM_ADDR        0x080EB800UL
-#define DATAPOOL_NVM_SIZE        0x00014000UL   /* 80 KB = 40 x 2 KB pages */
+#define DATAPOOL_NVM_ADDR        0x080E5800UL
+#define DATAPOOL_NVM_SIZE        0x0001A000UL   /* 104 KB = 52 x 2 KB pages */
 #define DATAPOOL_NVM_MAGIC       0xDA7AU
 
 /* Scan the reserved page and prime the store interval. Call once at boot. */
