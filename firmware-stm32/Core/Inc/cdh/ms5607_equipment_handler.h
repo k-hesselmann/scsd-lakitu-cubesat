@@ -15,8 +15,6 @@
 typedef struct {
   MS5607_Data data;
   MS5607_Data last_data;
-  float baseline_altitude_m;  /* Known altitude at startup for relative height */
-  float baseline_pressure_pa; /* Pressure at startup in Pa for calculations */
   uint8_t baro_valid;
   uint32_t last_good_data_ms;
   uint32_t last_data_read_ms;

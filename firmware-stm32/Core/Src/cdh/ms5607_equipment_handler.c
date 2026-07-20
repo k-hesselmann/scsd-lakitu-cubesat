@@ -13,8 +13,6 @@ MS5607_EquipmentHandler MS5607_EquipmentHandler_Init(I2C_HandleTypeDef *hi2c)
   MS5607_Init(hi2c);
 
   handler.data = MS5607_Read(hi2c);
-  handler.baseline_altitude_m = 513.0f;  /* Known altitude at this location (meters) */
-  handler.baseline_pressure_pa = handler.data.pressure * 100.0f;  /* Store in Pa for calculation */
   handler.last_data = handler.data;
   handler.last_good_data_ms = HAL_GetTick();
   /* Only claim validity if that first conversion actually succeeded. */
@@ -45,9 +43,11 @@ MS5607_EquipmentHandler MS5607_EquipmentHandler_Update(MS5607_EquipmentHandler h
     else
     {
       handler.read_fault_count = 0;
+      /* data.altitude is already an absolute pressure altitude (ISA
+       * reference). No site-elevation offset is added here: CDH subtracts the
+       * baseline captured at boot to get height above launch, so adding one
+       * would double-count. */
       handler.data = sample;
-      /* Altimeter reads 0 m at the baseline; add it back for absolute height */
-      handler.data.altitude = handler.baseline_altitude_m + handler.data.altitude;
       handler.last_data = handler.data;
       handler.last_good_data_ms = current_time;
       handler.baro_valid = 1;
