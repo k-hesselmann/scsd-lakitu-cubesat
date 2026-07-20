@@ -10,13 +10,14 @@ spacecraft state, provides the GNSS information used to track and recover the
 balloon payload, accepts a small set of uplink messages, and exposes radio
 health to Fault Detection, Isolation and Recovery (FDIR). The implemented link
 is bidirectional half-duplex LoRa using an RFM95W/SX1276-class modem at
-868~MHz. The flight computer is an STM32L476RG and the ground radio is driven
+869.525~MHz. The flight computer is an STM32L476RG and the ground radio is driven
 from a PC through a CH347 USB-to-SPI adapter.
 
 The complete end-to-end system is shown in Figure~\ref{fig:ttc-architecture}.
-An important design boundary is that Flight Software (FSW) owns construction
-of the telemetry packet, while TT\&C owns radio scheduling, delivery attempts,
-acknowledgement handling and modem health. FDIR, rather than TT\&C, owns the
+An important design boundary is that FSW owns flight phase and system state,
+while the TT\&C packet builder encodes those shared values and TT\&C owns radio
+scheduling, delivery attempts, acknowledgement handling and modem health.
+FDIR, rather than TT\&C, owns the
 policy that decides when a radio failure is severe enough to request recovery.
 
 \begin{figure}[H]
@@ -31,9 +32,9 @@ policy that decides when a radio failure is severe enough to request recovery.
   data/.style={font=\scriptsize, align=center, fill=white, inner sep=1.5pt}
 ]
   \node[box] (sensors) {Sensors, payload\\and SCV health};
-  \node[box, right=1.0cm of sensors] (fsw) {FSW packet builder\\92-byte protocol v8};
+  \node[box, right=1.0cm of sensors] (fsw) {TT\&C packet builder\\92-byte protocol v8};
   \node[box, right=1.0cm of fsw] (ttc) {TT\&C service\\queue, retry, ACK,\\radio health};
-  \node[radio, right=1.9cm of ttc] (flight) {Flight RFM95W\\SPI1, 868 MHz};
+  \node[radio, right=1.9cm of ttc] (flight) {Flight RFM95W\\SPI1, 869.525 MHz};
   \node[radio, below=1.75cm of flight] (groundradio) {Ground RFM95W\\CH347 USB--SPI};
   \node[ground, left=1.9cm of groundradio] (backend) {Python/FastAPI\\decoder and API};
   \node[ground, left=1.9cm of backend] (ui) {React dashboard\\human-readable data};
@@ -55,7 +56,7 @@ policy that decides when a radio failure is severe enough to request recovery.
 
 The implemented subsystem configures and verifies the modem, maintains
 continuous receive outside transmissions, schedules a nominal frame every
-20~s and on significant events, and transmits without blocking the spacecraft
+20~s and on change of flight state, and transmits without blocking the spacecraft
 superloop. It retains an unacknowledged frame and retries the exact same bytes,
 sequence and CRC up to three total attempts. It also parses acknowledgements
 and commands, rejects malformed or replayed traffic, exposes raw health to
@@ -66,6 +67,73 @@ records link metadata and events, acknowledges valid downlinks, and provides
 live and historical data to the operator dashboard. Tracking is not a separate
 RF ranging function: it comes from the GNSS latitude, longitude, altitude,
 speed, course and time carried in every telemetry frame.
+
+\section{Link Budget, Airtime and Channel Use}
+\label{sec:ttc-link-budget}
+
+The link-budget assumptions use 35~km altitude and 120~km horizontal drift,
+giving 125~km slant range. Free-space path loss is
+\begin{equation}
+L_{\mathrm{FS}} = 32.44 + 20\log_{10}(d_{\mathrm{km}})
+                 + 20\log_{10}(f_{\mathrm{MHz}}),
+\end{equation}
+which gives 133.17~dB at 125~km and 869.525~MHz. Source review confirms that
+both endpoints now use +17~dBm conducted output. For the 862--1020~MHz band,
+the RFM95W/SX1276 data-sheet sensitivity at SF8/BW125 is approximately
+$-126$~dBm, giving a 143~dB transmitter-to-sensitivity span before antennas and
+propagation losses. Retaining the existing antenna, cable, atmospheric and
+polarization assumptions gives Table~\ref{tab:ttc-link-budget}.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrr}
+\toprule
+\textbf{Term} & \textbf{Downlink} & \textbf{Uplink} \\
+\midrule
+Transmit power & +17.00~dBm & +17.00~dBm \\
+Transmit antenna gain & +2.15~dBi & +5.00~dBi \\
+Transmit cable loss & $-0.50$~dB & $-0.50$~dB \\
+Free-space path loss & $-133.17$~dB & $-133.17$~dB \\
+Atmospheric loss & $-0.50$~dB & $-0.50$~dB \\
+Polarization loss & $-3.00$~dB & $-3.00$~dB \\
+Receive antenna gain & +5.00~dBi & +2.15~dBi \\
+Receive cable loss & $-0.50$~dB & $-0.50$~dB \\
+\textbf{Predicted receive power} & \textbf{$-113.52$~dBm} & \textbf{$-113.52$~dBm} \\
+SF8 sensitivity & $-126.00$~dBm & $-126.00$~dBm \\
+\textbf{Link margin} & \textbf{12.48~dB} & \textbf{12.48~dB} \\
+Noise floor (125~kHz, NF 6~dB) & $-117.01$~dBm & $-117.01$~dBm \\
+\textbf{Raw SNR} & \textbf{+3.49~dB} & \textbf{+3.49~dB} \\
+SF8 processing gain & +15.05~dB & +15.05~dB \\
+\textbf{Processed SNR} & \textbf{+18.54~dB} & \textbf{+18.54~dB} \\
+\bottomrule
+\end{tabular}
+\caption{Link budget calculated with existing RF assumptions.}
+\label{tab:ttc-link-budget}
+\end{table}
+
+The symmetric +17~dBm configuration makes the modeled downlink and uplink
+margins equal. Both exceed the 10~dB targets in MR-004, PR-004 and PR-007, and
+the modeled raw and processed SNR values exceed the corresponding PR-007
+thresholds. This is analytical evidence, not RF qualification: acceptance still
+requires measured sensitivity, characterized installed antennas and cables,
+confirmed ground-antenna gain, and representative bidirectional range testing.
+
+At SF8, BW125, CR~4/5, explicit header, CRC and an eight-symbol programmed
+preamble, symbol time is 2.048~ms. A 92-byte frame uses 128 payload symbols and
+has 287.232~ms total airtime. The packet carries $92\times8/20=36.8$ payload
+bit/s, 1.18\% of the nominal 3125~bit/s LoRa rate, but that ratio is not channel
+occupancy. At a strict 20~s period, one flight transmission uses
+\begin{equation}
+\frac{0.287232}{20}\times100\% \approx 1.44\%.
+\end{equation}
+Three attempts of the retained frame occupy about 4.31\% of the same interval.
+Those values are below the selected requirement's 10\% alternative, but the
+final compliance record must measure aggregate occupancy separately for each
+transmitter and include event packets, retries, ground ACKs and commands. It
+must also confirm the applicable spectrum-access basis, ERP, equipment
+conformity and balloon/national authorization.
+
+
 \section{Requirements and Traceability}
 
 Table~\ref{tab:ttc-requirements} maps the allocated requirements to the
@@ -85,16 +153,17 @@ named by the requirement.
 \endhead
 \bottomrule
 \endfoot
-MR-004 & Telemetry to 40~km altitude / 125~km worst-case slant range & LoRa physical layer and a requirements-level link-budget assumption are defined. & Range test open \\
-FR-022 & Approximately one packet every 20~s & \ttcfield{TTC_TELEMETRY_INTERVAL_MS = 20000}; event packets are also supported. & Timing implemented; duty-cycle issue open \\
+MR-004 & Telemetry to 40~km altitude / 125~km worst-case slant range & Section~\ref{sec:ttc-link-budget} predicts 12.5~dB in both directions with the stated antenna assumptions. & Analysis passes; range test open \\
+FR-022 & Approximately one packet every 20~s & \ttcfield{TTC_TELEMETRY_INTERVAL_MS = 20000}; a 92-byte SF8 frame occupies about 287~ms, or 1.44\% nominal duty cycle. & Timing implemented; aggregate duty-cycle test open \\
 FR-023 & Standard packet with state, position, IMU, payload, battery and integrity check & Protocol v8 carries all named data plus health; CRC-16 protects bytes 0--89. & Implemented and decoder-tested \\
-FR-024 & European 868~MHz ISM-band operation & Flight registers select 868.000~MHz. & In band; frequency alignment open \\
+FR-024 & Center frequency of 869.525~MHz in the selected 869.4--869.65~MHz SRD band & Flight and ground use matching frequency registers/configuration. & Implemented; hardware verification open \\
 FR-025 & Receive, decode and display human-readable telemetry & RFM95W receiver, decoder/store/API, WebSocket and React views are present. & Implemented; hardware demonstration open \\
-FR-026 & SF9, 125~kHz bandwidth, coding rate 4/5 & Flight and ground configure explicit-header LoRa, SF9, BW125 and CR~4/5. & Registers implemented \\
-PR-004 & At least 10~dB margin at 125~km & Section~\ref{sec:ttc-link-budget} recomputes the conditional margin. & Range test open \\
+FR-026 & SF8, BW125, CR~4/5, explicit header, CRC, preamble 8, sync \texttt{0x12}, +17~dBm & Flight and ground configure the same profile and flight reads back the essential registers. & Implemented; two-radio readback open \\
+PR-004 & At least 10~dB margin at 125~km & The implemented +17~dBm powers predict 12.5~dB in both directions. & Analysis passes; range test open \\
+PR-007 & Margin $>10$~dB, raw SNR $>0$~dB and processed SNR $>10.5$~dB & The model predicts +3.5~dB raw and +18.5~dB processed SNR in both directions. & Analysis passes; measurement open \\
 IF-005 & OBC-to-radio SPI no faster than 10~MHz & SPI1 is 625~kbit/s with interrupt-driven transfers. & Implemented \\
-IF-007 & FSW supplies phase and system state in a defined format & \ttcfield{FSW_BuildTelemetryPacket()} consumes datapool, SCV and TTC health. & Implemented \\
-CR-005 & Power and channel-use constraints & Flight PA is +14~dBm; the 20~s/513~ms schedule does not meet the project's stated 1\% arithmetic. & Duty-cycle closure open \\
+IF-007 & FSW supplies phase and system state in a defined format & \ttcfield{TTC_BuildTelemetryPacket()} consumes datapool, SCV and TT\&C health. & Implemented \\
+CR-005 & German/EU power, ERP, spectrum-access and conformity constraints & Both modems use +17~dBm conducted power; nominal and three-attempt airtime are 1.44\% and 4.31\%, below the requirement's 10\% alternative. & ERP, aggregate occupancy and authorization evidence open \\
 SR-004 & No interference with balloon flight-control systems & No interference evidence is stored in the repository. & Operator test open \\
 \end{longtable}
 
@@ -134,12 +203,12 @@ value produces \texttt{CONFIG\_FAIL}.
 \toprule
 \textbf{Parameter} & \textbf{Flight value} & \textbf{Ground implementation} \\
 \midrule
-Carrier frequency & 868.000~MHz (FRF \texttt{D9 00 00}) & Backend default 868.100~MHz; must be aligned \\
-Spreading factor / bandwidth & SF9 / 125~kHz & SF9 / 125~kHz \\
+Carrier frequency & 869.525~MHz (FRF \texttt{D9 61 99}) & Backend default 869.525~MHz \\
+Spreading factor / bandwidth & SF8 / 125~kHz & SF8 / 125~kHz \\
 Coding rate / header & 4/5 / explicit & 4/5 / explicit \\
 Radio payload CRC / preamble & Enabled / 8 symbols & Enabled / 8 symbols \\
 Sync word & \texttt{0x12} & \texttt{0x12} \\
-Transmit power & +14~dBm (PA boost) & +10~dBm default \\
+Transmit power & +17~dBm (PA boost) & +17~dBm (PA boost) \\
 Receive mode & Continuous between TX & Continuous except during TX \\
 Telemetry payload & 92 bytes & Accepts exactly 92 bytes \\
 \bottomrule
@@ -148,10 +217,9 @@ Telemetry payload & 92 bytes & Accepts exactly 92 bytes \\
 \label{tab:ttc-radio-config}
 \end{table}
 
-The 100~kHz center-frequency difference is a current integration defect. Both
-values are inside the intended band, but transmitter and receiver should use
-the same value. A shared configuration or explicit pre-flight register/readback
-check is recommended.
+Flight and ground use the same 869.525~MHz center frequency. An explicit
+pre-flight register/readback check remains recommended to verify the deployed
+configuration before operation.
 \section{Telemetry Generation and Scheduling}
 
 The superloop calls \ttcfield{TTC_Service()} on every iteration because TT\&C
@@ -159,59 +227,14 @@ and the LoRa driver are cooperative, non-blocking state machines. They advance
 at most a small SPI or state step per call, allowing FDIR and the independent
 watchdog to continue while a radio operation is in progress.
 
-When \ttcfield{TTC_TelemetryDue()} is true, FSW builds a packet from the 1~Hz
+When \ttcfield{TTC_TelemetryDue()} is true, the main loop calls
+\ttcfield{TTC_BuildTelemetryPacket()} with the 1~Hz
 sensor datapool, persistent Spacecraft Vector (SCV), and volatile TT\&C
 health/command snapshots. A frame is due before the first transmission, after
 20~s from the last successful TX, or when an immediate request is latched.
 Flight-phase changes and received commands set this latch. If a previous frame
 still awaits its ACK, no new frame is built: the pending sequence is completed
 or abandoned first.
-
-Current sensor validity is separate from the numeric value. If a source becomes
-invalid, its last known value is retained but its validity bit is cleared.
-Before the first valid observation, signed fields use the minimum integer and
-unsigned fields use their maximum. Ground must therefore interpret validity,
-the FDIR fault mask and the equipment-enabled mask together.
-
-\section{Protocol-v8 Telemetry Frame}
-\label{sec:ttc-protocol-v8}
-
-The downlink is a packed, little-endian, fixed-width 92-byte binary frame.
-Engineering values are scaled and clamped to integer units; ground reverses the
-scaling. Figure~\ref{fig:ttc-packet-groups} shows the allocation and
-Appendix~\ref{app:ttc-wire} (Table~\ref{tab:ttc-wire-layout}) gives the
-complete definition.
-
-\begin{figure}[H]
-\centering
-\begin{tikzpicture}[x=0.15cm,y=1cm,font=\scriptsize]
-  \draw[fill=blue!14] (0,0) rectangle (26,1) node[midway,align=center]{Envelope, time, phase,\\validity and FDIR\\bytes 0--25};
-  \draw[fill=green!16] (26,0) rectangle (50,1) node[midway,align=center]{GNSS navigation\\bytes 26--49};
-  \draw[fill=orange!18] (50,0) rectangle (62,1) node[midway,align=center]{IMU\\50--61};
-  \draw[fill=cyan!16] (62,0) rectangle (74,1) node[midway,align=center]{Baro + batt.\\62--73};
-  \draw[fill=violet!16] (74,0) rectangle (81,1) node[midway,align=center]{Coral\\74--80};
-  \draw[fill=red!13] (81,0) rectangle (90,1) node[midway,align=center]{Radio /\\uplink\\81--89};
-  \draw[fill=gray!25] (90,0) rectangle (92,1);
-  \draw[-{Latex},thin] (91,0) -- (91,-0.35) -- (84,-0.35) node[left]{CRC-16, bytes 90--91};
-  \draw[decorate,decoration={brace,amplitude=4pt},thick]
-       (0,1.15) -- (92,1.15) node[midway,yshift=9pt]{92 bytes total};
-\end{tikzpicture}
-\caption{Protocol-v8 byte allocation by information group.}
-\label{fig:ttc-packet-groups}
-\end{figure}
-
-The CRC uses polynomial \texttt{0x1021} and initial value \texttt{0xFFFF}.
-Ground first rejects any payload not exactly 92 bytes, then checks packet type,
-protocol version and application CRC. The RFM95W packet CRC is an additional
-physical-link check. Sequence numbers identify gaps, duplicates and a new
-session after reboot.
-
-Protocol v8 reduced the former 155-byte raw-structure frame to 92 bytes, a 41\%
-payload reduction. Estimated airtime fell from about 800~ms to 513~ms, about
-36\% per attempt. Data without an onboard producer, such as GNSS dilution of
-precision and MCU/IMU temperature, deliberately receive no wire bytes.
-
-\section{Reliable Downlink and Uplink Protocol}
 
 LoRa supplies the radio packet, while reliability is implemented at the
 application layer. Figure~\ref{fig:ttc-reliability} summarizes a transaction.
@@ -261,9 +284,11 @@ application layer. Figure~\ref{fig:ttc-reliability} summarizes a transaction.
 After \textit{TxDone}, flight returns to continuous RX and waits 5~s for
 \texttt{ACK,<sequence>}. A match releases the frame; the last accepted ACK is
 classified as duplicate; another valid sequence is unexpected. ACKs require no
-ACK-of-ACK. Ground sends the ACK only after full application validation and
-acknowledges a duplicated sequence again. A duplicate normally means downlink
-succeeded but the earlier ground ACK did not reach flight in time.
+ACK-of-ACK. Ground sends the ACK only after full application validation, waits
+0.75~s so flight can process \textit{TxDone} and restore continuous RX, and
+then restores its own continuous RX after the ACK attempt. It acknowledges a
+duplicated sequence again. A duplicate normally means downlink succeeded but
+the earlier ground ACK did not reach flight in time.
 \subsection{Commands and Replay Protection}
 
 Flight accepts ASCII uplinks up to 64 bytes. The implemented classes are:
@@ -284,15 +309,100 @@ Malformed \texttt{CMD} or \texttt{ACK} & Invalid format & Latch \texttt{INVALID\
 \label{tab:ttc-uplink}
 \end{table}
 
-Command IDs are non-zero 16-bit values. Flight maintains a 16-command sliding
-replay window with wrap-safe arithmetic: a command is accepted once and a
+Command IDs are non-zero 16-bit values. A command is accepted once and a
 repeated ID is reported as duplicate. Ground serializes command transactions,
 assigns a stable ID, and by default retries three times with 5~s TX and 5~s
 flight-response timeouts. Confirmation is the command ID and
-\texttt{ACCEPTED}/\texttt{DUPLICATE} status echoed in valid telemetry.
-Command and telemetry-ACK status are independent latches, so an ACK cannot erase
-a command confirmation. \texttt{REQ\_TELEMETRY} is currently the only
+\texttt{ACCEPTED}/\texttt{DUPLICATE} status echoed in valid telemetry. \texttt{REQ\_TELEMETRY} is currently the only
 operational verb.
+
+\section{Protocol-v8 Telemetry Frame}
+
+The downlink is a packed, little-endian, fixed-width 92-byte binary frame.
+Engineering values are scaled and clamped to integer units; ground reverses the
+scaling. Figure~\ref{fig:ttc-packet-groups} shows the allocation and
+Table~\ref{tab:ttc-wire-layout} gives the complete definition.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=0.15cm,y=1cm,font=\scriptsize]
+  \draw[fill=blue!14] (0,0) rectangle (26,1) node[midway,align=center]{Envelope, time, phase,\\validity and FDIR\\bytes 0--25};
+  \draw[fill=green!16] (26,0) rectangle (50,1) node[midway,align=center]{GNSS navigation\\bytes 26--49};
+  \draw[fill=orange!18] (50,0) rectangle (62,1) node[midway,align=center]{IMU\\50--61};
+  \draw[fill=cyan!16] (62,0) rectangle (74,1) node[midway,align=center]{Baro + batt.\\62--73};
+  \draw[fill=violet!16] (74,0) rectangle (81,1) node[midway,align=center]{Coral\\74--80};
+  \draw[fill=red!13] (81,0) rectangle (90,1) node[midway,align=center]{Radio /\\uplink\\81--89};
+  \draw[fill=gray!25] (90,0) rectangle (92,1);
+  \draw[-{Latex},thin] (91,0) -- (91,-0.35) -- (84,-0.35) node[left]{CRC-16, bytes 90--91};
+  \draw[decorate,decoration={brace,amplitude=4pt},thick]
+       (0,1.15) -- (92,1.15) node[midway,yshift=9pt]{92 bytes total};
+\end{tikzpicture}
+\caption{Protocol-v8 byte allocation by information group.}
+\label{fig:ttc-packet-groups}
+\end{figure}
+
+\begin{longtable}{r r p{4.2cm} p{7.0cm}}
+\caption{Complete protocol-v8 telemetry wire layout.}\label{tab:ttc-wire-layout}\\
+\toprule
+\textbf{Offset} & \textbf{Bytes} & \textbf{Wire field} & \textbf{Meaning and scale} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Offset} & \textbf{Bytes} & \textbf{Wire field} & \textbf{Meaning and scale} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+0 & 1 & \ttcfield{packet_type} & \texttt{0x01} identifies telemetry \\
+1 & 1 & \ttcfield{protocol_version} & \texttt{0x08}; ground accepts v8 only \\
+2 & 2 & \ttcfield{sequence_number} & Unsigned sequence; unchanged on retry \\
+4 & 4 & \ttcfield{tx_uptime_s} & OBC uptime in seconds \\
+8 & 4 & \ttcfield{mission_elapsed_s} & Persistent mission time in seconds \\
+12 & 2 & \ttcfield{boot_count_sat} & Boot count, saturated at 65,535 \\
+14 & 1 & \ttcfield{flight_phase} & Six-state flight-phase enum \\
+15 & 1 & \ttcfield{reset_reason} & Unknown, power-on, watchdog or software reset \\
+16 & 1 & \ttcfield{validity_flags} & Bits 0--4: GNSS, IMU, baro, battery, Coral \\
+17 & 1 & \ttcfield{i2c_bus_state} & 0 idle, 1 restart, 2 hold \\
+18 & 2 & \ttcfield{equipment_enabled} & Policy mask for enabled equipment \\
+20 & 2 & \ttcfield{equipment_faults} & Debounced FDIR fault mask \\
+22 & 2 & \ttcfield{sample_age_ms_sat} & Packet tick minus datapool tick; 65,535 unknown/overflow \\
+24 & 1 & \ttcfield{watchdog_reset_count} & Persisted watchdog-reset count \\
+25 & 1 & \ttcfield{sd_fault_count} & Persisted SD fault count \\
+26 & 4 & \ttcfield{latitude_e7} & Latitude, degrees $\times 10^7$ \\
+30 & 4 & \ttcfield{longitude_e7} & Longitude, degrees $\times 10^7$ \\
+34 & 4 & \ttcfield{gnss_altitude_dm} & GNSS altitude in decimetres \\
+38 & 2 & \ttcfield{vertical_speed_cms} & cm/s, positive upward \\
+40 & 2 & \ttcfield{ground_speed_cms} & Horizontal speed in cm/s \\
+42 & 2 & \ttcfield{course_cdeg} & Course in centidegrees, 0--35,999 \\
+44 & 4 & \ttcfield{gnss_utc_sod} & UTC seconds of day \\
+48 & 1 & \ttcfield{gnss_satellites} & Satellites used in solution \\
+49 & 1 & \ttcfield{gnss_fix_type} & GNSS fix-type enum \\50 & 2 & \ttcfield{accel_x_mg} & X acceleration in milli-g \\
+52 & 2 & \ttcfield{accel_y_mg} & Y acceleration in milli-g \\
+54 & 2 & \ttcfield{accel_z_mg} & Z acceleration in milli-g \\
+56 & 2 & \ttcfield{gyro_x_ddeg_s} & X angular rate in 0.1 degrees/s \\
+58 & 2 & \ttcfield{gyro_y_ddeg_s} & Y angular rate in 0.1 degrees/s \\
+60 & 2 & \ttcfield{gyro_z_ddeg_s} & Z angular rate in 0.1 degrees/s \\
+62 & 4 & \ttcfield{baro_pressure_pa} & Barometric pressure in pascals \\
+66 & 4 & \ttcfield{baro_altitude_dm} & Ground-relative altitude in decimetres \\
+70 & 2 & \ttcfield{baro_temperature_cdeg} & Temperature in 0.01 degrees C \\
+72 & 2 & \ttcfield{battery_mv} & Battery voltage in millivolts \\
+74 & 2 & \ttcfield{coral_sequence_low} & Low 16 bits of payload result sequence \\
+76 & 2 & \ttcfield{coral_fraction_q16} & Cloud fraction, 0--65,535 maps to 0--100\% \\
+78 & 1 & \ttcfield{coral_status} & Coral status bit mask \\
+79 & 2 & \ttcfield{coral_age_s_sat} & Coral result age in seconds; saturated \\
+81 & 1 & \ttcfield{lora_last_event} & Latest modem event enum \\
+82 & 1 & \shortstack[l]{\ttcfield{lora_consecutive_}\\\ttcfield{failures}} & Consecutive radio failures \\
+83 & 1 & \ttcfield{lora_recovery_count} & Recovery attempts since boot \\
+84 & 1 & \ttcfield{lora_rx_state} & Bits 0--2 RX status; bit 3 continuous RX active \\
+85 & 1 & \shortstack[l]{\ttcfield{lora_tx_fault_}\\\ttcfield{count_sat}} & Lifetime failed TX attempts, saturated \\
+86 & 1 & \shortstack[l]{\ttcfield{lora_ack_timeout_}\\\ttcfield{count_sat}} & Exhausted ACK budgets, saturated \\
+87 & 2 & \ttcfield{last_command_id} & Last command ID observed by flight \\
+89 & 1 & \ttcfield{uplink_state} & Bits 0--2 command status; 3--5 ACK status \\
+90 & 2 & \ttcfield{crc16} & CRC-16/CCITT-FALSE over bytes 0--89 \\
+\end{longtable}
+
+
+
 
 \section{Flight Software State Machines}
 
@@ -316,18 +426,10 @@ Action initialization / RX & Full recovery or return-to-service, then restore RX
 \caption{High-level TT\&C state-machine responsibilities.}
 \end{table}
 
-Driver transfers use \ttcfield{HAL_SPI_TransmitReceive_IT()}; modem IRQ flags
-are polled for \textit{RxDone}, CRC error and \textit{TxDone}. SPI timeouts
-trigger a bounded interrupt abort, and the driver can reinitialize SPI if it
-does not quiesce. Oversized observations are consumed and returned as length
-errors so stale FIFO data cannot poison the next packet.
 
 \section{FDIR and Radio Health}
 
-TT\&C records facts; FDIR applies policy. The raw snapshot contains readiness,
-continuous-RX state, consecutive/lifetime failures, successful TX/RX times,
-recovery activity, isolation and exhausted-ACK count. FDIR reconstructs a
-pass/fail history from the counters.
+TT\&C records facts; FDIR applies policy. 
 
 \begin{table}[H]
 \centering
@@ -348,12 +450,8 @@ Return to service & Reinitialize isolated/faulted modem & TT\&C / driver \\
 \label{tab:ttc-fdir}
 \end{table}
 
-FDIR sets \ttcfield{EQUIPMENT_LORA} in a shared reinit bitmask.
-\ttcfield{TTC_Service()} consumes it and advances the action later. Only one
-action may be pending, except isolation can preempt. Requests are idempotent.
-Telemetry reports the latest event, failures, recoveries, RX state, lifetime TX
-faults and ACK timeouts. Ground combines this snapshot with end-to-end evidence
-such as a received frame, RSSI/SNR, duplicates and command outcomes.
+FDIR sets \ttcfield{EQUIPMENT_LORA} in a shared bitmask.
+\ttcfield{TTC_Service()} consumes it and advances the action later.
 
 \section{Ground Segment}
 
@@ -362,100 +460,10 @@ reads payload/RSSI/SNR/CRC, and restores continuous RX after transmissions.
 FastAPI validates and decodes v8, tracks lost/duplicate sequences, keeps bounded
 history, writes telemetry and event CSVs, exposes REST, and broadcasts over
 WebSocket. The React dashboard provides Overview, Health, Position/Flight
-Phase, Link Analytics, Commands and Raw Telemetry views.
+Phase, Link Analytics, Commands and Raw Telemetry views. Its live-data hook
+batches rapid updates, merges initial history with WebSocket traffic and keeps
+duplicate packets and ground events visible without replacing the latest valid
+spacecraft state.
 
 Invalid and physical-CRC observations remain available for diagnosis but never
-replace the latest valid spacecraft state. Main interfaces are
-\texttt{/api/status}, \texttt{/api/latest}, \texttt{/api/history},
-\texttt{/api/stats}, \texttt{/api/uplink-log}, \texttt{/api/send-ascii} and
-\texttt{/ws/telemetry}. The backend can run without radio for UI/API work.
-User verbs are limited to 48 ASCII characters so the envelope fits flight RX.
-\section{Link Budget, Airtime and Channel Use}
-\label{sec:ttc-link-budget}
-
-The requirements use 125~km as worst-case slant range. Free-space path loss is
-\begin{equation}
-L_{\mathrm{FS}} = 32.44 + 20\log_{10}(d_{\mathrm{km}})
-                 + 20\log_{10}(f_{\mathrm{MHz}}),
-\end{equation}
-which gives 133.2~dB at 125~km and 868~MHz. The requirement assumes
-$-137$~dBm receiver sensitivity at SF9/BW125. Antenna gains, cable,
-polarization and installation losses, and measured sensitivity are absent, so
-Table~\ref{tab:ttc-link-budget} is conditional rather than RF qualification.
-
-\begin{table}[H]
-\centering
-\begin{tabular}{lrr}
-\toprule
-\textbf{Term} & \textbf{Downlink} & \textbf{Uplink} \\
-\midrule
-Transmit power & +14.0~dBm & +10.0~dBm \\
-Antenna gains (illustrative) & 0.0~dBi & 0.0~dBi \\
-Free-space path loss & $-133.2$~dB & $-133.2$~dB \\
-Other losses (illustrative) & $-3.0$~dB & $-3.0$~dB \\
-Predicted receive power & $-122.2$~dBm & $-126.2$~dBm \\
-Assumed sensitivity & $-137.0$~dBm & $-137.0$~dBm \\
-\textbf{Illustrative margin} & \textbf{14.8~dB} & \textbf{10.8~dB} \\
-\bottomrule
-\end{tabular}
-\caption{Conditional 125~km link budget using repository assumptions.}
-\label{tab:ttc-link-budget}
-\end{table}
-
-With no extra losses, margins are 17.8~dB downlink and 13.8~dB uplink. With the
-illustrative 3~dB allowance, uplink exceeds the 10~dB target by only 0.8~dB.
-The requirements file states 26.5~dB without a reproducible calculation; the
-zero-gain budget above does not reproduce it. Acceptance requires measured
-sensitivity, characterized antennas/cables and representative range testing.
-
-At SF9, BW125, CR~4/5, explicit header, CRC and eight-symbol preamble, symbol
-time is 4.096~ms and 92-byte airtime is about 513~ms. At a strict 20~s period:
-\begin{equation}
-\frac{0.513}{20}\times100\% \approx 2.57\%.
-\end{equation}
-This conflicts with the 1\% channel-use assumption in FR-022/CR-005 before
-event packets or retries. At the same modulation, one 513~ms transmission needs
-at least a 51.3~s interval to average 1\%. The project must close this by a
-permitted channel/access regime, schedule/modulation change, or another
-reviewed compliance basis. Retries and ground ACKs belong in the final analysis.
-
-\section{Verification Evidence}
-
-Repository tests provide the following host-side evidence:
-\begin{itemize}[leftmargin=*]
-  \item v8 decoder tests cover size, scaling, sentinels, CRC and legacy rejection;
-  \item TT\&C harnesses cover startup recovery, RX faults, idempotency,
-        isolation, retries, command/ACK latches and the FDIR request bit;
-  \item driver harnesses cover oversized RX, 255-byte FIFO transfer, abort
-        rejection/timeout recovery and abort callbacks;
-  \item source-contract tests enforce interrupt-driven SPI, non-blocking design,
-        FDIR policy ownership and queued recovery interfaces.
-\end{itemize}
-
-Remaining acceptance work is a two-radio register dump; end-to-end frame,
-ACK and command demonstration; five-minute schedule measurement; injected CRC,
-SPI, ACK-loss and reset faults; sensitivity and antenna characterization;
-range test; actual channel-occupancy log including retries; and an interference
-check coordinated with the balloon operator.
-
-\section{Design Decisions and Known Limitations}
-
-The central decisions are a portable fixed-integer frame, continuous receive,
-reliability and replay protection above LoRa, non-blocking state machines,
-independent command/ACK latches, and FDIR ownership of recovery policy. These
-improve watchdog safety, diagnostics and operational observability.
-
-Open limitations are:
-\begin{itemize}[leftmargin=*,nosep]
-  \item flight and ground center frequencies differ by 100~kHz;
-  \item 20~s scheduling and 513~ms airtime conflict with the stated 1\% target;
-  \item range margin depends on unverified sensitivity and unspecified antennas;
-  \item \texttt{REQ\_TELEMETRY} is the only implemented command verb;
-  \item automatic give-up escalation to long-term isolation remains open;
-  \item operator/deployment procedures need a dedicated ground-station runbook;
-  \item no artifact yet proves 125~km range, regulatory closure or
-        non-interference.
-\end{itemize}
-
-Closing these items is primarily integration and verification work; the packet,
-reliable transactions, decoder and core radio/FDIR state machines exist.
+replace the latest valid spacecraft state. 
