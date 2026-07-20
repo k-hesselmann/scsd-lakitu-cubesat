@@ -1,6 +1,7 @@
 #include "sd_logger.h"
 
 #include "fatfs.h"
+#include "fdir/fdir.h"
 #include "user_diskio.h"
 
 #include <stdio.h>
@@ -52,7 +53,7 @@ static void sd_set_fault(SCV_t *scv, FRESULT result)
     if (scv != NULL && scv->sd_fault_count < UINT8_MAX)
         scv->sd_fault_count++;
     if (scv != NULL)
-        scv->equipment_faults |= EQUIPMENT_SD;
+        FDIR_SetEquipmentFault(EQUIPMENT_SD, 1U);
 
     if (s_file_open)
     {
@@ -67,7 +68,7 @@ static void sd_set_healthy(SCV_t *scv)
     sd_logger_last_error = FR_OK;
     sd_logger_state = SD_LOGGER_ACTIVE;
     if (scv != NULL)
-        scv->equipment_faults &= (uint16_t)~EQUIPMENT_SD;
+        FDIR_SetEquipmentFault(EQUIPMENT_SD, 0U);
 }
 
 static uint32_t find_next_session(void)

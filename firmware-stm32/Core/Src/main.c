@@ -28,6 +28,7 @@
 #include "cdh/baro_diag.h"
 #include "datapool.h"
 #include "fdir/fdir.h"
+#include "fdir/fdir_test_hooks.h"
 #include "fdir/scv.h"
 #include "fsw/fsm.h"
 #include "sd_logger.h"
@@ -149,6 +150,10 @@ int main(void)
   /* Arm the watchdog only after init completes; once started it can never
    * be stopped (FMECA F1). */
   IWDG_UserInit();
+
+  /* Bench-only fault-injection console (docs/FMECA.md Section 5); compiles
+   * to nothing unless FDIR_TEST_HOOKS is defined (testhooks build env). */
+  FDIR_TestHooks_Init();
 
   TelemetryPacket_t tx_packet = {0};
 

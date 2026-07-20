@@ -29,28 +29,27 @@ identity, never part of `equipment_faults`/`equipment_enabled`).
 
 ## CDH owner
 
-⚠ **Priority — this replaces behaviour that FDIR previously did itself.**
-`fdir.c` no longer holds an I2C handle and no longer calls
-`CDH_FDIR_RecoverIMU/Baro` directly. Until CDH consumes the GPS/IMU/BARO
-requests below, that device-level reinit does not happen.
+Implemented. `CDH_Update()` polls both request paths at its top, before the
+per-sensor `_Update()` calls, so a recovered device can deliver valid data in
+the same tick:
+- `FDIR_GetReinitRequests() & FDIR_REQUEST_I2C_BUS_RESTART` → calls
+  `CDH_FDIR_BusRestart_Start(&s_fdir)`; `CDH_RequestBusRestart()` itself is
+  unchanged and still called independently by `sensor_validation.c`'s own
+  fault-count escalation (a separate, CDH-internal trigger, not FDIR's).
+- `EQUIPMENT_IMU` / `EQUIPMENT_BARO` / `EQUIPMENT_GPS` → single-device reinit
+  via `CDH_FDIR_RecoverIMU/Baro(&hi2c1)` / `GPS_EquipmentHandler_Init(&hi2c1)`,
+  each independently acked.
 
-The L2 bus restart (FMECA C7/C10) is now also requested via the bitmask
-instead of a direct `CDH_RequestBusRestart()` call from `fdir.c`:
-`CDH_Update()` polls `FDIR_GetReinitRequests() & FDIR_REQUEST_I2C_BUS_RESTART`
-at its top, calls `CDH_FDIR_BusRestart_Start(&s_fdir)`, and acks — this part
-is implemented. `CDH_RequestBusRestart()` itself is unchanged and still called
-independently by `sensor_validation.c`'s own fault-count escalation (a
-separate, CDH-internal trigger, not FDIR's).
+FMECA C4 (IMU plausibility: accel magnitude range + stuck-value counter) and
+C6 (GPS/baro altitude cross-check) are implemented in
+`cdh/sensor_validation.c` — both clear the relevant `dp->*_valid` flag on
+failure, so they flow through the existing IMU/BARO timeout monitors above
+rather than needing FDIR-side changes.
 
-In `CDH_Update()` (suggested: at the top, so a recovered device can deliver
-valid data in the same tick):
-
-```c
-uint16_t requests = FDIR_GetReinitRequests();
-if (requests & EQUIPMENT_IMU)  { CDH_FDIR_RecoverIMU(&hi2c1);  FDIR_AcknowledgeReinit(EQUIPMENT_IMU);  }
-if (requests & EQUIPMENT_BARO) { CDH_FDIR_RecoverBaro(&hi2c1); FDIR_AcknowledgeReinit(EQUIPMENT_BARO); }
-if (requests & EQUIPMENT_GPS)  { s_gps = GPS_EquipmentHandler_Init(&hi2c1); FDIR_AcknowledgeReinit(EQUIPMENT_GPS); }
-```
+FMECA C7's 9-pulse SCL bit-bang bus clear is implemented in
+`CDH_FDIR_BusRestart_Process()` (`cdh_fdir.c`, `CDH_FDIR_BusClear_Bitbang()`),
+run between `HAL_I2C_DeInit()` and the existing hold-then-`HAL_I2C_Init()`
+sequence.
 
 Also requested:
 - Replace any direct writes to `g_scv.equipment_faults` (e.g. in
@@ -59,9 +58,6 @@ Also requested:
 - The `/* TODO: write updated scv to NVM */` in `CDH_Update()` can be deleted —
   SCV persistence is now owned by FDIR (`Core/Src/fdir/scv.c`), called from the
   superloop.
-- Later (FMECA C7): add the 9-pulse SCL bit-bang bus clear to
-  `CDH_FDIR_BusRestart_Process()` — DeInit/Init alone cannot release a slave
-  holding SDA low.
 
 ## TTC owner
 
@@ -82,10 +78,10 @@ and tested but unused) — TODO in `fdir.c`'s LoRa block.
 
 ## SD / storage owner
 
-Low priority — your remount logic stays exactly as is (you own recovery).
-Requested: replace the two direct `scv->equipment_faults` writes in
-`sd_set_fault()` / `sd_set_healthy()` with
-`FDIR_SetEquipmentFault(EQUIPMENT_SD, 1U/0U)`. `sd_fault_count` remains yours.
+Implemented. `sd_set_fault()` / `sd_set_healthy()` now call
+`FDIR_SetEquipmentFault(EQUIPMENT_SD, 1U/0U)` instead of writing
+`scv->equipment_faults` directly; your remount logic and `sd_fault_count`
+are unchanged (still yours).
 
 ## Everyone: staged reduced mode (FMECA F2)
 

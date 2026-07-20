@@ -36,11 +36,11 @@ Phases: Standby / Launch / Ascent / Cruise / Descent / Landing (fsm.h).
 | C1 | GPS (MAX-M10S) | no fix (module alive, responds on I2C) | environment, antenna, altitude limits | `gps_valid=0`, fix_type indicates no fix | phase detection degrades to baro | fix_type / data-present distinction (module supports it) | FSM must not require GPS | none — environmental, wait | Ascent | 2 | L1 |
 | C2 | GPS (MAX-M10S) | no I2C response at all | bus glitch, module hang | `gps_valid=0`, no data | no position in telemetry/log | I2C NACK / no bytes available (distinct from C1) | — | protocol reinit request (no power cycle exists) | Ascent | 2 | L1 |
 | C3 | IMU (MPU-6050) | stops responding (NACK) | bus glitch, latch-up | `imu_valid=0` | launch/landing detection degraded | `imu_valid` low for 3 cycles | FSM falls back to baro/GPS rates | device reinit request every 10 s | Launch | 2 | L1 |
-| C4 | IMU (MPU-6050) | frozen/garbage values while ACKing | internal fault | `imu_valid=1` but data wrong | wrong phase transitions | plausibility check: accel magnitude range + stuck-value counter (confirmed feasible; to implement) | ignore IMU in FSM when flagged | device reinit request | Launch | 3 | L1 |
+| C4 | IMU (MPU-6050) | frozen/garbage values while ACKing | internal fault | `imu_valid=1` but data wrong | wrong phase transitions | plausibility check: accel magnitude range (>3.0g, sensor is ±2g/axis) + stuck-value counter (3 identical consecutive reads) — implemented in `cdh/sensor_validation.c` (`validateImuPlausibility`), clears `imu_valid` so it flows through the ordinary C3 timeout monitor | ignore IMU in FSM when flagged | device reinit request | Launch | 3 | L1 |
 | C5 | Baro (MS5607) | stops responding | bus glitch, latch-up | `baro_valid=0` | altitude/phase detection degraded | `baro_valid` low for 3 cycles | FSM falls back to GPS altitude | device reinit request every 10 s | Descent | 3 | L1 |
-| C6 | Baro (MS5607) | plausible-but-wrong pressure | sensor drift, PROM corruption | wrong altitude | wrong phase transitions | GPS/baro altitude cross-check when both valid (confirmed feasible; to implement) | prefer GPS altitude on disagreement | reinit; re-read PROM + CRC | Descent | 3 | L1 |
-| C7 | I2C1 bus | bus wedged (slave holds SDA low) | interrupted transaction, EMI | GPS, IMU **and** baro all invalid | all sensing lost; FSM blind | IMU ∧ baro faulted (fastest debounce pair); GPS follows | LoRa (SPI1) and SD (SPI2) unaffected — telemetry/log continue | bus restart (DeInit/Init); add 9-pulse SCL bit-bang clear (to implement) | any | 3 | L2 |
-| C8 | Internal ADC (battery sense) | invalid/absent reading | ADC config fault, divider open | `batt_valid=0` | no battery insight in telemetry | `batt_valid` low for 3 cycles (debounce to add — currently 1) | — | internal ADC re-init (cheap); low risk overall | Cruise | 1 | L1 |
+| C6 | Baro (MS5607) | plausible-but-wrong pressure | sensor drift, PROM corruption | wrong altitude | wrong phase transitions | GPS/baro altitude cross-check when both valid, disagreement >200 m sustained 5 s (first-pass threshold, pending flight calibration) — implemented in `cdh/sensor_validation.c` (`validateBaroGpsCrossCheck`), clears `baro_valid` so it flows through the ordinary C5 timeout monitor | prefer GPS altitude on disagreement | reinit; re-read PROM + CRC | Descent | 3 | L1 |
+| C7 | I2C1 bus | bus wedged (slave holds SDA low) | interrupted transaction, EMI | GPS, IMU **and** baro all invalid | all sensing lost; FSM blind | IMU ∧ baro faulted (fastest debounce pair); GPS follows | LoRa (SPI1) and SD (SPI2) unaffected — telemetry/log continue | bus restart (DeInit/Init) + 9-pulse SCL bit-bang clear, implemented in `cdh/cdh_fdir.c` (`CDH_FDIR_BusClear_Bitbang`, runs between DeInit and the hold-then-Init sequence) | any | 3 | L2 |
+| C8 | Internal ADC (battery sense) | invalid/absent reading | ADC config fault, divider open | `batt_valid=0` | no battery insight in telemetry | `batt_valid` low for 3 s (`FDIR_BATT_TIMEOUT_MS`, `fdir.c`) | — | internal ADC re-init (cheap); low risk overall | Cruise | 1 | L1 |
 | C9 | Battery | undervoltage (real) | cold, capacity | brownouts, resets | cascading resets | visible in telemetry (`batt_voltage_mv`) | **none possible** — no load shedding or power switching exists | accepted risk; mitigate pre-flight (battery sizing, insulation) | Cruise | 3 | — |
 | C10 | CDH loop | `CDH_Update` stops filling datapool | logic bug, blocking call without timeout | stale datapool, flags may stay valid | FDIR blind, FSM acts on stale data | `timestamp_ms` in datapool stops advancing (written by CDH each cycle) | — | if FDIR still runs: bus restart; if whole loop hung: IWDG (F1) | any | 4 | L2/L3 |
 
@@ -78,8 +78,8 @@ The radio also has a hardware RST line pulsed by `LoRa_Init()`, invoked via
 
 | # | Item | Failure mode | Possible cause | Local effect | System effect | Detection means | Isolation | Recovery | Worst phase | Sev | Lvl |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| F1 | MCU | superloop hangs | blocking call, logic bug | everything stops | mission loss if unrecovered | IWDG — **not enabled yet (main.c TODO)**; kick at end of loop only | — | watchdog reset; SCV restores phase/state | any | 4 | L3 |
-| F2 | MCU | repeated watchdog resets (boot loop) | persistent fault re-triggered each boot | reset storm | mission loss | `watchdog_reset_count >= 3` (counted today, **not acted on**) | staged: each further reset disables the next subsystem update (SD → CDH → TTC → FSW) | reduced mode; FDIR + watchdog kick stay alive at every stage | any | 4 | L4 |
+| F1 | MCU | superloop hangs | blocking call, logic bug | everything stops | mission loss if unrecovered | IWDG — armed in `main.c` (`IWDG_UserInit()`, ~30 s timeout); kick at end of loop, gated by `FDIR_SystemHealthyEnoughToKickWatchdog()` | — | watchdog reset; SCV restores phase/state | any | 4 | L3 |
+| F2 | MCU | repeated watchdog resets (boot loop) | persistent fault re-triggered each boot | reset storm | mission loss | `watchdog_reset_count >= 3` (staged reduced mode implemented in `main()`, see `FDIR_INTEGRATION.md`) | staged: each further reset disables the next subsystem update (SD → CDH → TTC → FSW) | reduced mode; FDIR + watchdog kick stay alive at every stage | any | 4 | L4 |
 | F3 | SCV/flash | SCV corrupt or erased | reset during flash write, wear | state lost | phase/counters reset | magic + CRC16 check (exists) | — | reinit defaults; log the event | any | 2 | L1 |
 | F4 | FSW time | `mission_elapsed_ms` resets on reboot | boot-relative tick stored as mission time (fdir.c:183) | wrong mission time after any reset | phase logic errors if time-dependent | code review finding — fix, not monitor | — | boot-offset reconstruction from SCV | any | 2 | — |
 
@@ -93,14 +93,14 @@ restart, and LoRa recovery alike.
 
 | Monitor | FMECA | Signal | Debounce | Fault bit | Recovery request | Executor | Escalation |
 |---|---|---|---|---|---|---|---|
-| GPS no-data | C2 | I2C response absent | 30 cycles | EQUIPMENT_GPS | GPS protocol reinit (new) | CDH | part of C7 bus escalation |
+| GPS no-data | C2 | I2C response absent | 30 cycles | EQUIPMENT_GPS | GPS protocol reinit (`GPS_EquipmentHandler_Init`, `CDH_Update()`) | CDH | part of C7 bus escalation |
 | GPS no-fix | C1 | fix_type with data present | 30 cycles | (flag only, distinct from no-data) | none — environmental | — | none |
 | IMU timeout | C3 | `imu_valid` | 3 cycles | EQUIPMENT_IMU | IMU reinit, 10 s cooldown | CDH | with baro fault → bus restart |
 | IMU plausibility | C4 | accel magnitude range / stuck values | 3 cycles | EQUIPMENT_IMU | IMU reinit | CDH | FSM ignores IMU while flagged |
 | Baro timeout | C5 | `baro_valid` | 3 cycles | EQUIPMENT_BARO | baro reinit, 10 s cooldown | CDH | with IMU fault → bus restart |
-| Baro cross-check | C6 | GPS vs baro altitude disagreement | 5 cycles | EQUIPMENT_BARO | baro reinit | CDH | FSM prefers GPS altitude |
-| I2C bus | C7 | IMU ∧ baro faulted | — | — | bus restart, 10 s cooldown | CDH | affects GPS too; SPI buses unaffected |
-| Battery ADC | C8 | `batt_valid` | 3 cycles (new — currently 1) | EQUIPMENT_EPS_ADC | internal ADC reinit (cheap, new) | CDH | none — low risk |
+| Baro cross-check | C6 | GPS vs baro altitude disagreement | 5 s | EQUIPMENT_BARO | baro reinit | CDH | FSM prefers GPS altitude |
+| I2C bus | C7 | IMU ∧ baro faulted | — | — | bus restart + 9-pulse SCL clear, 10 s cooldown | CDH | affects GPS too; SPI buses unaffected |
+| Battery ADC | C8 | `batt_valid` | 3 s (`FDIR_BATT_TIMEOUT_MS`) | EQUIPMENT_EPS_ADC | none (detection only — `reinit_period_ms=0`, cheap enough that FDIR doesn't bother rate-limiting a reinit path that doesn't exist yet) | CDH | none — low risk |
 | Coral timeout | P1 | `coral_valid` | 5 cycles | EQUIPMENT_CORAL | **none** (RX-only) — flag for telemetry/log | — | none |
 | SD failures | S1 | consecutive-failure count from sd_logger | 3 failures | EQUIPMENT_SD | remount request | SD logger | rotate file; never auto-format |
 | LoRa TX | T1 | TTC_FDIR_GetHealth() consecutive/lifetime fault counters | 5 consecutive, or ≥60%/last 20 (recovery); ≥90%/last 10 (fault bit) | EQUIPMENT_LORA | re-run LoRa_Init via TTC_FDIR_RequestRecovery() (RST pulse), 10 s cooldown | TTC | none |
@@ -111,21 +111,26 @@ restart, and LoRa recovery alike.
 
 One test per monitor. Run on the bench before flight; record actual FDIR reaction.
 
+Rows marked "(test hook)" are injected via the bench-only fault-injection
+console (`Core/Src/fdir/fdir_test_hooks.c`, `-DFDIR_TEST_HOOKS` build env
+`nucleo_l476rg_testhooks`, never in the flight image) over the USART2 debug
+UART — send `HOOK STATUS` for the full command list.
+
 | Test | Injection | Expected reaction | Status |
 |---|---|---|---|
 | GPS no-fix | shield/disconnect antenna only | no-fix flagged, no reinit spam, telemetry continues | ☐ |
 | GPS no-data | disconnect GPS from I2C | GPS fault after 30 cycles, protocol reinit requests | ☐ |
 | IMU loss | disconnect IMU from I2C | fault after 3 s, reinit requests every 10 s, clears on reconnect | ☐ |
-| IMU garbage | inject stuck values (test hook) | plausibility flag, FSM ignores IMU | ☐ |
+| IMU garbage | `HOOK IMU FREEZE <seconds>` (test hook, pins accel at 15g — well past `IMU_ACCEL_MAG_MAX_G`) | plausibility flag (`validateImuPlausibility` range check), FSM ignores IMU | ☐ |
 | Baro loss | disconnect baro from I2C | fault after 3 s, reinit requests every 10 s | ☐ |
-| Baro drift | offset baro reading (test hook) | cross-check flags baro, FSM uses GPS altitude | ☐ |
+| Baro drift | `HOOK BARO OFFSET <meters>` (test hook, use >200 m to clear `BARO_GPS_ALT_DISAGREE_M`) | cross-check flags baro after 5 s (`validateBaroGpsCrossCheck`), FSM uses GPS altitude | ☐ |
 | Bus wedge | short SDA to GND during operation | GPS+IMU+baro all faulted → bus restart executes; LoRa TX and SD logging continue throughout | ☐ |
 | Coral loss | disconnect Coral RX line | CORAL fault after 5 cycles, no recovery attempted, core loop unaffected | ☐ |
-| ADC fault | misconfigure/disable ADC (test hook) | EPS_ADC fault after debounce, telemetry marks battery invalid | ☐ |
+| ADC fault | `HOOK ADC FAULT <seconds>` (test hook) | EPS_ADC fault after debounce, telemetry marks battery invalid | ☐ |
 | SD failure | remove card mid-run | remount attempts, telemetry unaffected, logging resumes on reinsert | ☐ |
 | SD full | fill card to capacity (optional — accepted risk) | writes fail with SD fault set, telemetry unaffected | ☐ |
 | LoRa failure | disconnect radio SPI | LORA fault, periodic LoRa_Init retries (RST pulse), recovery on reconnect | ☐ |
 | LoRa boot failure | hold radio in reset at boot | TTC starts degraded, retries init, recovers when released | ☐ |
 | Loop hang | debug-halt or induced infinite loop | IWDG resets MCU, SCV restores phase, watchdog_reset_count increments | ☐ |
 | Boot loop | force repeated watchdog resets | staged disabling: SD off after 3 resets, then CDH, TTC, FSW on further resets; FDIR + watchdog kick alive at every stage | ☐ |
-| SCV corruption | erase SCV flash page | defaults reinitialised, boot continues, event logged | ☐ |
+| SCV corruption | `HOOK SCV ERASE` (test hook) | defaults reinitialised, boot continues, event logged | ☐ |

@@ -14,7 +14,8 @@ static uint32_t s_ascent_to_cruise_since_ms = 0U;
 static uint32_t s_descent_since_ms = 0U;
 static uint32_t s_landing_since_ms = 0U;
 static uint8_t s_cruise_baro_ref_valid = 0U;
-static float s_cruise_baro_ref_m = 0.0f;
+static float s_cruise_alt_min_m = 0.0f;
+static float s_cruise_alt_max_m = 0.0f;
 static float s_float_accel_baseline_g = 1.0f;
 
 /* Equipment feeds phase decisions only when it is enabled (policy plane:
@@ -141,22 +142,51 @@ void FSW_Update(const SensorData_t *dp)
             break;
         }
 
-        if (baro_usable && !s_cruise_baro_ref_valid)
+        /* Baro band: track the min/max altitude seen since the window last
+         * reset and require the full spread to stay under the band for the
+         * whole debounce window -- this approximates "altitude rate of
+         * change bounded" (FR-007) with two floats instead of a fixed
+         * reference point. A fixed reference (the previous approach) can
+         * never be re-satisfied once steady ascent carries the balloon past
+         * it, which made this branch permanently dead. */
+        if (baro_usable)
         {
-            s_cruise_baro_ref_m = dp->baro_alt_m;
-            s_cruise_baro_ref_valid = 1U;
+            if (!s_cruise_baro_ref_valid)
+            {
+                s_cruise_alt_min_m = dp->baro_alt_m;
+                s_cruise_alt_max_m = dp->baro_alt_m;
+                s_cruise_baro_ref_valid = 1U;
+            }
+            else
+            {
+                if (dp->baro_alt_m < s_cruise_alt_min_m) { s_cruise_alt_min_m = dp->baro_alt_m; }
+                if (dp->baro_alt_m > s_cruise_alt_max_m) { s_cruise_alt_max_m = dp->baro_alt_m; }
+            }
         }
 
         cruise_condition = ((gps_usable && dp->gps_vel_down_mps > FSM_CRUISE_VEL_DOWN_MPS) ||
                             (baro_usable && s_cruise_baro_ref_valid &&
-                             fabsf(dp->baro_alt_m - s_cruise_baro_ref_m) < FSM_CRUISE_ALT_BAND_M));
+                             (s_cruise_alt_max_m - s_cruise_alt_min_m) < FSM_CRUISE_ALT_BAND_M));
         if (FSW_ConditionHeld(cruise_condition, &s_ascent_to_cruise_since_ms, FSM_CRUISE_WINDOW_MS))
+        {
             FSW_SetPhase(PHASE_CRUISE);
+            break;
+        }
+        if (!cruise_condition && baro_usable)
+        {
+            /* Band exceeded (steady ascent, or a real gust): FSW_ConditionHeld
+             * already restarted the debounce timer above -- restart the
+             * watermarks from the current sample too, so the next window
+             * measures forward from here instead of an ever-growing spread. */
+            s_cruise_alt_min_m = dp->baro_alt_m;
+            s_cruise_alt_max_m = dp->baro_alt_m;
+        }
         break;
 
     case PHASE_CRUISE:
         if (imu_usable)
-            s_float_accel_baseline_g = (0.9f * s_float_accel_baseline_g) + (0.1f * dp->imu_accel_mag_g);
+            s_float_accel_baseline_g = ((1.0f - FSM_CRUISE_BASELINE_ALPHA) * s_float_accel_baseline_g) +
+                                        (FSM_CRUISE_BASELINE_ALPHA * dp->imu_accel_mag_g);
 
         accel_delta_g = imu_usable ? fabsf(dp->imu_accel_mag_g - s_float_accel_baseline_g) : 0.0f;
         descent_condition = ((imu_usable && accel_delta_g > FSM_DESCENT_ACCEL_DELTA_G) ||

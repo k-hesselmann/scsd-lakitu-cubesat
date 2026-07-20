@@ -19,10 +19,14 @@
 /* ── Standby → Launch ─────────────────────────────────────────────────────── */
 
 /* Total IMU acceleration magnitude above which launch jerk is detected.
- * Typical balloon release jerk: 1.5–3 g. Set conservatively above 1 g (gravity)
- * plus noise floor (~0.05 g) to avoid false trigger from ground handling.
- * FR-005 specifies 1.5 g minimum. Refine after bench shake test. */
-#define FSM_LAUNCH_ACCEL_G        1.5f   /* g */
+ * Typical balloon release jerk: 1.5–3 g. Lowered from 1.5 g to 1.3 g (still
+ * >5x the ~0.05 g noise floor) to catch softer releases sooner; still well
+ * above 1 g (gravity) plus noise so ground handling does not false-trigger.
+ * DEVIATION: FR-005 as written specifies 1.5 g / 2 s (see FSM_LAUNCH_WINDOW_MS
+ * below). This constant intentionally no longer matches that wording —
+ * update FR-005 or record the deviation rationale in the traceability doc
+ * before flight sign-off. */
+#define FSM_LAUNCH_ACCEL_G        1.3f   /* g */
 
 /* Barometric altitude rise over the persistence window confirming upward motion.
  * At 1 Hz with 2 s window: balloon must rise at least this much to confirm launch.
@@ -31,9 +35,11 @@
 #define FSM_LAUNCH_BARO_RISE_M    3.0f   /* m over window — TBD from bench test */
 
 /* Persistence window: the OR condition must hold continuously for this long
- * (elapsed-time debounce, sample-rate independent). FR-005 specifies 2 s.
- * Short because the launch jerk is brief. */
-#define FSM_LAUNCH_WINDOW_MS      2000U  /* ms */
+ * (elapsed-time debounce, sample-rate independent). Shortened from 2 s to 1 s
+ * alongside FSM_LAUNCH_ACCEL_G — the jerk itself is sub-second, so the 2 s
+ * requirement was already relying on the baro branch to actually fire.
+ * DEVIATION: FR-005 as written specifies 2 s — see FSM_LAUNCH_ACCEL_G note. */
+#define FSM_LAUNCH_WINDOW_MS      1000U  /* ms */
 
 
 /* ── Launch → Ascent ──────────────────────────────────────────────────────── */
@@ -108,10 +114,17 @@
 
 /* ── Cross-cutting ────────────────────────────────────────────────────────── */
 
-/* Median filter window applied to all sensor values before threshold comparison.
- * 5 samples at 1 Hz = 5 s smoothing. Removes single-sample spikes.
- * Increase if noise is worse than expected; decrease if phase detection is sluggish. */
-#define FSM_MEDIAN_WINDOW         5      /* samples */
+/* EMA smoothing factor for the Cruise IMU accel-magnitude baseline (0..1),
+ * updated once per FSW_Update() call. FSW_Update runs at LOOP_CDH_FSW_PERIOD_MS
+ * (10 Hz, see main.c), not the 1 Hz this file originally assumed elsewhere —
+ * at 10 Hz the previous 0.9/0.1 EMA had a ~1 s time constant, so it absorbed a
+ * genuine burst-magnitude acceleration deviation faster than the 10 s
+ * FSM_DESCENT_WINDOW_MS debounce could confirm it, silently defeating the
+ * Cruise->Descent IMU branch. This value gives a time constant of roughly
+ * 1 / (FSM_CRUISE_BASELINE_ALPHA * 10 Hz) ~= 100 s — about 10x the debounce
+ * window, so a real burst stays visible across many debounce cycles before
+ * the baseline "catches up" and erases it. */
+#define FSM_CRUISE_BASELINE_ALPHA 0.001f
 
 /* Watchdog kick period. Must be < 10 s (FR-011). The main superloop free-runs
  * (no fixed tick) and the IWDG is kicked once per iteration when FDIR reports
