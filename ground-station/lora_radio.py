@@ -41,6 +41,7 @@ REG_MODEM_CONFIG_3       = 0x26
 REG_SYNC_WORD            = 0x39
 REG_DIO_MAPPING_1        = 0x40
 REG_VERSION              = 0x42
+REG_PA_DAC               = 0x4D
 
 
 MODE_LONG_RANGE          = 0x80
@@ -58,10 +59,10 @@ IRQ_TX_DONE              = 0x08
 class RFM95Radio:
     def __init__(
         self,
-        frequency_hz=868000000,
-        spreading_factor=9,
+        frequency_hz=869525000,
+        spreading_factor=8,
         sync_word=0x12,
-        tx_power_dbm=10,
+        tx_power_dbm=17,
     ):
         self.spi = None
 
@@ -178,8 +179,10 @@ class RFM95Radio:
 
     def set_tx_power_dbm(self, dbm):
         """
-        PA_BOOST output power.
-        Keep low for bench testing.
+        PA_BOOST output power in the RFM95W normal +2..+17 dBm range.
+
+        Explicitly restore normal RegPaDac mode so a modem previously used for
+        a +20 dBm test cannot retain the high-power setting.
         """
 
         if dbm < 2:
@@ -188,6 +191,7 @@ class RFM95Radio:
         if dbm > 17:
             dbm = 17
 
+        self.write_reg(REG_PA_DAC, 0x84)
         pa_config = 0x80 | (dbm - 2)
         self.write_reg(REG_PA_CONFIG, pa_config)
 
@@ -226,7 +230,7 @@ class RFM95Radio:
         self.write_reg(REG_MODEM_CONFIG_1, 0x70 | 0x02)
 
         # RegModemConfig2:
-        # SF9 -> 0x90
+        # Spreading factor occupies bits 7..4 (SF8 -> 0x80)
         # CRC enabled -> 0x04
         self.write_reg(REG_MODEM_CONFIG_2, self._sf_to_reg() | 0x04)
 

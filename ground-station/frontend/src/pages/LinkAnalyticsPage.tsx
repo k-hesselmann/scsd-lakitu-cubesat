@@ -1,3 +1,5 @@
+import { useMemo } from "react"
+
 import {
   CartesianGrid,
   Line,
@@ -11,6 +13,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { MetricCard } from "@/components/MetricCard"
 import { fmt } from "@/lib/format"
+import { sampleEvenly } from "@/lib/telemetrySeries"
 import type { DashboardPageProps } from "@/pages/pageTypes"
 
 function formatTime(value: unknown) {
@@ -42,6 +45,7 @@ export function LinkAnalyticsPage({
   const totalExpected = packets + lost
   const lossPercent = totalExpected > 0 ? (lost / totalExpected) * 100 : null
   const rate = packetRatePerMinute(history)
+  const chartHistory = useMemo(() => sampleEvenly(history, 200), [history])
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden p-3">
@@ -92,11 +96,11 @@ export function LinkAnalyticsPage({
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-2">
         <Card className="min-h-0 overflow-hidden">
           <CardHeader className="px-4 py-3">
-            <CardTitle className="text-base">RSSI / SNR Trend</CardTitle>
+            <CardTitle className="text-base">RSSI [dBm] / SNR [dB] Trend</CardTitle>
           </CardHeader>
           <CardContent className="h-[calc(100%-56px)] px-4 pb-4">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={history}>
+              <LineChart data={chartHistory}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="pc_receive_time_iso" tickFormatter={formatTime} />
                 <YAxis />
@@ -106,6 +110,7 @@ export function LinkAnalyticsPage({
                   dataKey="lora_downlink_rssi_dbm"
                   name="Downlink RSSI [dBm]"
                   dot={false}
+                  isAnimationActive={false}
                   stroke="#9333ea"
                 />
                 <Line
@@ -113,6 +118,7 @@ export function LinkAnalyticsPage({
                   dataKey="lora_downlink_snr_db"
                   name="Downlink SNR [dB]"
                   dot={false}
+                  isAnimationActive={false}
                   stroke="#0f766e"
                 />
               </LineChart>
@@ -122,11 +128,11 @@ export function LinkAnalyticsPage({
 
         <Card className="min-h-0 overflow-hidden">
           <CardHeader className="px-4 py-3">
-            <CardTitle className="text-base">Packet Loss</CardTitle>
+            <CardTitle className="text-base">Packet Loss [packets]</CardTitle>
           </CardHeader>
           <CardContent className="h-[calc(100%-56px)] px-4 pb-4">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={history}>
+              <LineChart data={chartHistory}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="pc_receive_time_iso" tickFormatter={formatTime} />
                 <YAxis />
@@ -134,8 +140,9 @@ export function LinkAnalyticsPage({
                 <Line
                   type="stepAfter"
                   dataKey="total_lost_packets"
-                  name="Total lost packets"
+                  name="Total lost packets [count]"
                   dot={false}
+                  isAnimationActive={false}
                   stroke="#dc2626"
                 />
               </LineChart>

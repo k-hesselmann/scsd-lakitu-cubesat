@@ -22,10 +22,10 @@ type StatusCardProps = { title: string; detail: string; variant: Variant; tags: 
 
 function variantClass(variant: Variant) {
   return {
-    nominal: "border-green-500 bg-green-50",
-    warning: "border-amber-500 bg-amber-50",
-    critical: "border-red-500 bg-red-50",
-    unknown: "border-slate-300 bg-white",
+    nominal: "border-green-500 bg-green-50/80 dark:bg-green-950/20",
+    warning: "border-amber-500 bg-amber-50/80 dark:bg-amber-950/20",
+    critical: "border-red-500 bg-red-50/80 dark:bg-red-950/20",
+    unknown: "border-slate-300 bg-background",
   }[variant]
 }
 
@@ -45,14 +45,14 @@ function statusFromValidity(
 
 function StatusCard({ title, detail, variant, tags }: StatusCardProps) {
   return (
-    <section className={`rounded-xl border-2 p-3 ${variantClass(variant)}`}>
+    <section className={`rounded-lg border border-l-4 px-2.5 py-2 ${variantClass(variant)}`}>
       <div className="flex items-start justify-between gap-2">
-        <h3 className="text-sm font-bold">{title}</h3>
-        <Badge variant={badgeVariant(variant)}>{variant.toUpperCase()}</Badge>
+        <h3 className="text-xs font-bold leading-5">{title}</h3>
+        <Badge variant={badgeVariant(variant)} className="h-5 px-1.5 text-[9px]">{variant.toUpperCase()}</Badge>
       </div>
-      <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
-      <div className="mt-2 flex flex-wrap gap-1">
-        {tags.map((tag) => <Badge key={tag} variant="outline" className="text-[10px]">{tag}</Badge>)}
+      <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{detail}</p>
+      <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] leading-4 text-muted-foreground">
+        {tags.map((tag) => <span key={tag} title={tag} className="truncate">- {tag}</span>)}
       </div>
     </section>
   )
@@ -133,15 +133,15 @@ export function SystemArchitectureDiagram({
   const obc: Variant = latest.crc_ok === false || latest.protocol_version_ok === false || latest.packet_type_ok === false ? "critical" : "nominal"
 
   return (
-    <div className="h-full overflow-auto rounded-xl border bg-slate-50 p-3">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+    <div className="h-full overflow-auto rounded-lg border bg-muted/25 p-2">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-bold">Protocol-v8 subsystem status</h2>
-          <p className="text-xs text-muted-foreground">Flight radio TX and RX are evaluated separately using onboard telemetry and live protocol evidence.</p>
+          <p className="text-[11px] text-muted-foreground">Onboard telemetry combined with live ground-link evidence.</p>
         </div>
         <Badge variant={badgeVariant(obc)}>OBC {obc.toUpperCase()}</Badge>
       </div>
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
         <StatusCard title="GNSS" variant={gps} detail={`Altitude ${fmt(latest.gnss_altitude_m, " m", 1)} · Vertical speed ${fmt(latest.vertical_speed_ms, " m/s", 2)}`} tags={[`enabled ${fmt(gpsEnabled)}`, `valid ${fmt(latest.gps_valid_raw)}`, `fix ${fmt(latest.gnss_fix_type)}`, `satellites ${fmt(latest.gnss_satellites_used)}`, `UTC ${formatGnssUtc(latest.gnss_utc_sod)}`, `course ${fmt(latest.course_deg, "°", 2)}`]} />
         <StatusCard title="IMU" variant={imu} detail={`Accel X ${fmt(latest.imu_accel_x_g, " g", 3)} · Y ${fmt(latest.imu_accel_y_g, " g", 3)} · Z ${fmt(latest.imu_accel_z_g, " g", 3)}`} tags={[`enabled ${fmt(imuEnabled)}`, `valid ${fmt(latest.imu_valid_raw)}`, `gyro X ${fmt(latest.imu_gyro_x_dps, " deg/s", 1)}`, `Y ${fmt(latest.imu_gyro_y_dps, " deg/s", 1)}`, `Z ${fmt(latest.imu_gyro_z_dps, " deg/s", 1)}`]} />
         <StatusCard title="Barometer" variant={baro} detail={`${fmt(latest.baro_pressure_pa, " Pa")} · ${fmt(latest.baro_altitude_m, " m", 1)}`} tags={[`enabled ${fmt(baroEnabled)}`, `valid ${fmt(latest.baro_valid_raw)}`, `temperature ${fmt(latest.baro_temperature_c, " °C", 2)}`]} />

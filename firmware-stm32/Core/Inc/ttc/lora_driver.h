@@ -29,8 +29,9 @@ typedef enum
     LORA_STATE_FAULT
 } LoRaState_t;
 
-/* Queue SX1276/RFM95W configuration for 868 MHz, SF9, BW 125 kHz and CR 4/5.
- * Call LoRa_Service() until LoRa_IsBusy() becomes zero, then inspect
+/* Queue the normal SX1276/RFM95W profile: 869.525 MHz, SF8, BW 125 kHz,
+ * CR 4/5, 17 dBm PA_BOOST, explicit header and payload CRC. Call
+ * LoRa_Service() until LoRa_IsBusy() becomes zero, then inspect
  * LoRa_GetLastStatus(). */
 LoRaStatus_t LoRa_Init(void);
 

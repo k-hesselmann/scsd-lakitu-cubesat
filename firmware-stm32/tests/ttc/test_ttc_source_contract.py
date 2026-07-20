@@ -80,9 +80,27 @@ def test_recovery_regressions_have_behavioral_harnesses() -> None:
     assert "TestAbortTimeoutStillAllowsRecovery" in driver_harness
 
 
+def test_flight_radio_profile_is_869525_sf8_17_dbm() -> None:
+    source = read("lora_driver.c")
+    for declaration in (
+        "#define LORA_FRF_MSB              0xD9U",
+        "#define LORA_FRF_MID              0x61U",
+        "#define LORA_FRF_LSB              0x99U",
+        "#define LORA_MODEM_CONFIG_1       0x72U",
+        "#define LORA_MODEM_CONFIG_2       0x84U",
+        "#define LORA_MODEM_CONFIG_3       0x04U",
+        "#define LORA_SYNC_WORD            0x12U",
+        "#define LORA_PA_CONFIG_17_DBM     0x8FU",
+        "#define LORA_PA_DAC_NORMAL        0x84U",
+    ):
+        assert declaration in source
+    assert "{ LORA_ACTION_WRITE, REG_PA_DAC, LORA_PA_DAC_NORMAL }" in source
+    assert "{ LORA_ACTION_READ_VERIFY, REG_PA_CONFIG, LORA_PA_CONFIG_17_DBM }" in source
+
 if __name__ == "__main__":
     test_driver_has_no_blocking_delay_or_tx_done_wait_loop()
     test_ttc_has_no_scv_or_autonomous_recovery_policy()
     test_fdir_interface_and_queued_operations_are_exposed()
     test_recovery_regressions_have_behavioral_harnesses()
+    test_flight_radio_profile_is_869525_sf8_17_dbm()
     print("TTC source-contract checks passed")
