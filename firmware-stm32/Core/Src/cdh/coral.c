@@ -236,6 +236,7 @@ static uint16_t s_rx_crc;      /* running CRC-16 over TYPE..last pixel */
 
 static uint32_t s_seq;
 static uint16_t s_frac;
+static uint8_t  s_frac_pct;   /* s_frac scaled to 0-100; also folds into s_fname */
 
 static uint32_t s_pixels_remaining;
 static uint16_t s_chunk_target;   /* bytes wanted in the in-flight chunk */
@@ -248,7 +249,7 @@ static uint16_t s_crc_pos;
 static uint8_t  s_status;   /* accumulated CORAL_STATUS_* flags for this frame */
 static uint8_t  s_sd_ok;
 static FIL      s_fframe;
-static char     s_fname[16];
+static char     s_fname[32];
 
 /* Abort the in-progress frame: close/delete any partial SD file, publish
  * the given status, log why, and return the state machine to IDLE so the
@@ -292,6 +293,7 @@ static void coral_header_complete(void)
     s_frac  = ((uint16_t)s_hdr[9]  <<  8) |  s_hdr[10];
     uint16_t width  = ((uint16_t)s_hdr[11] <<  8) |  s_hdr[12];
     uint16_t height = ((uint16_t)s_hdr[13] <<  8) |  s_hdr[14];
+    s_frac_pct = (uint8_t)((uint32_t)s_frac * 100UL / 65535UL);
 
     if (type != CORAL_TYPE_IMAGE)
     {
@@ -323,7 +325,11 @@ static void coral_header_complete(void)
         dbg(buf);
     }
 
-    snprintf(s_fname, sizeof(s_fname), "F%08lu.RAW", (unsigned long)s_seq);
+    /* Cloud percentage folded into the filename (UART_PROTOCOL.md section 6's
+     * OBC-side naming convention) so it's visible without cross-referencing
+     * the SD-logger CSV by SEQ. */
+    snprintf(s_fname, sizeof(s_fname), "F%08lu_cloud%u.RAW",
+             (unsigned long)s_seq, (unsigned)s_frac_pct);
 
     s_sd_ok = 0U;
     if (f_open(&s_fframe, s_fname, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
@@ -424,7 +430,6 @@ static void coral_frame_complete(void)
      *  [12..13] FRAME_CNT  uint16 LE
      *  [14..15] reserved              */
     uint32_t now      = HAL_GetTick();
-    uint8_t  frac_pct = (uint8_t)((uint32_t)s_frac * 100UL / 65535UL);
 
     if (s_rx_dp != NULL)
     {
@@ -436,7 +441,7 @@ static void coral_frame_complete(void)
         dp->coral_block[3]  = (uint8_t)((s_seq >> 24)  & 0xFFU);
         dp->coral_block[4]  = (uint8_t)( s_frac        & 0xFFU);
         dp->coral_block[5]  = (uint8_t)((s_frac >> 8)  & 0xFFU);
-        dp->coral_block[6]  = frac_pct;
+        dp->coral_block[6]  = s_frac_pct;
         dp->coral_block[7]  = s_status;
         dp->coral_block[8]  = (uint8_t)( now         & 0xFFU);
         dp->coral_block[9]  = (uint8_t)((now >>  8)  & 0xFFU);
@@ -461,7 +466,7 @@ static void coral_frame_complete(void)
     }
 
     coral_last_status   = s_status;
-    coral_last_fraction = frac_pct;
+    coral_last_fraction = s_frac_pct;
 
     s_rx_dp    = NULL;
     s_rx_state = CORAL_RX_IDLE;
