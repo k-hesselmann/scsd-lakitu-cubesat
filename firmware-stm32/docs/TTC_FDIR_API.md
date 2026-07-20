@@ -124,8 +124,9 @@ diagnostics/telemetry.
 
 - `TTC_GetHealth()` / `TTC_GetUplinkState()` — the same `LoRaHealth_t` /
   `UplinkState_t` snapshots compacted into protocol-v8 telemetry by
-  `FSW_BuildTelemetryPacket()`; useful for ground-side diagnostics
-  but not part of the FDIR request/response loop above.
+  `TTC_BuildTelemetryPacket()` (`ttc_telemetry.c`), an internal read within
+  TTC, not a cross-module one; useful for ground-side diagnostics but not
+  part of the FDIR request/response loop above.
 - `TTC_RequestTelemetry()` — queues an out-of-cycle telemetry send; called by
   `FSW_SetPhase()` on every flight-phase change. Not FDIR-related.
 
