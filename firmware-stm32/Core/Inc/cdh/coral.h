@@ -58,8 +58,15 @@
 /* Call once after MX_USART3_UART_Init() -- before the superloop. */
 void Coral_Init(void);
 
-/* Call every CDH_Update() tick. Non-blocking poll; blocks only when a frame
- * SOF is detected (~4.4 s for 224x224 at 115200 baud). */
+/* Call once every superloop iteration (main.c calls this unconditionally,
+ * not gated to the 100 ms CDH/FSW slot). Always non-blocking / bounded: each
+ * call advances the frame-receive state machine by at most one header/CRC
+ * byte-run or one already-ring-buffered pixel chunk (<=512 B, one f_write)
+ * and returns, so a ~4.4 s frame is spread across many superloop iterations
+ * instead of stalling the loop for its duration. Raw UART bytes are captured
+ * independently of this state machine by HAL_UART_RxCpltCallback() into a
+ * ring buffer, so nothing is lost regardless of call cadence as long as the
+ * ring doesn't overflow (see coral_rx_overflow_count). */
 void Coral_Update(SensorData_t *dp);
 
 /* Send an immediate-inference trigger command to the Coral. */
