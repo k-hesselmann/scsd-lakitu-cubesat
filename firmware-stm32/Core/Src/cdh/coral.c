@@ -154,6 +154,16 @@ static uint8_t coral_rx_ring_pop(uint8_t *byte)
     return 1U;
 }
 
+/* Non-blocking: pops whatever is currently available, up to max_len, and
+ * returns the count actually popped (0..max_len). Never waits. */
+static uint16_t coral_rx_ring_pop_n(uint8_t *dst, uint16_t max_len)
+{
+    uint16_t n = 0U;
+    while (n < max_len && coral_rx_ring_pop(&dst[n]))
+        n++;
+    return n;
+}
+
 static void coral_rx_start_it(void)
 {
     coral_clear_uart_errors();
@@ -162,28 +172,6 @@ static void coral_rx_start_it(void)
     {
         (void)HAL_UART_Receive_IT(&CORAL_HUART, &s_rx_irq_byte, 1U);
     }
-}
-
-static uint8_t coral_read_bytes(uint8_t *dst, uint16_t len, uint32_t timeout_ms)
-{
-    uint16_t pos = 0U;
-    uint32_t start = HAL_GetTick();
-
-    while (pos < len)
-    {
-        if (coral_rx_ring_pop(&dst[pos]))
-        {
-            pos++;
-            continue;
-        }
-
-        if ((HAL_GetTick() - start) >= timeout_ms)
-            return 0U;
-
-        coral_rx_start_it();
-    }
-
-    return 1U;
 }
 
 /* ============================================================================
@@ -209,79 +197,138 @@ static uint16_t crc16_buf(uint16_t crc, const uint8_t *buf, uint32_t len)
 }
 
 /* ============================================================================
- * coral_receive_frame
- *   Called after SOF {0xAA,0x55} confirmed.  Blocks until the full packet
- *   is received or an error occurs.
+ * Frame-receive state machine
+ *
+ *   coral_receive_frame() used to be a single function that looped over
+ *   every header byte, every 512-byte pixel chunk, and the CRC trailer,
+ *   blocking until the ~4.4 s (wire) + SD-write frame finished. Because
+ *   Coral_Update() called it synchronously from inside the main.c superloop,
+ *   that one call stalled the *entire* loop -- GPS/IMU servicing, FDIR,
+ *   TTC_Service(), and the IWDG kick all included -- for the frame's
+ *   duration. The Coral has no per-chunk handshake (UART_PROTOCOL.md 3):
+ *   once triggered it streams the whole frame unprompted, so pacing can't
+ *   be borrowed from a request/response exchange either.
+ *
+ *   Below, the same parsing/validation/SD-write logic is kept, but spread
+ *   over many calls: each state advances by whatever is already sitting in
+ *   s_rx_ring (filled independently by HAL_UART_RxCpltCallback(), so wire
+ *   bytes are never lost regardless of call cadence) and, for CORAL_RX_PIXELS,
+ *   by at most one 512-byte chunk (one f_write) per call. A call that finds
+ *   nothing new simply returns. Every state tracks the tick of its last
+ *   forward progress so a silent link (Coral wedged/disconnected mid-frame)
+ *   is caught by a stall timeout instead of hanging forever.
  * ========================================================================== */
-static uint8_t coral_receive_frame(SensorData_t *dp)
+typedef enum {
+    CORAL_RX_IDLE = 0,  /* scanning s_rx_ring for SOF byte 0 (0xAA)   */
+    CORAL_RX_SOF1,      /* got 0xAA, waiting for 0x55                 */
+    CORAL_RX_HEADER,    /* accumulating the 16-byte header            */
+    CORAL_RX_PIXELS,    /* streaming W*H pixel bytes to SD, one chunk per call */
+    CORAL_RX_CRC,       /* accumulating the 2-byte CRC trailer        */
+} coral_rx_state_t;
+
+static coral_rx_state_t s_rx_state = CORAL_RX_IDLE;
+static SensorData_t    *s_rx_dp;
+static uint32_t         s_rx_last_progress_ms;
+
+static uint8_t  s_hdr[16];
+static uint16_t s_hdr_pos;
+static uint16_t s_rx_crc;      /* running CRC-16 over TYPE..last pixel */
+
+static uint32_t s_seq;
+static uint16_t s_frac;
+
+static uint32_t s_pixels_remaining;
+static uint16_t s_chunk_target;   /* bytes wanted in the in-flight chunk */
+static uint16_t s_chunk_fill;     /* bytes accumulated so far            */
+static uint32_t s_chunk_num;
+
+static uint8_t  s_crc_trailer[2];
+static uint16_t s_crc_pos;
+
+static uint8_t  s_status;   /* accumulated CORAL_STATUS_* flags for this frame */
+static uint8_t  s_sd_ok;
+static FIL      s_fframe;
+static char     s_fname[16];
+
+/* Abort the in-progress frame: close/delete any partial SD file, publish
+ * the given status, log why, and return the state machine to IDLE so the
+ * next SOF (the following frame, ~10 s later at the default interval) is
+ * picked up cleanly. Mirrors the timeout-count/status semantics of the
+ * three timeout returns in the original blocking coral_receive_frame(). */
+static void coral_rx_abort(uint8_t status, const char *reason)
 {
-    uint8_t  status = 0;
-    uint16_t crc    = 0xFFFFU;
+    dbg(reason);
 
-    /* Start with coral_valid = 0; set to 1 only on clean frame */
-    dp->coral_valid = 0U;
-
-    /* ---- 1. Read 16-byte header ---------------------------------------- */
-    /* Header layout (all fields big-endian):
-     *   hdr[0]      TYPE    (1 byte)
-     *   hdr[1..4]   SEQ     (4 bytes)
-     *   hdr[5..8]   LEN     (4 bytes) = 7 + W*H
-     *   hdr[9..10]  FRAC    (2 bytes)
-     *   hdr[11..12] WIDTH   (2 bytes)
-     *   hdr[13..14] HEIGHT  (2 bytes)
-     *   hdr[15]     FORMAT  (1 byte)  */
-    uint8_t hdr[16];
-    if (!coral_read_bytes(hdr, 16U, HDR_TIMEOUT_MS))
+    if (s_sd_ok)
     {
-        dbg("[CORAL] !!! Header timeout\r\n");
-        coral_timeout_count++;
-        return CORAL_STATUS_TIMEOUT;
+        f_close(&s_fframe);
+        f_unlink(s_fname);
+        s_sd_ok = 0U;
     }
 
-    /* CRC starts at TYPE byte (hdr[0]); SOF is excluded from CRC */
-    crc = crc16_buf(crc, hdr, 16U);
+    coral_timeout_count++;
 
-    /* Decode header -- big-endian */
-    uint8_t  type   =  hdr[0];
-    uint32_t seq    = ((uint32_t)hdr[1]  << 24) | ((uint32_t)hdr[2]  << 16)
-                    | ((uint32_t)hdr[3]  <<  8) |  (uint32_t)hdr[4];
-    /* hdr[5..8] = LEN -- not used; we derive pixel count from width*height */
-    uint16_t frac   = ((uint16_t)hdr[9]  <<  8) |  hdr[10];
-    uint16_t width  = ((uint16_t)hdr[11] <<  8) |  hdr[12];
-    uint16_t height = ((uint16_t)hdr[13] <<  8) |  hdr[14];
-    /* hdr[15] = FORMAT (0x01 = Y8) -- informational only */
+    if (s_rx_dp != NULL)
+    {
+        s_rx_dp->coral_block[7] = status;
+    }
+    coral_last_status = status;
+
+    s_rx_dp    = NULL;
+    s_rx_state = CORAL_RX_IDLE;
+}
+
+/* 16-byte header complete: validate, open the SD file, and set up the
+ * pixel-chunk state -- or drop back to IDLE on a bad TYPE/geometry, exactly
+ * as the original did (pixel bytes are not drained in that case; the next
+ * SOF is re-synced to on a later call, same as before this change). */
+static void coral_header_complete(void)
+{
+    s_rx_crc = crc16_buf(s_rx_crc, s_hdr, 16U);
+
+    uint8_t  type   =  s_hdr[0];
+    s_seq   = ((uint32_t)s_hdr[1]  << 24) | ((uint32_t)s_hdr[2]  << 16)
+            | ((uint32_t)s_hdr[3]  <<  8) |  (uint32_t)s_hdr[4];
+    s_frac  = ((uint16_t)s_hdr[9]  <<  8) |  s_hdr[10];
+    uint16_t width  = ((uint16_t)s_hdr[11] <<  8) |  s_hdr[12];
+    uint16_t height = ((uint16_t)s_hdr[13] <<  8) |  s_hdr[14];
 
     if (type != CORAL_TYPE_IMAGE)
     {
         dbg_hex("[CORAL] !!! Bad TYPE: ", type);
         coral_crc_err_count++;
-        return CORAL_STATUS_CRC_ERR;
+        if (s_rx_dp != NULL) { s_rx_dp->coral_block[7] = CORAL_STATUS_CRC_ERR; }
+        coral_last_status = CORAL_STATUS_CRC_ERR;
+        s_rx_dp    = NULL;
+        s_rx_state = CORAL_RX_IDLE;
+        return;
     }
     if (width != CORAL_IMAGE_W || height != CORAL_IMAGE_H)
     {
         dbg("[CORAL] !!! Unexpected image geometry\r\n");
         coral_crc_err_count++;
-        return CORAL_STATUS_CRC_ERR;
+        if (s_rx_dp != NULL) { s_rx_dp->coral_block[7] = CORAL_STATUS_CRC_ERR; }
+        coral_last_status = CORAL_STATUS_CRC_ERR;
+        s_rx_dp    = NULL;
+        s_rx_state = CORAL_RX_IDLE;
+        return;
     }
 
     {
         char buf[72];
         snprintf(buf, sizeof(buf),
                  "[CORAL] Header OK  SEQ=%lu  FRAC=%u (%u%%)\r\n",
-                 (unsigned long)seq, (unsigned)frac,
-                 (unsigned)((uint32_t)frac * 100UL / 65535UL));
+                 (unsigned long)s_seq, (unsigned)s_frac,
+                 (unsigned)((uint32_t)s_frac * 100UL / 65535UL));
         dbg(buf);
     }
 
-    /* ---- 2. Open SD file ---------------------------------------------- */
-    char   fname[16];
-    snprintf(fname, sizeof(fname), "F%08lu.RAW", (unsigned long)seq);
+    snprintf(s_fname, sizeof(s_fname), "F%08lu.RAW", (unsigned long)s_seq);
 
-    FIL     fframe;
-    uint8_t sd_ok = 0;
-    if (f_open(&fframe, fname, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
+    s_sd_ok = 0U;
+    if (f_open(&s_fframe, s_fname, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
     {
-        sd_ok = 1;
+        s_sd_ok = 1U;
         dbg("[CORAL] SD file opened OK\r\n");
     }
     else
@@ -289,87 +336,87 @@ static uint8_t coral_receive_frame(SensorData_t *dp)
         dbg("[CORAL] !!! SD f_open FAILED -- draining UART without saving\r\n");
     }
 
-    /* ---- 3. Stream WIDTH*HEIGHT pixel bytes to SD ---------------------- */
-    uint32_t remaining  = (uint32_t)width * height;  /* 50 176 */
-    uint32_t chunk_num  = 0;
+    s_pixels_remaining = (uint32_t)width * height;  /* 50 176 */
+    s_chunk_num        = 0U;
+    s_chunk_fill        = 0U;
+    s_chunk_target       = (uint16_t)((s_pixels_remaining > sizeof(s_chunk))
+                                      ? sizeof(s_chunk) : s_pixels_remaining);
 
-    while (remaining > 0U)
+    s_rx_state             = CORAL_RX_PIXELS;
+    s_rx_last_progress_ms  = HAL_GetTick();
+}
+
+/* One 512-byte (or final, shorter) pixel chunk is fully buffered: CRC it,
+ * write it (the one bounded SD op per Coral_Update() call), and either
+ * start the next chunk or move on to the CRC trailer. */
+static void coral_pixel_chunk_complete(void)
+{
+    s_rx_crc = crc16_buf(s_rx_crc, s_chunk, s_chunk_fill);
+
+    if (s_sd_ok)
     {
-        uint32_t take = (remaining > sizeof(s_chunk))
-                        ? (uint32_t)sizeof(s_chunk) : remaining;
-
-        if (!coral_read_bytes(s_chunk, (uint16_t)take, CHUNK_TIMEOUT_MS))
+        UINT written;
+        if (f_write(&s_fframe, s_chunk, (UINT)s_chunk_fill, &written) != FR_OK
+            || written != (UINT)s_chunk_fill)
         {
-            char buf[72];
-            snprintf(buf, sizeof(buf),
-                     "[CORAL] !!! Chunk %lu timeout (remaining=%lu)\r\n",
-                     (unsigned long)chunk_num, (unsigned long)remaining);
-            dbg(buf);
-            if (sd_ok) { f_close(&fframe); }
-            coral_timeout_count++;
-            return CORAL_STATUS_TIMEOUT;
+            dbg("[CORAL] !!! SD write error -- continuing UART drain\r\n");
+            f_close(&s_fframe);
+            s_sd_ok  = 0U;
+            s_status |= CORAL_STATUS_SD_ERR;
+            coral_sd_err_count++;
         }
+    }
 
-        /* Accumulate CRC over pixel data */
-        crc = crc16_buf(crc, s_chunk, take);
+    s_pixels_remaining -= s_chunk_fill;
+    s_chunk_num++;
+    s_chunk_fill = 0U;
 
-        if (sd_ok)
+    if (s_pixels_remaining == 0U)
+    {
+        if (s_sd_ok)
         {
-            UINT written;
-            if (f_write(&fframe, s_chunk, (UINT)take, &written) != FR_OK
-                || written != (UINT)take)
-            {
-                dbg("[CORAL] !!! SD write error -- continuing UART drain\r\n");
-                f_close(&fframe);
-                sd_ok  = 0;
-                status |= CORAL_STATUS_SD_ERR;
-                coral_sd_err_count++;
-            }
+            f_close(&s_fframe);
+            dbg("[CORAL] Pixel stream done, SD file closed\r\n");
         }
-
-        remaining -= take;
-        chunk_num++;
+        s_crc_pos  = 0U;
+        s_rx_state = CORAL_RX_CRC;
     }
-
-    if (sd_ok)
+    else
     {
-        f_close(&fframe);
-        dbg("[CORAL] Pixel stream done, SD file closed\r\n");
+        s_chunk_target = (uint16_t)((s_pixels_remaining > sizeof(s_chunk))
+                                    ? sizeof(s_chunk) : s_pixels_remaining);
     }
+    s_rx_last_progress_ms = HAL_GetTick();
+}
 
-    /* ---- 4. Read and verify 2-byte big-endian CRC16 ------------------- */
-    uint8_t crc_bytes[2] = {0U, 0U};
-    if (!coral_read_bytes(crc_bytes, 2U, CRC_TIMEOUT_MS))
-    {
-        dbg("[CORAL] !!! CRC bytes timeout\r\n");
-        coral_timeout_count++;
-        return (uint8_t)(status | CORAL_STATUS_TIMEOUT);
-    }
+/* 2-byte CRC trailer complete: verify, populate coral_block[16] exactly as
+ * the original did, and return the state machine to IDLE. */
+static void coral_frame_complete(void)
+{
+    uint16_t rx_crc = ((uint16_t)s_crc_trailer[0] << 8) | s_crc_trailer[1];
 
-    uint16_t rx_crc = ((uint16_t)crc_bytes[0] << 8) | crc_bytes[1];
-
-    if (crc != rx_crc)
+    if (s_rx_crc != rx_crc)
     {
         char buf[72];
         snprintf(buf, sizeof(buf),
                  "[CORAL] !!! CRC MISMATCH: computed=0x%04X received=0x%04X\r\n",
-                 (unsigned)crc, (unsigned)rx_crc);
+                 (unsigned)s_rx_crc, (unsigned)rx_crc);
         dbg(buf);
-        status |= CORAL_STATUS_CRC_ERR;
+        s_status |= CORAL_STATUS_CRC_ERR;
         coral_crc_err_count++;
-        f_unlink(fname);   /* delete corrupt file */
+        f_unlink(s_fname);   /* delete corrupt file */
     }
     else
     {
         char buf[56];
         snprintf(buf, sizeof(buf),
                  "[CORAL] CRC OK  frac=%u%%  file=%s\r\n",
-                 (unsigned)((uint32_t)frac * 100UL / 65535UL), fname);
+                 (unsigned)((uint32_t)s_frac * 100UL / 65535UL), s_fname);
         dbg(buf);
     }
 
-    /* ---- 5. Populate coral_block[16] ---------------------------------- */
-    /*  [0..3]   SEQ        uint32 LE
+    /* ---- Populate coral_block[16] --------------------------------------
+     *  [0..3]   SEQ        uint32 LE
      *  [4..5]   FRAC_RAW   uint16 LE
      *  [6]      FRAC_PCT   uint8  0-100
      *  [7]      STATUS     uint8
@@ -377,41 +424,47 @@ static uint8_t coral_receive_frame(SensorData_t *dp)
      *  [12..13] FRAME_CNT  uint16 LE
      *  [14..15] reserved              */
     uint32_t now      = HAL_GetTick();
-    uint8_t  frac_pct = (uint8_t)((uint32_t)frac * 100UL / 65535UL);
+    uint8_t  frac_pct = (uint8_t)((uint32_t)s_frac * 100UL / 65535UL);
 
-    dp->coral_block[0]  = (uint8_t)( seq         & 0xFFU);
-    dp->coral_block[1]  = (uint8_t)((seq >>  8)  & 0xFFU);
-    dp->coral_block[2]  = (uint8_t)((seq >> 16)  & 0xFFU);
-    dp->coral_block[3]  = (uint8_t)((seq >> 24)  & 0xFFU);
-    dp->coral_block[4]  = (uint8_t)( frac        & 0xFFU);
-    dp->coral_block[5]  = (uint8_t)((frac >> 8)  & 0xFFU);
-    dp->coral_block[6]  = frac_pct;
-    dp->coral_block[7]  = status;
-    dp->coral_block[8]  = (uint8_t)( now         & 0xFFU);
-    dp->coral_block[9]  = (uint8_t)((now >>  8)  & 0xFFU);
-    dp->coral_block[10] = (uint8_t)((now >> 16)  & 0xFFU);
-    dp->coral_block[11] = (uint8_t)((now >> 24)  & 0xFFU);
-    dp->coral_block[12] = (uint8_t)( s_frame_count        & 0xFFU);
-    dp->coral_block[13] = (uint8_t)((s_frame_count >> 8)  & 0xFFU);
-    dp->coral_block[14] = 0U;
-    dp->coral_block[15] = 0U;
+    if (s_rx_dp != NULL)
+    {
+        SensorData_t *dp = s_rx_dp;
 
-    coral_last_status   = status;
+        dp->coral_block[0]  = (uint8_t)( s_seq         & 0xFFU);
+        dp->coral_block[1]  = (uint8_t)((s_seq >>  8)  & 0xFFU);
+        dp->coral_block[2]  = (uint8_t)((s_seq >> 16)  & 0xFFU);
+        dp->coral_block[3]  = (uint8_t)((s_seq >> 24)  & 0xFFU);
+        dp->coral_block[4]  = (uint8_t)( s_frac        & 0xFFU);
+        dp->coral_block[5]  = (uint8_t)((s_frac >> 8)  & 0xFFU);
+        dp->coral_block[6]  = frac_pct;
+        dp->coral_block[7]  = s_status;
+        dp->coral_block[8]  = (uint8_t)( now         & 0xFFU);
+        dp->coral_block[9]  = (uint8_t)((now >>  8)  & 0xFFU);
+        dp->coral_block[10] = (uint8_t)((now >> 16)  & 0xFFU);
+        dp->coral_block[11] = (uint8_t)((now >> 24)  & 0xFFU);
+        dp->coral_block[12] = (uint8_t)( s_frame_count        & 0xFFU);
+        dp->coral_block[13] = (uint8_t)((s_frame_count >> 8)  & 0xFFU);
+        dp->coral_block[14] = 0U;
+        dp->coral_block[15] = 0U;
+
+        if (s_status == 0U)
+        {
+            s_frame_count++;
+            coral_good_frames++;
+            dp->coral_valid = 1U;
+            dbg("[CORAL] ===== Frame GOOD =====\r\n");
+        }
+        else
+        {
+            dbg("[CORAL] ===== Frame ERROR (check status byte) =====\r\n");
+        }
+    }
+
+    coral_last_status   = s_status;
     coral_last_fraction = frac_pct;
 
-    if (status == 0U)
-    {
-        s_frame_count++;
-        coral_good_frames++;
-        dp->coral_valid = 1U;
-        dbg("[CORAL] ===== Frame GOOD =====\r\n");
-    }
-    else
-    {
-        dbg("[CORAL] ===== Frame ERROR (check status byte) =====\r\n");
-    }
-
-    return status;
+    s_rx_dp    = NULL;
+    s_rx_state = CORAL_RX_IDLE;
 }
 
 /* ============================================================================
@@ -445,38 +498,155 @@ void Coral_Update(SensorData_t *dp)
 
     coral_rx_start_it();
 
-    uint8_t b0 = 0U;
-    uint8_t scanned = 0U;
-
-    while (scanned < 64U)
+    /* Ring overflows happen inside HAL_UART_RxCpltCallback() (IRQ context),
+     * where doing blocking UART debug I/O would be unsafe; surface/log the
+     * condition here instead, in normal main-loop context. */
+    static uint32_t s_last_reported_overflow = 0U;
+    if (coral_rx_overflow_count != s_last_reported_overflow)
     {
-        if (!coral_rx_ring_pop(&b0))
+        char buf[64];
+        snprintf(buf, sizeof(buf), "[CORAL] !!! RX ring overflow (total=%lu)\r\n",
+                 (unsigned long)coral_rx_overflow_count);
+        dbg(buf);
+        s_last_reported_overflow = coral_rx_overflow_count;
+    }
+
+    uint32_t now = HAL_GetTick();
+
+    switch (s_rx_state)
+    {
+    case CORAL_RX_IDLE:
+    {
+        uint8_t b0 = 0U;
+        uint8_t scanned = 0U;
+
+        while (scanned < 64U)
+        {
+            if (!coral_rx_ring_pop(&b0))
+                return;
+
+            scanned++;
+
+            if (b0 == CORAL_SOF_0)
+                break;
+        }
+
+        if (b0 != CORAL_SOF_0)
             return;
 
-        scanned++;
+        s_rx_state             = CORAL_RX_SOF1;
+        s_rx_last_progress_ms  = now;
+        break;
+    }
 
-        if (b0 == CORAL_SOF_0)
+    case CORAL_RX_SOF1:
+    {
+        uint8_t b1;
+        if (coral_rx_ring_pop_n(&b1, 1U) == 1U)
+        {
+            if (b1 == CORAL_SOF_1)
+            {
+                coral_sof_count++;
+                dbg("[CORAL] SOF 0xAA55 confirmed -- receiving frame...\r\n");
+
+                s_rx_dp    = dp;
+                dp->coral_valid = 0U;   /* set to 1 only on a clean frame */
+                s_hdr_pos  = 0U;
+                s_rx_crc   = 0xFFFFU;
+                s_status   = 0U;
+                s_sd_ok    = 0U;
+                s_rx_state = CORAL_RX_HEADER;
+            }
+            else
+            {
+                dbg("[CORAL] !!! SOF_1 (0x55) missing or wrong -- discarding\r\n");
+                s_rx_state = CORAL_RX_IDLE;
+            }
+            s_rx_last_progress_ms = now;
+        }
+        else if ((now - s_rx_last_progress_ms) >= SOF1_TIMEOUT_MS)
+        {
+            dbg("[CORAL] !!! SOF_1 (0x55) missing or wrong -- discarding\r\n");
+            s_rx_state = CORAL_RX_IDLE;
+        }
+        break;
+    }
+
+    case CORAL_RX_HEADER:
+    {
+        uint16_t got = coral_rx_ring_pop_n(&s_hdr[s_hdr_pos], (uint16_t)(16U - s_hdr_pos));
+        if (got > 0U)
+        {
+            s_hdr_pos += got;
+            s_rx_last_progress_ms = now;
+        }
+
+        if (s_hdr_pos < 16U)
+        {
+            if ((now - s_rx_last_progress_ms) >= HDR_TIMEOUT_MS)
+                coral_rx_abort(CORAL_STATUS_TIMEOUT, "[CORAL] !!! Header timeout\r\n");
             break;
+        }
+
+        coral_header_complete();
+        break;
     }
 
-    if (b0 != CORAL_SOF_0)
-        return;
-
-    /* Got 0xAA -- read 0x55 with short deadline */
-    uint8_t b1 = 0U;
-    if (!coral_read_bytes(&b1, 1U, SOF1_TIMEOUT_MS) || b1 != CORAL_SOF_1)
+    case CORAL_RX_PIXELS:
     {
-        dbg("[CORAL] !!! SOF_1 (0x55) missing or wrong -- discarding\r\n");
-        return;
+        if (s_chunk_fill < s_chunk_target)
+        {
+            uint16_t got = coral_rx_ring_pop_n(&s_chunk[s_chunk_fill],
+                                                (uint16_t)(s_chunk_target - s_chunk_fill));
+            if (got > 0U)
+            {
+                s_chunk_fill += got;
+                s_rx_last_progress_ms = now;
+            }
+        }
+
+        if (s_chunk_fill < s_chunk_target)
+        {
+            if ((now - s_rx_last_progress_ms) >= CHUNK_TIMEOUT_MS)
+            {
+                char buf[72];
+                snprintf(buf, sizeof(buf),
+                         "[CORAL] !!! Chunk %lu timeout (remaining=%lu)\r\n",
+                         (unsigned long)s_chunk_num, (unsigned long)s_pixels_remaining);
+                coral_rx_abort(CORAL_STATUS_TIMEOUT, buf);
+            }
+            break;
+        }
+
+        coral_pixel_chunk_complete();
+        break;
     }
 
-    coral_sof_count++;
-    dbg("[CORAL] SOF 0xAA55 confirmed -- receiving frame...\r\n");
-
+    case CORAL_RX_CRC:
     {
-        uint8_t status = coral_receive_frame(dp);
-        dp->coral_block[7] = status;
-        coral_last_status = status;
+        uint16_t got = coral_rx_ring_pop_n(&s_crc_trailer[s_crc_pos],
+                                            (uint16_t)(2U - s_crc_pos));
+        if (got > 0U)
+        {
+            s_crc_pos += got;
+            s_rx_last_progress_ms = now;
+        }
+
+        if (s_crc_pos < 2U)
+        {
+            if ((now - s_rx_last_progress_ms) >= CRC_TIMEOUT_MS)
+                coral_rx_abort((uint8_t)(s_status | CORAL_STATUS_TIMEOUT),
+                                "[CORAL] !!! CRC bytes timeout\r\n");
+            break;
+        }
+
+        coral_frame_complete();
+        break;
+    }
+
+    default:
+        s_rx_state = CORAL_RX_IDLE;
+        break;
     }
 }
 
