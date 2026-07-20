@@ -126,6 +126,20 @@
  * the baseline "catches up" and erases it. */
 #define FSM_CRUISE_BASELINE_ALPHA 0.001f
 
+/* EMA smoothing factor for the Standby ground-baro baseline (0..1), updated
+ * once per CDH_Update() call (10 Hz, see main.c). Replaces a hard reset
+ * (`s_ground_baro_alt_m = current altitude`, every tick while in Standby)
+ * that pinned dp->baro_alt_m at exactly 0.0 for the whole time on the pad,
+ * permanently defeating the Standby->Launch baro branch regardless of true
+ * altitude change (see docs/bench_session_notes.md — bench ground test with
+ * a genuine ~11 m rise never crossed FSM_LAUNCH_BARO_RISE_M). This value
+ * gives a time constant of roughly 1 / (FSM_STANDBY_BARO_BASELINE_ALPHA *
+ * 10 Hz) ~= 10 s — about 10x FSM_LAUNCH_WINDOW_MS, so a genuine launch rise
+ * stays visible across the full debounce window before the baseline
+ * "catches up" and erases it, while still absorbing weather-driven pressure
+ * drift (which moves on a scale of hours, not seconds) well before launch. */
+#define FSM_STANDBY_BARO_BASELINE_ALPHA 0.01f
+
 /* Watchdog kick period. Must be < 10 s (FR-011). The main superloop free-runs
  * (no fixed tick) and the IWDG is kicked once per iteration when FDIR reports
  * the system healthy; this constant is not currently read in code. */

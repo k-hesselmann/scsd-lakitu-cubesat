@@ -1,5 +1,6 @@
 #include "cdh/cdh.h"
 #include "fsw/fsm.h"
+#include "fsw/fsm_thresholds.h"
 #include "cdh/mpu6050_equipment_handler.h"
 #include "cdh/ms5607_equipment_handler.h"
 #include "cdh/gps_equipment_handler.h"
@@ -128,9 +129,15 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
         {
             if (FSW_GetPhase() == PHASE_STANDBY)
             {
-                /* Still on the ground: keep tracking so slow pre-launch
-                 * pressure drift doesn't get baked into the baseline. */
-                s_ground_baro_alt_m = s_baro.data.altitude;
+                /* Still on the ground: slow-track weather-driven pressure
+                 * drift without absorbing a genuine launch rise inside the
+                 * debounce window -- hard-resetting the baseline to the live
+                 * reading every tick pinned dp->baro_alt_m at exactly 0.0
+                 * the whole time in Standby, permanently defeating the
+                 * Standby->Launch baro branch (see FSM_STANDBY_BARO_BASELINE_ALPHA
+                 * rationale in fsm_thresholds.h). */
+                s_ground_baro_alt_m += FSM_STANDBY_BARO_BASELINE_ALPHA *
+                                       (s_baro.data.altitude - s_ground_baro_alt_m);
             }
             else
             {
