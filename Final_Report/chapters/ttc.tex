@@ -85,13 +85,14 @@ named by the requirement.
 \endhead
 \bottomrule
 \endfoot
-MR-004 & Telemetry to 40~km altitude / 125~km worst-case slant range & LoRa physical layer and a requirements-level link-budget assumption are defined. & Range test open \\
+MR-004 & Telemetry to 40~km altitude / 125~km worst-case slant range & Section~\ref{sec:ttc-link-budget} predicts 13.5~dB downlink margin with the workbook antenna assumptions. & Analysis passes; range test open \\
 FR-022 & Approximately one packet every 20~s & \ttcfield{TTC_TELEMETRY_INTERVAL_MS = 20000}; event packets are also supported. & Timing implemented; duty-cycle issue open \\
 FR-023 & Standard packet with state, position, IMU, payload, battery and integrity check & Protocol v8 carries all named data plus health; CRC-16 protects bytes 0--89. & Implemented and decoder-tested \\
-FR-024 & European 868~MHz ISM-band operation & Flight registers select 868.000~MHz. & In band; frequency alignment open \\
+FR-024 & European 868~MHz ISM-band operation & Flight and ground both select 868.000~MHz. & Implemented; hardware verification open \\
 FR-025 & Receive, decode and display human-readable telemetry & RFM95W receiver, decoder/store/API, WebSocket and React views are present. & Implemented; hardware demonstration open \\
-FR-026 & SF9, 125~kHz bandwidth, coding rate 4/5 & Flight and ground configure explicit-header LoRa, SF9, BW125 and CR~4/5. & Registers implemented \\
-PR-004 & At least 10~dB margin at 125~km & Section~\ref{sec:ttc-link-budget} recomputes the conditional margin. & Range test open \\
+FR-026 & SF9, 125~kHz bandwidth, coding rate 4/5 & Flight and ground configure explicit-header LoRa, SF9, BW125 and CR~4/5. The stated $-137$~dBm sensitivity is not valid for SF9. & Registers implemented; sensitivity corrected \\
+PR-004 & At least 10~dB margin at 125~km & The implemented powers predict 13.5~dB downlink and 9.5~dB uplink margin. & Downlink passes; uplink open \\
+PR-007 & Margin $>10$~dB, raw SNR $>0$~dB and processed SNR $>10.5$~dB & The same model predicts raw SNR of +0.5~dB downlink and $-3.5$~dB uplink. & Downlink marginal; uplink fails \\
 IF-005 & OBC-to-radio SPI no faster than 10~MHz & SPI1 is 625~kbit/s with interrupt-driven transfers. & Implemented \\
 IF-007 & FSW supplies phase and system state in a defined format & \ttcfield{FSW_BuildTelemetryPacket()} consumes datapool, SCV and TTC health. & Implemented \\
 CR-005 & Power and channel-use constraints & Flight PA is +14~dBm; the 20~s/513~ms schedule does not meet the project's stated 1\% arithmetic. & Duty-cycle closure open \\
@@ -134,7 +135,7 @@ value produces \texttt{CONFIG\_FAIL}.
 \toprule
 \textbf{Parameter} & \textbf{Flight value} & \textbf{Ground implementation} \\
 \midrule
-Carrier frequency & 868.000~MHz (FRF \texttt{D9 00 00}) & Backend default 868.100~MHz; must be aligned \\
+Carrier frequency & 868.000~MHz (FRF \texttt{D9 00 00}) & Backend default 868.000~MHz \\
 Spreading factor / bandwidth & SF9 / 125~kHz & SF9 / 125~kHz \\
 Coding rate / header & 4/5 / explicit & 4/5 / explicit \\
 Radio payload CRC / preamble & Enabled / 8 symbols & Enabled / 8 symbols \\
@@ -148,10 +149,9 @@ Telemetry payload & 92 bytes & Accepts exactly 92 bytes \\
 \label{tab:ttc-radio-config}
 \end{table}
 
-The 100~kHz center-frequency difference is a current integration defect. Both
-values are inside the intended band, but transmitter and receiver should use
-the same value. A shared configuration or explicit pre-flight register/readback
-check is recommended.
+Flight and ground now use the same 868.000~MHz center frequency. An explicit
+pre-flight register/readback check remains recommended to verify the deployed
+configuration before operation.
 \section{Telemetry Generation and Scheduling}
 
 The superloop calls \ttcfield{TTC_Service()} on every iteration because TT\&C
@@ -431,15 +431,27 @@ User verbs are limited to 48 ASCII characters so the envelope fits flight RX.
 \section{Link Budget, Airtime and Channel Use}
 \label{sec:ttc-link-budget}
 
-The requirements use 125~km as worst-case slant range. Free-space path loss is
+The link-budget workbook uses 35~km altitude and 120~km horizontal drift, giving
+125~km slant range. MR-004 instead states 40~km altitude with the same drift,
+which would be 126.5~km; this adds only 0.1~dB path loss but should be reconciled.
+Free-space path loss is
 \begin{equation}
 L_{\mathrm{FS}} = 32.44 + 20\log_{10}(d_{\mathrm{km}})
                  + 20\log_{10}(f_{\mathrm{MHz}}),
 \end{equation}
-which gives 133.2~dB at 125~km and 868~MHz. The requirement assumes
-$-137$~dBm receiver sensitivity at SF9/BW125. Antenna gains, cable,
-polarization and installation losses, and measured sensitivity are absent, so
-Table~\ref{tab:ttc-link-budget} is conditional rather than RF qualification.
+which gives 133.15~dB at 125~km and 868~MHz. The workbook assumes +20~dBm
+flight transmit power, although the implemented PA configuration is +14~dBm.
+It also contains a $-130$~dBm sensitivity cell while its note and FR-026 state
+$-137$~dBm. For SF9/BW125, the workbook noise model and RFM95W demodulator
+threshold give
+\begin{align}
+N &= -174 + 10\log_{10}(125000) + 6 = -117.0~\mathrm{dBm},\\
+S_{\min} &= N + (-12.5) = -129.5~\mathrm{dBm}\approx-130~\mathrm{dBm}.
+\end{align}
+The RFM95W data sheet associates approximately $-136$~dBm with the slower
+SF12/BW125 setting, not SF9. Table~\ref{tab:ttc-link-budget} therefore uses
+$-130$~dBm and retains the workbook's antenna, cable, atmospheric and
+polarization assumptions. It is an analytical estimate, not RF qualification.
 
 \begin{table}[H]
 \centering
@@ -447,35 +459,51 @@ Table~\ref{tab:ttc-link-budget} is conditional rather than RF qualification.
 \toprule
 \textbf{Term} & \textbf{Downlink} & \textbf{Uplink} \\
 \midrule
-Transmit power & +14.0~dBm & +10.0~dBm \\
-Antenna gains (illustrative) & 0.0~dBi & 0.0~dBi \\
-Free-space path loss & $-133.2$~dB & $-133.2$~dB \\
-Other losses (illustrative) & $-3.0$~dB & $-3.0$~dB \\
-Predicted receive power & $-122.2$~dBm & $-126.2$~dBm \\
-Assumed sensitivity & $-137.0$~dBm & $-137.0$~dBm \\
-\textbf{Illustrative margin} & \textbf{14.8~dB} & \textbf{10.8~dB} \\
+Transmit power & +14.00~dBm & +10.00~dBm \\
+Transmit antenna gain & +2.15~dBi & +5.00~dBi \\
+Transmit cable loss & $-0.50$~dB & $-0.50$~dB \\
+Free-space path loss & $-133.15$~dB & $-133.15$~dB \\
+Atmospheric loss & $-0.50$~dB & $-0.50$~dB \\
+Polarization loss & $-3.00$~dB & $-3.00$~dB \\
+Receive antenna gain & +5.00~dBi & +2.15~dBi \\
+Receive cable loss & $-0.50$~dB & $-0.50$~dB \\
+\textbf{Predicted receive power} & \textbf{$-116.50$~dBm} & \textbf{$-120.50$~dBm} \\
+SF9 sensitivity & $-130.00$~dBm & $-130.00$~dBm \\
+\textbf{Link margin} & \textbf{13.50~dB} & \textbf{9.50~dB} \\
+Noise floor & $-117.01$~dBm & $-117.01$~dBm \\
+\textbf{Raw SNR} & \textbf{+0.51~dB} & \textbf{$-3.49$~dB} \\
 \bottomrule
 \end{tabular}
-\caption{Conditional 125~km link budget using repository assumptions.}
+\caption{Recomputed 125~km link budget using implemented transmit powers and workbook RF assumptions.}
 \label{tab:ttc-link-budget}
 \end{table}
 
-With no extra losses, margins are 17.8~dB downlink and 13.8~dB uplink. With the
-illustrative 3~dB allowance, uplink exceeds the 10~dB target by only 0.8~dB.
-The requirements file states 26.5~dB without a reproducible calculation; the
-zero-gain budget above does not reproduce it. Acceptance requires measured
-sensitivity, characterized antennas/cables and representative range testing.
+Using the implemented +14~dBm flight power reduces the workbook's downlink
+receive power, link margin and raw SNR by 6~dB. The resulting downlink meets the
+10~dB margin target by 3.5~dB and its modeled raw SNR is only 0.5~dB above
+PR-007. The +10~dBm ground transmitter gives 9.5~dB uplink margin and
+$-3.5$~dB raw SNR, so the bidirectional command/ACK path is not demonstrated at
+the worst-case range. The requirements file's 26.5~dB claim is not reproduced.
+Acceptance requires measured sensitivity, characterized installed antennas and
+cables, and representative bidirectional range testing. The actual ground
+antenna gain must also be confirmed: the workbook note says 3--4~dBi while its
+calculation uses 5~dBi.
 
 At SF9, BW125, CR~4/5, explicit header, CRC and eight-symbol preamble, symbol
-time is 4.096~ms and 92-byte airtime is about 513~ms. At a strict 20~s period:
+time is 4.096~ms and a 92-byte frame uses 113 payload symbols, giving
+513.024~ms airtime. The current packet therefore carries $92\times8/20=36.8$
+payload bit/s; this is 2.09\% of the nominal 1758~bit/s LoRa data rate, but it
+does not represent transmitter channel occupancy. At a strict 20~s period:
 \begin{equation}
 \frac{0.513}{20}\times100\% \approx 2.57\%.
 \end{equation}
-This conflicts with the 1\% channel-use assumption in FR-022/CR-005 before
+This conflicts with the 1\% channel-use requirement in FR-022/CR-005 before
 event packets or retries. At the same modulation, one 513~ms transmission needs
 at least a 51.3~s interval to average 1\%. The project must close this by a
 permitted channel/access regime, schedule/modulation change, or another
 reviewed compliance basis. Retries and ground ACKs belong in the final analysis.
+The workbook's data-budget sheet still uses the obsolete 76-byte packet and
+must be updated to 92 bytes before it is used as verification evidence.
 
 \section{Verification Evidence}
 
