@@ -4,6 +4,7 @@
 #include "cdh/ms5607_equipment_handler.h"
 #include "cdh/gps_equipment_handler.h"
 #include "cdh/battery_adc.h"
+#include "cdh/datapool_nvm.h"
 #include "cdh/cdh_debug.h"
 #include "cdh/cdh_fdir.h"
 #include "cdh/coral.h"
@@ -37,6 +38,7 @@ void CDH_Init(void)
 
     Coral_Init();   /* USART3 already init by MX_USART3_UART_Init() in main.c */
 
+    DatapoolNVM_Init();   /* internal-flash backup of the SD housekeeping log */
 }
 
 /* ------------------------------------------------------------------ */
@@ -111,6 +113,13 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
     /* ---- Battery voltage (PA0 = ADC1_IN5, 22k/10k divider) ---- */
     dp->batt_valid = BatteryADC_Read(&hadc1, &dp->batt_voltage_mv);
 
+    /* Periodically mirror the finished datapool to on-chip flash: a
+     * redundant, SD-independent copy that survives an SD-card failure
+     * (rate-limited to DATAPOOL_NVM_PERIOD_MS for flash endurance). Runs
+     * unconditionally, so it captures the datapool -- validity flags and all
+     * -- regardless of sensor or SD health. Coral_Update runs later in the
+     * superloop, so the snapshot carries the previous cycle's coral block. */
+    DatapoolNVM_Update(dp);
 }
 
 /* ------------------------------------------------------------------ */
