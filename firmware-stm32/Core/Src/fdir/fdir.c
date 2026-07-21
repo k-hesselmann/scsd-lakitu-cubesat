@@ -160,6 +160,29 @@ static void FDIR_LoraRecordAttempt(uint8_t failed)
         s_lora.count++;
 }
 
+static uint8_t FDIR_LoraUnavailable(const TTC_FDIR_Health_t *health)
+{
+    return (!health->radio_busy &&
+            !health->recovery_in_progress &&
+            !health->isolation_active &&
+            (!health->radio_ready || !health->rx_active)) ? 1U : 0U;
+}
+
+static uint8_t FDIR_LoraTxRecoveryThresholdMet(const TTC_FDIR_Health_t *health)
+{
+    return ((health->consecutive_tx_failures >= FDIR_LORA_TX_FAILURE_LIMIT) ||
+            ((s_lora.count == FDIR_LORA_RECOVERY_WINDOW) &&
+             (FDIR_LoraWindowFailures(FDIR_LORA_RECOVERY_WINDOW) >=
+              FDIR_LORA_RECOVERY_WINDOW_FAILS))) ? 1U : 0U;
+}
+
+static uint8_t FDIR_LoraTxFaultThresholdMet(void)
+{
+    return ((s_lora.count >= FDIR_LORA_FAULT_WINDOW) &&
+            (FDIR_LoraWindowFailures(FDIR_LORA_FAULT_WINDOW) >=
+             FDIR_LORA_FAULT_WINDOW_FAILS)) ? 1U : 0U;
+}
+
 static uint8_t FDIR_ClassifyResetReason(void)
 {
     if (__HAL_RCC_GET_FLAG(RCC_FLAG_IWDGRST) != RESET)
@@ -342,29 +365,27 @@ void FDIR_Update(SensorData_t *dp, SCV_t *scv)
         scv->lora_timeout_count = health.consecutive_tx_failures;
         scv->lora_tx_fault_counter = health.lora_tx_fault_counter;
 
-        /* Recovery: consecutive-failure limit, or a sustained failure rate
-         * over the last FDIR_LORA_RECOVERY_WINDOW attempts.
+        /* Recovery: an idle-but-unavailable modem/RX path, consecutive-failure
+         * limit, or a sustained failure rate over the last
+         * FDIR_LORA_RECOVERY_WINDOW attempts.
          * TODO(give-up policy, optional next step): after N recovery
          * requests with no lasting improvement, escalate to
          * TTC_FDIR_RequestIsolation()/RequestReturnToService() — same shape
          * as the CDH give-up TODO above; needs its own persisted retry count
          * and re-arm rule. */
-        if (((health.consecutive_tx_failures >= FDIR_LORA_TX_FAILURE_LIMIT) ||
-             ((s_lora.count == FDIR_LORA_RECOVERY_WINDOW) &&
-              (FDIR_LoraWindowFailures(FDIR_LORA_RECOVERY_WINDOW) >=
-               FDIR_LORA_RECOVERY_WINDOW_FAILS))) &&
+        if ((FDIR_LoraUnavailable(&health) ||
+             FDIR_LoraTxRecoveryThresholdMet(&health)) &&
             FDIR_CooldownElapsed(now_ms, &s_lora.last_request_ms,
                                  FDIR_REINIT_PERIOD_MS))
         {
             s_reinit_requests |= EQUIPMENT_LORA;
         }
 
-        /* SCV fault: tighter, shorter window than recovery, recomputed every
-         * cycle (level, not edge-latched) so it clears once the ratio drops. */
+        /* SCV fault: unavailable idle modem/RX path or a tighter, shorter TX
+         * failure-rate window than recovery, recomputed every cycle (level, not
+         * edge-latched) so it clears once the ratio drops. */
         FDIR_SetEquipmentFault(EQUIPMENT_LORA,
-            (s_lora.count >= FDIR_LORA_FAULT_WINDOW) &&
-            (FDIR_LoraWindowFailures(FDIR_LORA_FAULT_WINDOW) >=
-             FDIR_LORA_FAULT_WINDOW_FAILS));
+            FDIR_LoraUnavailable(&health) || FDIR_LoraTxFaultThresholdMet());
     }
 
     /* CDH freshness (FMECA C10): CDH_Update writes timestamp_ms every cycle;

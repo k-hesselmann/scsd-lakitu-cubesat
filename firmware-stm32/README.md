@@ -95,14 +95,15 @@ Connect RFM95W NSS to PB6/D10 and RESET to PC7/D9. The SD card uses SPI2.
 
 The packet also carries `lora_last_event`, consecutive and lifetime TX-failure
 counts, recovery-attempt count, RX state, and telemetry-ACK timeout count.
-`EQUIPMENT_LORA` remains the high-level SCV fault bit.  TTC resets and
-reinitializes the RFM95W after three consecutive SPI/TX failures; further
-recovery attempts are rate-limited to one per minute.  These fields describe
-modem operation only; without an uplink acknowledgement the spacecraft cannot
-prove that a ground station received a transmitted frame.
+`EQUIPMENT_LORA` remains the high-level SCV fault bit. FDIR requests a TTC
+radio recovery when the modem is idle but unavailable/RX-inactive, after five
+consecutive failed TX attempts, or when at least 12 of the last 20 TX attempts
+failed. Recovery attempts are rate-limited to one every 10 seconds. These fields
+describe modem operation only; without an uplink acknowledgement the spacecraft
+cannot prove that a ground station received a transmitted frame.
 
 After each initialization, the driver reads back the essential frequency,
 modem, and sync-word registers. A read failure is reported as `INIT_FAIL`; a
 successful read with an unexpected value is reported as `CONFIG_FAIL`. In both
-cases TTC keeps the modem unavailable and uses the existing one-minute recovery
-backoff.
+cases TTC keeps the modem unavailable and uses the existing FDIR recovery
+cooldown.

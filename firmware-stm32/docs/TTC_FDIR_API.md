@@ -35,25 +35,26 @@ Fills a snapshot FDIR should poll every cycle:
 |---|---|
 | `radio_ready` | 1 when the driver reports `LoRa_IsReady()` and TTC's own init/recovery bookkeeping agrees. |
 | `rx_active` | 1 when the modem is in continuous-RX mode (`LoRa_IsRxActive()`). |
+| `radio_busy` | 1 while an init, TX, RX-start, or isolation operation is still in progress. FDIR uses this to avoid treating normal startup/TX/RX transitions as faults. |
 | `consecutive_tx_failures` | Count of back-to-back failed telemetry sends; reset to 0 on the next successful TX. Saturates at `UINT8_MAX`, does not wrap. |
-| `recovery_in_progress` | 1 while a `RECOVERY` or `RETURN_TO_SERVICE` action is `IN_PROGRESS`. |
+| `recovery_in_progress` | 1 while a `RECOVERY` or `RETURN_TO_SERVICE` action is `PENDING` or `IN_PROGRESS`. |
 | `isolation_active` | 1 while the modem is held in reset by `LoRa_Isolate()` (`LoRa_IsIsolated()`). |
 | `lora_tx_fault_counter` | Lifetime (not consecutive) count of TX failures since boot. `uint16_t`, saturates. |
-| `nack_counter` | Declared in the struct; not currently incremented anywhere in `ttc.c` — reads 0 always on this branch. |
+| `nack_counter` | Count of telemetry packets whose retry budget was exhausted without a matching ACK. |
 | `last_tx_success_ms` | `HAL_GetTick()` value of the most recent successful transmit. |
 | `last_rx_success_ms` | `HAL_GetTick()` value of the most recent CRC-valid received packet. |
 
 These are the raw counters FDIR thresholds into recovery/fault decisions (see
-`fdir.c`'s LoRa block, FMECA T1): recovery trips on
-`consecutive_tx_failures >= FDIR_LORA_TX_FAILURE_LIMIT` (5) or a failure rate
-of at least 60% over the last 20 TX attempts; `EQUIPMENT_LORA` is set once at
-least 90% of the last 10 attempts failed, cleared once that ratio drops.
-`lora_tx_fault_counter` is also mirrored into a new persisted
-`SCV_t.lora_tx_fault_counter` field (flash/SD-log only, not yet in the
-telemetry packet — same deferred-v4 treatment as `lora_timeout_count`). TTC
-itself derives no attempt history; FDIR reconstructs a pass/fail window by
-edge-detecting changes in `lora_tx_fault_counter` and `last_tx_success_ms`
-each cycle (exactly one changes per real TX attempt).
+`fdir.c`'s LoRa block, FMECA T1): recovery trips when the modem is idle but not
+ready/RX-active, on `consecutive_tx_failures >= FDIR_LORA_TX_FAILURE_LIMIT` (5),
+or on a failure rate of at least 60% over the last 20 TX attempts.
+`EQUIPMENT_LORA` is set when the idle modem is unavailable or at least 90% of
+the last 10 attempts failed, and clears once those conditions are gone.
+`lora_tx_fault_counter` is mirrored into `SCV_t.lora_tx_fault_counter` and
+downlinked as an 8-bit saturated telemetry field. TTC itself derives no attempt
+history; FDIR reconstructs a pass/fail window by edge-detecting changes in
+`lora_tx_fault_counter` and `last_tx_success_ms` each cycle (exactly one changes
+per real TX attempt).
 
 ## Recovery trigger: the reinit bitmask, not a direct call
 
@@ -62,9 +63,11 @@ directly. Instead, once its policy trips, it sets `EQUIPMENT_LORA` in the same
 `FDIR_GetReinitRequests()` bitmask used for GPS/IMU/BARO reinit and I2C bus
 restart. `TTC_Service()` polls that bit at the top of every call: if set, it
 calls `TTC_FDIR_RequestRecovery()` on itself and immediately calls
-`FDIR_AcknowledgeReinit(EQUIPMENT_LORA)` — fire-and-forget, ignoring the
-returned `TTC_FDIR_Result_t`. This keeps one uniform trigger mechanism across
-every FDIR-requested recovery, at the cost of `ttc.c` now depending on
+`FDIR_AcknowledgeReinit(EQUIPMENT_LORA)` after TTC accepts it, reports it is
+already complete, or is already doing the same recovery action. If TTC rejects
+the request because a different action is active, the bit stays set. This keeps
+one uniform trigger mechanism across every FDIR-requested recovery, at the cost
+of `ttc.c` now depending on
 `fdir.h` (previously a one-directional FDIR → TTC dependency). The full
 `Request*()`/`GetActionStatus()` API below is otherwise unchanged and remains
 directly callable — the C test harness (`test_ttc_state_machine.c`) still
@@ -137,14 +140,15 @@ Closed:
 1. `fdir.c` calls `TTC_FDIR_GetHealth()` every FDIR cycle.
 2. `SCV_t.lora_timeout_count` (consecutive) and the new
    `SCV_t.lora_tx_fault_counter` (lifetime) are derived and owned by FDIR from
-   the raw snapshot. `nack_counter` is not currently consumed by FDIR (it
-   also always reads 0 on this branch — see the health table above).
-3. `EQUIPMENT_LORA` is set/cleared by FDIR using its own thresholds
-   (`FDIR_LORA_FAULT_WINDOW`/`_FAILS` in `fdir.h`) — previously this bit was
-   never actually set anywhere.
+   the raw snapshot. `nack_counter` is tracked by TTC for telemetry-ACK retry
+   exhaustion but is not currently consumed by FDIR.
+3. `EQUIPMENT_LORA` is set/cleared by FDIR using radio availability and its own
+   TX thresholds (`FDIR_LORA_FAULT_WINDOW`/`_FAILS` in `fdir.h`) — previously
+   this bit was never actually set anywhere.
 4. Recovery thresholds/cooldown are FDIR-owned
    (`FDIR_LORA_TX_FAILURE_LIMIT`, `FDIR_LORA_RECOVERY_WINDOW`/`_FAILS`,
-   `FDIR_REINIT_PERIOD_MS`); TTC still implements none of this policy itself.
+   idle-unavailable detection, `FDIR_REINIT_PERIOD_MS`); TTC still implements
+   none of this policy itself.
 5. The trigger is the reinit bitmask (see above), not a direct
    `TTC_FDIR_Request*()` call, and is fire-and-forget rather than polled to
    completion.
