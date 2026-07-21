@@ -138,6 +138,18 @@ def test_sd_recovery_policy_is_owned_by_fdir() -> None:
     assert "s_reinit_requests |= EQUIPMENT_SD" in fdir
     assert "FDIR_SD_REINIT_PERIOD_MS" in fdir
 
+
+def test_coral_silent_link_ages_out_last_good_frame() -> None:
+    coral = (CORE_SRC / "cdh" / "coral.c").read_text(encoding="utf-8")
+
+    assert "FRAME_STALE_TIMEOUT_MS" in coral
+    assert "CORAL_DEFAULT_INTERVAL_MS + FDIR_CORAL_TIMEOUT_MS" in coral
+    assert "s_last_good_frame_ms = now" in coral
+    assert "s_seen_good_frame = 1U" in coral
+    assert "dp->coral_valid = 0U;" in coral
+    assert "dp->coral_block[7] = CORAL_STATUS_TIMEOUT" in coral
+    assert "[CORAL] !!! Frame freshness timeout" in coral
+
 if __name__ == "__main__":
     test_driver_has_no_blocking_delay_or_tx_done_wait_loop()
     test_ttc_has_no_scv_or_autonomous_recovery_policy()
@@ -145,4 +157,5 @@ if __name__ == "__main__":
     test_recovery_regressions_have_behavioral_harnesses()
     test_flight_radio_profile_is_869525_sf8_17_dbm()
     test_sd_recovery_policy_is_owned_by_fdir()
+    test_coral_silent_link_ages_out_last_good_frame()
     print("TTC source-contract checks passed")
