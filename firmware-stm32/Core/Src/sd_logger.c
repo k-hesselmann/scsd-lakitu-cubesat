@@ -9,6 +9,8 @@
 
 #define SD_LOG_NAME_SIZE  96U
 #define SD_LOG_LINE_SIZE  768U
+#define SD_LOG_BATCH_ROWS 50U
+#define SD_LOG_BUFFER_SIZE (SD_LOG_LINE_SIZE * SD_LOG_BATCH_ROWS)
 
 volatile SD_LoggerState_t sd_logger_state = SD_LOGGER_OFF;
 volatile FRESULT sd_logger_last_error = FR_OK;
@@ -21,19 +23,23 @@ static uint8_t s_fatfs_linked;
 static uint8_t s_consecutive_faults;
 static uint32_t s_file_start_s;
 static uint32_t s_retry_at_ms;
+static uint32_t s_last_flush_ms;
 static char s_open_name[SD_LOG_NAME_SIZE];
+static char s_log_buffer[SD_LOG_BUFFER_SIZE];
+static size_t s_log_buffer_used;
 
 static const char s_csv_header[] =
     "session,record_timestamp_ms,"
-    "gps_lat_e7,gps_lon_e7,gps_alt_cm,gps_speed_cms,gps_vel_north_cms,"
-    "gps_vel_east_cms,gps_vel_down_cms,gps_heading_cdeg,gps_satellites,gps_fix_type,gps_valid,"
+    "gps_lat_e7,gps_lon_e7,gps_alt_cm,gps_speed_cms,gps_vel_down_cms,"
+    "gps_heading_cdeg,gps_utc_time,gps_satellites,gps_fix_type,gps_valid,"
     "imu_accel_x_mg,imu_accel_y_mg,imu_accel_z_mg,imu_accel_mag_mg,"
     "imu_gyro_x_mdps,imu_gyro_y_mdps,imu_gyro_z_mdps,imu_valid,"
     "baro_pressure_pa,baro_alt_cm,baro_temp_centi_c,baro_valid,i2c_bus_state,"
     "batt_voltage_mv,batt_valid,coral_block_hex,coral_valid,"
     "scv_magic,scv_boot_count,scv_mission_elapsed_ms,scv_flight_phase,scv_reset_reason,"
     "scv_equipment_enabled,scv_equipment_faults,scv_gps_timeout_count,scv_imu_timeout_count,"
-    "scv_baro_timeout_count,scv_coral_timeout_count,scv_sd_fault_count,"
+    "scv_baro_timeout_count,scv_coral_timeout_count,scv_lora_timeout_count,"
+    "scv_lora_tx_fault_counter,scv_sd_fault_count,"
     "scv_watchdog_reset_count,scv_last_batt_mv,scv_baro_ground_alt_cm,scv_crc16\r\n";
 
 static int32_t scale_float(float value, float scale)
@@ -60,6 +66,7 @@ static void sd_set_fault(SCV_t *scv, FRESULT result)
         (void)f_close(&s_file);
         s_file_open = 0U;
     }
+    s_log_buffer_used = 0U;
     (void)f_mount(NULL, USERPath, 0U);
 }
 
@@ -100,12 +107,32 @@ static FRESULT write_all(const void *data, UINT length)
     return (result == FR_OK && written == length) ? FR_OK : FR_DISK_ERR;
 }
 
+static FRESULT flush_buffer(void)
+{
+    FRESULT result;
+
+    if (s_log_buffer_used == 0U)
+        return FR_OK;
+
+    result = write_all(s_log_buffer, (UINT)s_log_buffer_used);
+    if (result == FR_OK)
+        result = f_sync(&s_file);
+    if (result == FR_OK)
+    {
+        s_log_buffer_used = 0U;
+        s_last_flush_ms = HAL_GetTick();
+    }
+    return result;
+}
+
 static FRESULT open_new_file(void)
 {
     FRESULT result;
     uint32_t attempts = 0U;
 
     s_file_start_s = HAL_GetTick() / 1000U;
+    s_last_flush_ms = HAL_GetTick();
+    s_log_buffer_used = 0U;
     sd_logger_rows_in_file = 0U;
 
     do
@@ -140,12 +167,14 @@ static FRESULT close_and_name_file(void)
     if (!s_file_open)
         return FR_OK;
 
-    result = f_sync(&s_file);
+    result = flush_buffer();
+    if (result == FR_OK)
+        result = f_sync(&s_file);
     if (result == FR_OK)
         result = f_close(&s_file);
-    s_file_open = 0U;
     if (result != FR_OK)
         return result;
+    s_file_open = 0U;
 
     (void)snprintf(final_name, sizeof(final_name),
                    "LOG_%06lu_START_%010lu_END_%010lu_DUR_%010lu.CSV",
@@ -235,10 +264,10 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
     length = snprintf(
         line, sizeof(line),
         "%lu,%lu,"
-        "%ld,%ld,%ld,%ld,%ld,%ld,%u,%u,%u,"
+        "%ld,%ld,%ld,%ld,%ld,%ld,%lu,%u,%u,%u,"
         "%ld,%ld,%ld,%ld,%ld,%ld,%ld,%u,"
         "%ld,%ld,%ld,%u,%u,%u,%u,%s,%u,"
-        "%u,%lu,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%ld,%u\r\n",
+        "%u,%lu,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%ld,%u\r\n",
         (unsigned long)sd_logger_session,
         (unsigned long)dp->timestamp_ms,
         (long)scale_float(dp->gps_lat_deg, 10000000.0f),
@@ -247,6 +276,7 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
         (long)scale_float(dp->gps_speed_mps, 100.0f),
         (long)scale_float(dp->gps_vel_down_mps, 100.0f),
         (long)scale_float(dp->gps_heading_deg, 100.0f),
+        (unsigned long)dp->gps_utc_time,
         (unsigned int)dp->gps_num_satellites,
         (unsigned int)dp->gps_fix_type,
         (unsigned int)dp->gps_valid,
@@ -278,6 +308,8 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
         (unsigned int)scv->imu_timeout_count,
         (unsigned int)scv->baro_timeout_count,
         (unsigned int)scv->coral_timeout_count,
+        (unsigned int)scv->lora_timeout_count,
+        (unsigned int)scv->lora_tx_fault_counter,
         (unsigned int)scv->sd_fault_count,
         (unsigned int)scv->watchdog_reset_count,
         (unsigned int)scv->last_batt_mv,
@@ -290,27 +322,34 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
         return;
     }
 
-    result = write_all(line, (UINT)length);
-    if (result != FR_OK)
+    if (s_log_buffer_used + (size_t)length > sizeof(s_log_buffer))
     {
-        sd_set_fault(scv, result);
-        return;
-    }
-
-    sd_logger_rows_in_file++;
-    if ((sd_logger_rows_in_file % SD_LOG_SYNC_ROWS) == 0U)
-    {
-        result = f_sync(&s_file);
+        result = flush_buffer();
         if (result != FR_OK)
         {
             sd_set_fault(scv, result);
             return;
         }
+        s_consecutive_faults = 0U;
     }
 
-    /* Only a completed write/sync proves the recovered path is healthy.
-     * Do not reset this counter merely because mounting/opening succeeded. */
-    s_consecutive_faults = 0U;
+    memcpy(&s_log_buffer[s_log_buffer_used], line, (size_t)length);
+    s_log_buffer_used += (size_t)length;
+    sd_logger_rows_in_file++;
+
+    if ((uint32_t)(now_ms - s_last_flush_ms) >= SD_LOG_FLUSH_PERIOD_MS)
+    {
+        result = flush_buffer();
+        if (result != FR_OK)
+        {
+            sd_set_fault(scv, result);
+            return;
+        }
+
+        /* Only a completed write/sync proves the recovered path is healthy.
+         * Do not reset this counter merely because mounting/opening succeeded. */
+        s_consecutive_faults = 0U;
+    }
 }
 
 void SD_Logger_Close(void)

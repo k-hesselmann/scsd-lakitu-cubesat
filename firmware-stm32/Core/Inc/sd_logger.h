@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define SD_LOG_ROTATE_SECONDS       60U
-#define SD_LOG_SYNC_ROWS             1U
+#define SD_LOG_FLUSH_PERIOD_MS    5000U
 #define SD_LOG_REMOUNT_THRESHOLD     3U
 #define SD_LOG_RETRY_DELAY_MS     5000U
 
