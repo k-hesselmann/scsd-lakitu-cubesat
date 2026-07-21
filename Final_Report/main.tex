@@ -12,6 +12,7 @@
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{booktabs}
 \usepackage{longtable}
+\usepackage{pdflscape}
 \usepackage{array}
 \usepackage{enumitem}
 \usepackage{listings}
@@ -67,6 +68,12 @@
 \newpage
 \tableofcontents
 
+\newpage
+\listoffigures
+
+\newpage
+\listoftables
+
 % ---------------------------------------------------------------------------
 % Chapters
 % ---------------------------------------------------------------------------
@@ -78,5 +85,13 @@
 \input{chapters/eps}
 \input{chapters/fsw}
 \input{chapters/structures}
+
+\input{chapters/references}
+
+\appendix
+\input{chapters/appendix_requirements}
+\input{chapters/appendix_cdh_datapool}
+\input{chapters/appendix_ttc_wire_protocol}
+\input{chapters/appendix_eps_test_campaign}
 
 \end{document}

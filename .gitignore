@@ -35,6 +35,8 @@ Final_Report/*.aux
 Final_Report/*.log
 Final_Report/*.out
 Final_Report/*.toc
+Final_Report/*.lof
+Final_Report/*.lot
 Final_Report/*.fls
 Final_Report/*.fdb_latexmk
 Final_Report/*.synctex.gz

@@ -1,0 +1,22 @@
+{
+  "latex-workshop.latex.recipes": [
+    {
+      "name": "tectonic",
+      "tools": ["tectonic"]
+    }
+  ],
+  "latex-workshop.latex.tools": [
+    {
+      "name": "tectonic",
+      "command": "tectonic",
+      "args": [
+        "-X",
+        "compile",
+        "%DOC%.tex",
+        "--synctex",
+        "--keep-logs"
+      ]
+    }
+  ],
+  "latex-workshop.latex.outDir": "%DIR%"
+}

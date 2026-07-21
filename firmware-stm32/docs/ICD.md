@@ -11,7 +11,11 @@ All structs are **packed** (`__attribute__((packed))`) to avoid compiler padding
 
 **Interface:** IF-006
 **Direction:** CDH writes sensor fields → FDIR writes health state → FSW reads
-**Update rate:** 1 Hz (`CDH_Update()`, then `FDIR_Update()`, then `FSW_Update()`)
+**Update rate:** `CDH_Update()`/`FSW_Update()` run at `LOOP_CDH_FSW_PERIOD_MS`
+(10 Hz, see `main.c`); `FDIR_Update()` runs every superloop iteration
+(free-running, faster than 10 Hz). Not 1 Hz, despite older comments in this
+tree — FSM transition debouncing is elapsed-time based, so it is correct at
+either rate.
 **Location:** global variable in `datapool.h`, accessible to all modules
 
 CDH is responsible for filling sensor fields each cycle. If a sensor read fails,
@@ -82,7 +86,8 @@ typedef struct __attribute__((packed)) {
 **Direction:** FSW/FDIR owns the SCV; other subsystems provide source health data
 **Storage:** Runtime RAM in this integration
 **Update rate:** FSW updates `flight_phase` on transition; FDIR updates health
-fields on each 1 Hz monitoring cycle.
+fields every `FDIR_Update()` call (free-running each superloop iteration, not
+1 Hz).
 
 The current firmware treats the SCV as live runtime state only. Flash layout,
 load/store policy, wear management, and CRC ownership belong to the separate

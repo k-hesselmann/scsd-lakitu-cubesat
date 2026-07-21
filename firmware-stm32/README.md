@@ -1,10 +1,69 @@
 # firmware-stm32
 
-STM32 firmware project for the CubeSat board based on `STM32L476RG`.
+STM32 firmware for the SCSD Lakitu CubeSat board, based on the `STM32L476RG`
+(Nucleo-L476RG). The project can be used with:
 
-The project can be used with:
-- `PlatformIO` via [platformio.ini](./platformio.ini)
+- `PlatformIO` via [platformio.ini](./platformio.ini) (env `nucleo_l476rg`)
 - `STM32CubeIDE` / CubeMX via [scsd-lakitu-cubesat.ioc](./scsd-lakitu-cubesat.ioc)
+
+## Build & flash (PlatformIO)
+
+From this directory, with an ST-Link connected:
+
+```sh
+pio run                     # build
+pio run -t upload           # flash via ST-Link
+pio device monitor -b 115200
+```
+
+Non-volatile regions at the top of flash are kept **out of the firmware
+image** by the linker script, so a normal `pio run -t upload` does *not*
+touch them:
+
+| Region                | Address                   | Size   | Owner                 |
+|-----------------------|---------------------------|--------|-----------------------|
+| Datapool black-box    | `0x080E5800..0x080FF7FF`  | 104 KB | `cdh/datapool_nvm.c`  |
+| SCV persistence       | `0x080FF800..0x080FFFFF`  | 2 KB   | `fdir/scv.c`          |
+
+### Flashing with a default SCV
+
+The Spacecraft Configuration Vector (boot count, watchdog reset count,
+`equipment_manual_disable`, reduced-mode evidence, …) survives reflashing.
+To start from a clean default SCV — `FDIR_Init()` falls back to
+`FDIR_InitDefaults()` when the SCV page holds no valid record — erase the
+SCV page before/while flashing:
+
+```sh
+# Option A: full chip erase (also wipes the datapool black-box), then flash
+pio run -t erase
+pio run -t upload
+
+# Option B: erase only the SCV page (last 2 KB page, 0x080FF800)
+STM32_Programmer_CLI -c port=SWD mode=UR -e 511
+pio run -t upload
+```
+
+## Bench test: persisted SD-card disable
+
+To bench-verify that a manual SD disable is applied and survives resets,
+add this line in `FDIR_Init()` at `Core/Src/fdir/fdir.c:240`, directly
+**before** the `FDIR_ApplyReducedMode(scv);` call:
+
+```c
+scv->equipment_manual_disable |= EQUIPMENT_SD;  /* TEMP TEST: bench-verify persisted SD disable, revert after */
+```
+
+Then build and flash as usual (`pio run -t upload`). Expected behaviour:
+
+1. After boot, `EQUIPMENT_SD` is cleared from `equipment_enabled` and SD
+   logging stays off.
+2. The disable is persisted to the SCV by the `SCV_Backup()` at the end of
+   `FDIR_Init()`, so it survives power cycles.
+
+**Revert after the test.** Note that removing the line is not enough:
+`equipment_manual_disable` lives in the SCV, so the disable persists until
+you clear it — do a [default SCV flash](#flashing-with-a-default-scv)
+(or re-enable via the corresponding ground command) after reverting.
 
 ## RFM95W raw telemetry downlink
 

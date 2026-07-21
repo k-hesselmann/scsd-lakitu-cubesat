@@ -52,12 +52,28 @@ Tailored to the L476RG's 128 KB SRAM and 80 MHz M4:
 
 1. **DMA RX + USART IDLE-line detection**, not per-byte interrupts. At 80 MHz a 50 KB frame as
    byte ISRs (~50k interrupts/image) will dominate the CPU.
+   > **OBC status:** not yet done — RX is per-byte `HAL_UART_Receive_IT()` into a 16 KB software
+   > ring buffer. This still fully decouples wire capture from processing (no bytes lost
+   > regardless of what the app code is doing) and was sufficient to fix the GPS/IMU starvation
+   > issue below; per-byte ISR CPU load hasn't been profiled, so a DMA+IDLE-line switch stays
+   > open if that ever shows up as a problem.
 2. **Stream UART → SD; do not buffer whole frames.** A frame won't fit comfortably in RAM
    (50 KB ≈ 39 % of SRAM; a native 324² frame would be ~82 %). Use a small DMA double-buffer /
    ring (e.g. 8–16 KB) and flush blocks to the card as they arrive.
+   > **OBC status: met.** 16 KB RX ring, flushed to SD in 512 B chunks as they arrive; the frame
+   > is never buffered whole.
 3. **SD writes isolated in a lower-priority task**, fed from the ring buffer — never on the
    RX path or a flight-critical loop. SDMMC1 if wired, otherwise SPI SD.
+   > **OBC status:** the OBC has **no RTOS** — it's a single-threaded superloop, so there is no
+   > lower-priority task to isolate this into. Frame reception (including its SD writes) was
+   > instead reworked into a state machine bounded to ~one 512 B chunk (one `f_write()`) per
+   > superloop iteration, interleaved with GPS/IMU/FDIR/watchdog servicing in the same loop
+   > rather than blocking it — same intent (never stalls the flight-critical loop), different
+   > mechanism since there's no scheduler to hand it off to.
 4. **Single-owner FATFS** (or `_FS_REENTRANT` + mutex); never `f_write` from an ISR.
+   > **OBC status: met.** One FATFS instance shared by the Coral and SD-logger paths (not used
+   > concurrently); `f_write()` is only ever called from main-loop context, never from
+   > `HAL_UART_RxCpltCallback()`.
 5. **One file per image** (already the naming convention) so corruption blast radius = one frame;
    **`f_sync`/close after each frame**, don't hold a file open across many.
 6. **Power-loss handling:** brown-out detection that finishes/aborts the current write cleanly.

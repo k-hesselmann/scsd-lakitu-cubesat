@@ -1,0 +1,44 @@
+\chapter{EPS Test Campaign}
+\label{app:eps-tests}
+
+This appendix summarizes the EPS bench test campaign referenced from
+Section~\ref{sec:eps-verification}: the full procedures, equipment list,
+safety notes, and a glossary of test terms are kept in the standalone EPS
+Test Campaign document, not reproduced here. Tests run in bring-up order,
+from the standalone Coral spike test (which fixes the capacitor placed on
+the board) through to the environmental session.
+
+\small
+\begin{longtable}{p{0.9cm}p{3.2cm}p{1.6cm}p{8.5cm}}
+\caption{EPS test campaign summary.}
+\label{tab:eps-tests} \\
+\toprule
+\textbf{\#} & \textbf{Test} & \textbf{Req.} & \textbf{Result / status} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{l}{\tablename\ \thetable{} -- continued from previous page} \\
+\toprule
+\textbf{\#} & \textbf{Test} & \textbf{Req.} & \textbf{Result / status} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{4}{r}{Continued on next page} \\
+\endfoot
+\bottomrule
+\endlastfoot
+
+1 & Coral standalone spike test, capacitor sizing & FR-024 & Idle baseline 158~mA (0.79~W); inference transient $\sim$0.3~A above baseline, 2.0--2.4~ms, self-contained (an earlier $\sim$2.5~A capture was identified as breadboard-contact inrush, not inference load, and discarded). Bare-rail dip at the Coral connector measured $\sim$30~mV against a 160~mV budget ($\sim$5$\times$ margin); decision: no bulk capacitor fitted, preliminary pending one confirmation capture on the final soldered harness (220~$\mu$F polymer + 10~nF ceramic identified as the fallback). \\
+2 & Visual inspection (unpowered) & -- & Passed; no assembly defects found. \\
+3 & Continuity / beep test (unpowered) & -- & Passed; no shorts on any power net. Main switch not yet fitted at time of test. \\
+4 & First power-up, bench supply (no load) & FR-024, SR-002 & Rail 5.06~V, in spec across the full 3.0--4.2~V sweep. Divider exact (1.1564~V at 3.7~V input $\to$ 3.700~V). UVLO cutout 2.8~V, recovers 3.1~V. Reverse polarity blocks correctly (0~A). Action item raised: a boot-time guard is needed because the UVLO recovery point sits above the firmware shutdown threshold (Section~\ref{sec:eps-architecture}). \\
+5 & Polyfuse behaviour & SR-001 & 3--4~A hold checked informally during bring-up, no trip observed. The formal timed 5-minute hold test and the $>$8~A trip test are deferred pending access to a suitable current source; the FRG40016F's datasheet trip curve stands as supplementary closure in the meantime. \\
+6 & Battery power-up & -- & $V_\text{OUT}$ 5.057~V, $V_\text{BAT\_MON}$ 1.302~V. Passed. \\
+7 & Dummy load test (static load) & FR-024 & Partially waived: no power-rated resistors available on hand. The 1~A static point is waived; peak-load verification is carried by Test 11 instead, which exercises the real Coral load. Not blocking. \\
+8 & Startup capture and inrush look & PR-006 & Postponed to a session with a more complete test setup. \\
+9 & Battery telemetry calibration & IF-008 & Divider hardware side confirmed exact (Test 4). Firmware-side ADC-vs-multimeter comparison deferred pending OBC bench access. \\
+10 & Low-voltage shutdown & SR-003 & Deferred pending OBC bench access; shares its setup with the FSW-side boot-guard work (Section~\ref{sec:eps-architecture}). \\
+11 & Coral integration and dynamic droop & FR-024 & Preliminary, on a temporary jumper harness: rail at the Coral connector 4.91--4.94~V during inference ($\sim$130~mV jumper drop); dynamic dip $\sim$30~mV against a 160~mV budget ($\sim$5$\times$ margin). Confirms the Test 1 no-capacitor decision. Open: one confirmation capture on the final soldered harness, plus a worst-case combined-load check (Coral + Nucleo + sensors + LoRa transmit). \\
+12 & Mass check & CR-001 & 15.09~g, well within the 200~g EPS sub-budget. Passed. \\
+13 & Endurance run & MR-002 & Scheduled; not yet executed. \\
+14 & Freezer and vacuum chamber & MR-007 & Scheduled; not yet executed. Also the empirical check for the 0.9 cold-derate assumption feeding PR-008. \\
+\end{longtable}

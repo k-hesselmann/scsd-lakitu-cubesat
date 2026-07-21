@@ -23,6 +23,10 @@ typedef struct {
   float pressure;
   float temperature;
   float altitude;
+  /* 1 only if every I2C transaction of this conversion succeeded and the PROM
+   * calibration is good. Callers must check it: a failed read returns a zeroed
+   * struct, never stale data. */
+  uint8_t valid;
 } MS5607_Data;
 
 void MS5607_Init(I2C_HandleTypeDef *hi2c);

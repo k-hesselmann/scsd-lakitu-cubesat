@@ -17,7 +17,11 @@ typedef enum {
 void FSW_Init(void);
 
 /* Evaluate transition conditions and advance the FSM.
- * Called once per 1 Hz superloop tick after CDH_Update(). */
+ * Called from the superloop after CDH_Update(), currently every
+ * LOOP_CDH_FSW_PERIOD_MS (10 Hz — see main.c), not 1 Hz. Transition
+ * debouncing (FSW_ConditionHeld) is elapsed-time based, so correctness does
+ * not depend on the call rate; only threshold rationale comments written
+ * assuming 1 Hz need re-checking if the rate changes again. */
 void FSW_Update(const SensorData_t *dp);
 
 /* Return the current flight phase. */

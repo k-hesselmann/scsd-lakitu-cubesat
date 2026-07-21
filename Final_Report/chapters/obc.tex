@@ -8,7 +8,7 @@ machine, FDIR monitoring, TT\&C packetization, and SD-card logging -- with
 the Coral payload as the only other processor on board. Its
 responsibilities are:
 
-\begin{itemize}[nosep]
+\begin{itemize}
   \item \textbf{Compute platform.} Execute all flight software in a fixed
         1~Hz major cycle (\texttt{CDH\_Update} $\rightarrow$
         \texttt{FSW\_Update} $\rightarrow$ \texttt{FDIR\_Update} $\rightarrow$
@@ -38,7 +38,8 @@ bus allocation as configured in the final STM32CubeMX pinout.
 
 \begin{table}[H]
 \centering
-\begin{tabular}{lllll}
+\small
+\begin{tabular}{p{1.7cm}p{2.1cm}p{3.0cm}p{4.7cm}p{1.9cm}}
 \toprule
 \textbf{Bus} & \textbf{Pins} & \textbf{Peripheral} & \textbf{Configuration} & \textbf{Owner} \\
 \midrule
@@ -61,17 +62,46 @@ card, and LoRa module (see EPS chapter).
 
 \section{Design Decisions}
 
-\textbf{Hardware selection.} The OBC is a Nucleo-64 board with an
-STM32L476RG: Cortex-M4 at 80~MHz, 1~MB flash, 128~KB SRAM, from ST's
-ultra-low-power line. It was chosen over higher-performance parts because
-the 1~Hz control problem does not need more compute, and the low-power
-core keeps the OBC's share of the EPS budget small ($\sim$0.4~W including
-sensors and LoRa). The Nucleo format adds an on-board ST-Link
-debugger/programmer and breakout headers that suit the hand-wired
-integration. The choice imposes two constraints that shaped the software:
-a 50~KB payload frame occupies 39\% of SRAM, so images can never be
-buffered whole; and the Nucleo-64 has no SD slot or SDMMC wiring, so the
-SD card runs over SPI.
+\textbf{Hardware selection.} Three candidate boards were evaluated
+against form factor, power consumption, and mechanical fit inside the 1U
+enclosure (Table~\ref{tab:obc-tradeoff}). All three meet the 80~MHz
+minimum clock requirement (PR-005); the differences are in power and
+mechanics. The Nucleo-144 H753ZI, although lab-supplied, is too long for
+the 1U stack and would only fit after snapping off its ST-Link section --
+a destructive modification that also removes the on-board debugger. The
+F401RE fits and would work, but the L476RG delivers the same 80~MHz at
+roughly half the core current, so at equal price and identical form
+factor the more efficient part won.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{p{2.2cm}p{3.2cm}p{2.4cm}p{2.6cm}p{3.2cm}}
+\toprule
+\textbf{Candidate} & \textbf{Form factor} & \textbf{Current @ 80 MHz} & \textbf{Fits 1U?} & \textbf{Outcome} \\
+\midrule
+STM32F401RE & Nucleo-64, 70$\times$82 mm  & $\sim$15 mA & Yes & Adequate; L4 more efficient \\
+STM32H753ZI & Nucleo-144, 70$\times$133 mm & $\sim$50 mA & Only if ST-Link cut off & Rejected \\
+STM32L476RG & Nucleo-64, 70$\times$82 mm  & $\sim$7 mA  & Yes, as-is & \textbf{Selected} \\
+\bottomrule
+\end{tabular}
+\caption{OBC candidate trade-off (from the OBC subsystem design note)}
+\label{tab:obc-tradeoff}
+\end{table}
+
+The selected STM32L476RG (Cortex-M4 at 80~MHz, 1~MB flash, 128~KB SRAM)
+comes from ST's ultra-low-power line, purpose-built for battery
+operation: the 1~Hz control problem does not need more compute, and the
+low-power core keeps the OBC's share of the EPS budget small
+($\sim$0.4~W including sensors and LoRa). Its memory provides roughly
+5$\times$ the headroom the flight software was expected to need
+(bounded by the 80\% flash/RAM ceiling of PR-008). The Nucleo-64 format
+retains the on-board ST-Link debugger, so programming and debug need
+nothing but a USB cable, and its breakout headers suit the hand-wired
+integration. The choice imposes two constraints that shaped the
+software: a 50~KB payload frame occupies 39\% of SRAM, so images can
+never be buffered whole; and the Nucleo-64 has no SD slot or SDMMC
+wiring, so the SD card runs over SPI.
 
 \textbf{Superloop instead of an RTOS.} All software runs in a single
 bare-metal loop with a fixed call order and no preemption. With one
@@ -80,7 +110,10 @@ stack-per-task RAM cost and priority/locking failure modes without buying
 anything; the superloop makes timing trivially auditable. The independent
 watchdog (IWDG) is refreshed exactly once per loop iteration with a
 timeout below the 10~s FR-011 limit, so any hang anywhere in the cycle
-ends in a clean reset rather than a silent loss of the mission.
+ends in a clean reset rather than a silent loss of the mission. A
+FreeRTOS port was scoped in the design phase as a stretch goal for
+comparison only; the FSM superloop was always the committed flight
+build, and the port was dropped without mission impact.
 
 \textbf{Boot order and degraded boot.} FDIR initializes first, before any
 peripheral driver, so reset classification and the watchdog-reset counter
@@ -115,7 +148,7 @@ Coral status block) plus the complete SCV, all scaled to integers on
 write so the log needs no floating-point formatting and parses
 unambiguously. Three choices bound the damage any single failure can do:
 
-\begin{itemize}[nosep]
+\begin{itemize}
   \item \textbf{One file per minute.} The log rotates every 60~s, so a
         corrupted file costs at most one minute of data.
   \item \textbf{Sync every row.} \texttt{f\_sync} runs after each record;

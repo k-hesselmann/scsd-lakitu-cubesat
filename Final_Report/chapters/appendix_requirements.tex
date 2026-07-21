@@ -1,0 +1,199 @@
+\chapter{Mission and Subsystem Requirements}
+\label{app:requirements}
+
+This appendix reproduces the mission and subsystem requirements
+specification. Requirement identifiers (MR- mission, FR- functional,
+PR- performance, IF- interface, CR- constraint, SR- safety) are cited by
+ID throughout the preceding chapters; the tables below give the full
+requirement statement, verification method and acceptance criteria, and
+owning subsystem for each. The full rationale for each requirement is
+in the source specification, not reproduced here.
+
+\begin{landscape}
+\scriptsize
+
+\begin{longtable}{p{1.4cm}p{8.2cm}p{10.2cm}p{1.9cm}}
+\caption{Mission Requirements}
+\label{tab:req-mission} \\
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Verification \& Acceptance} & \textbf{Owner} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{l}{\tablename\ \thetable{} -- continued from previous page} \\
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Verification \& Acceptance} & \textbf{Owner} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{4}{r}{Continued on next page} \\
+\endfoot
+\bottomrule
+\endlastfoot
+
+MR-001 & The system shall autonomously detect and transition through six (6) flight phases: Standby, Launch, Ascent, Cruise, Descent, and Landing. & \textbf{Test.} Simulate each phase transition in laboratory environment; verify during balloon flight & FSW + CDH \\
+MR-002 & The system shall operate continuously for a minimum of six (6) hours without external power input. & \textbf{Test.} Continuous operation endurance test with all subsystems active & EPS \\
+MR-003 & The system shall acquire and log sensor data at a rate of at least one (1) Hz throughout the mission. & \textbf{Test.} Verify data logging rate during system operation; check for $\geq$99\% sample capture & CDH \\
+MR-004 & The system shall transmit telemetry data to a ground station from altitudes up to forty (40) kilometers, corresponding to a worst-case slant range of 125~km assuming 120~km horizontal drift. & \textbf{Analysis + Test.} Link budget showing minimum 10~dB margin at 125~km slant range. & TT\&C \\
+MR-005 & The system shall store all acquired flight data to non-volatile memory for post-flight retrieval. & \textbf{Test.} Verify 100\% of logged data is readable from SD card after power cycle & CDH \\
+MR-006 & The system shall fit within a 1.5U CubeSat form factor of 100~mm $\times$ 100~mm $\times$ 170~mm. & \textbf{Examination.} Physical dimensional measurement of assembled system & Structure + All \\
+MR-007 & The system shall survive environmental conditions including temperature range of $-60$\textdegree{}C to $+40$\textdegree{}C and pressure down to 1~kPa, with each subsystem operating within its own rated temperature range; payload-specific operating limits are captured in MR-010. & \textbf{Analysis + Test.} Component datasheet review for temperature/pressure ratings; thermal chamber test if available & All \\
+MR-008 & The total flyable system mass shall not exceed 650 grams. & \textbf{Examination.} -- & All \\
+MR-009 & The system shall host an on-board Edge-TPU ML payload that autonomously runs inference and delivers structured output to the OBC at 1~Hz within its own power and thermal envelope, without affecting the primary mission. & \textbf{Test + Analysis.} Both models (see payload PoC documentation) output to the OBC at 1~Hz; payload stays above 0\textdegree{}C with no throttle while other subsystems verify to their own ranges per MR-007; power within IF-009/PR-008; output verifiable against ground truth (FSM, SD frames) at documented accuracy. & Payload \\
+\end{longtable}
+
+\begin{longtable}{p{1.4cm}p{8.2cm}p{10.2cm}p{1.9cm}}
+\caption{Functional Requirements}
+\label{tab:req-functional} \\
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Verification \& Acceptance} & \textbf{Owner} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{l}{\tablename\ \thetable{} -- continued from previous page} \\
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Verification \& Acceptance} & \textbf{Owner} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{4}{r}{Continued on next page} \\
+\endfoot
+\bottomrule
+\endlastfoot
+
+FR-001 & The OBC shall provide at least one (1) I2C buses for sensor interfaces. & \textbf{Examination.} Verify STM32 configuration shows $\geq$1 I2C peripherals enabled & OBC \\
+FR-002 & The OBC shall provide at least one (1) SPI bus for high-speed peripheral communication. & \textbf{Examination.} Verify STM32 configuration shows $\geq$1 SPI peripheral enabled & OBC \\
+FR-003 & The OBC shall provide at least one (1) UART interface for GPS communication. & \textbf{Examination.} Verify STM32 configuration shows $\geq$1 UART peripheral enabled & OBC \\
+FR-004 & The FSW shall implement a finite state machine with six (6) distinct states corresponding to mission phases. & \textbf{Test.} Unit test verifying all six states are implemented and reachable & FSW \\
+FR-005 & The FSW shall transition from Standby to Launch state when vertical acceleration exceeds 1.5g for at least two (2) consecutive seconds. & \textbf{Test.} Simulate acceleration input; verify transition occurs within 5 seconds of threshold & FSW \\
+FR-006 & The FSW shall transition from Launch to Ascent state when altitude exceeds 100 meters AND vertical velocity exceeds 5~m/s. & \textbf{Test.} Simulate altitude and velocity inputs; verify both conditions required for transition & FSW \\
+FR-007 & The FSW shall transition from Ascent to Cruise state when altitude rate of change is less than 0.5~m/s for at least thirty (30) consecutive seconds. & \textbf{Test.} Simulate altitude plateau; verify 30-second stability window required & FSW \\
+FR-008 & The FSW shall transition from Cruise to Descent state when altitude rate of change is less than $-2$~m/s for at least ten (10) consecutive seconds. & \textbf{Test.} Simulate descent rate; verify 10-second confirmation window & FSW \\
+FR-009 & The FSW shall transition from Descent to Landing state when GPS velocity is less than 1~m/s AND altitude is less than 200 meters for at least five (5) consecutive seconds. & \textbf{Test.} Simulate landing conditions; verify both conditions met for $\geq$5 seconds & FSW \\
+FR-010 & The FSW shall persist the current flight phase state to non-volatile memory within one (1) second of any state transition. & \textbf{Test.} Power cycle system during each phase; verify correct phase restored after reboot in 6/6 test cases & FSW \\
+FR-011 & The FSW shall implement a watchdog timer with a timeout period of ten (10) seconds. & \textbf{Test.} Fault injection test; verify system resets within 10 seconds when watchdog not serviced & FSW \\
+FR-012 & The FSW shall prohibit transitions to undefined or invalid states. & \textbf{Test.} Attempt invalid state transitions; verify no undefined states reached during exhaustive testing & FSW \\
+FR-013 & The CDH shall acquire GPS position data (latitude, longitude, altitude) at a rate of at least 1~Hz. & \textbf{Test.} Measure GPS data update rate; verify $\geq$1~Hz sustained output & CDH \\
+FR-014 & The CDH shall acquire IMU data (3-axis acceleration, 3-axis rotation) at a rate of at least 1~Hz. & \textbf{Test.} Measure IMU data acquisition rate; verify $\geq$1~Hz output for all 6 axes & CDH \\
+FR-015 & The CDH shall acquire barometric pressure and derived altitude data at a rate of at least 1~Hz. & \textbf{Test.} Measure barometer data acquisition rate; verify $\geq$1~Hz output & CDH \\
+FR-016 & The CDH shall log to SD card: timestamp, current flight phase, GPS data, IMU data, barometer data, payload results, payload PoC verification footage and battery voltage. & \textbf{Examination.} Inspect SD card log file format; verify all specified fields present & CDH \\
+FR-017 & The CDH shall write logged data to SD card at a rate of at least 1~Hz with $\geq$99\% write success rate. & \textbf{Test.} Verify $\geq$1 log entry per second during extended test; calculate write success percentage & CDH \\
+FR-018 & The CDH shall implement equipment handlers interfacing with each sensor, handling startup, reading and flagging outdated data. & \textbf{Test.} Verify correct startup and reading in nominal mode and data flagging in fault mode & CDH \\
+FR-019 & The CDH shall store the data obtained by the equipment handlers in the datapool vector accessible for FSW & \textbf{Test.} Verify correct interfacing with equipment handlers, availbillity and correct formatting for FSW & CDH \\
+FR-020 & The CDH shall store a Spacecraft Configuration Vector (SCV) in a nonvolatile memory and update it regurlarly & \textbf{Test.} Verify correct storage and recovery capabillities & CDH \\
+FR-021 & The CDH shall provide altitude data to FSW from GPS when available; otherwise from barometer. & \textbf{Test.} Block GPS signal; verify FSW receives barometer altitude and continues phase detection & CDH \\
+FR-022 & The TT\&C shall transmit standarized telemetry packets at a rate of approximately one (1) packet per twenty (20) seconds, corresponding to a duty cycle below 1\% to comply with European ISM band regulations. & \textbf{Test.} Measure packet transmission rate over 5-minute interval & TT\&C \\
+FR-023 & The telemetry packet shall include: header, packet type, sequence number, timestamp, current flight phase, GPS latitude, GPS longitude, GPS altitude, IMU acceleration (3-axis), selected payload data, and battery voltage, and parity check according to the ICD. & \textbf{Examination.} Capture and inspect transmitted packet structure; verify all fields present & TT\&C \\
+FR-024 & The TT\&C shall operate at 868~MHz within the European ISM band (863--870~MHz) in compliance with ETSI EN 300 220. & \textbf{Examination.} Verify LoRa module hardware specification confirms 868~MHz operation & TT\&C \\
+FR-025 & The ground station shall receive, decode and display standarised telemetry data in ICD in human-readable format. & \textbf{Demonstration.} Demonstrate telemetry reception and display during integration test & TT\&C \\
+FR-026 & The TT\&C shall configure the LoRa radio module at Spreading Factor 9 (SF9), bandwidth 125~kHz, and coding rate 4/5, giving a data rate of 1758~bps and a receiver sensitivity of $-137$~dBm. & \textbf{Test.} Verify LoRa firmware register configuration shows SF9, BW 125~kHz, CR 4/5. Confirm data rate of 1758~bps and sensitivity of $-137$~dBm match RFM95W datasheet Table 3 and Table 5. & TT\&C \\
+FR-027 & The OBC shall exchange data with the Coral Dev Board Micro payload over UART at 115200~baud, triggering inference and receiving a fixed 16-byte output block at 1~Hz. & \textbf{Test.} UART capture confirms 115200~baud and a correctly framed 16-byte block received at 1~Hz; the block is logged to SD and included in the outbound telemetry packet. & OBC \\
+\end{longtable}
+
+\begin{longtable}{p{1.4cm}p{8.2cm}p{10.2cm}p{1.9cm}}
+\caption{Performance Requirements}
+\label{tab:req-performance} \\
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Verification \& Acceptance} & \textbf{Owner} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{l}{\tablename\ \thetable{} -- continued from previous page} \\
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Verification \& Acceptance} & \textbf{Owner} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{4}{r}{Continued on next page} \\
+\endfoot
+\bottomrule
+\endlastfoot
+
+PR-001 & Phase detection latency shall not exceed five (5) seconds from threshold condition being met to state transition completion. & \textbf{Test.} Measure time delay between threshold crossing and state transition in 95\% of test cases & FSW \\
+PR-002 & Data logging shall capture at least 99\% of expected samples during normal operation. & \textbf{Test.} Calculate ratio: (actual samples logged) / (expected samples); verify $\geq$0.99 & CDH \\
+PR-003 & GPS horizontal position accuracy shall be within ten (10) meters CEP (Circular Error Probable). & \textbf{Test.} Compare GPS output to known surveyed position during static ground test & CDH \\
+PR-004 & The TT\&C system shall maintain a radio link with a minimum margin of 10~dB at a worst-case slant range of 125~km, corresponding to a balloon altitude of 40~km with 120~km horizontal drift. & \textbf{Analysis + Test.} Link budget calculation showing positive margin; ground range test at maximum feasible distance & TT\&C \\
+PR-005 & The OBC shall operate at a clock frequency sufficient to run the FSW superloop within each 1~Hz cycle with margin. & \textbf{Examination.} Verify configured clock frequency in STM32 configuration $\geq$80~MHz & OBC \\
+PR-006 & The system boot time from power-on to operational state shall not exceed thirty (30) seconds. & \textbf{Test.} Measure time from power application to first telemetry packet transmission & All \\
+PR-007 & The TT\&C link budget shall demonstrate a minimum link margin of 10~dB and an SNR exceeding 0~dB at the worst-case slant range of 125~km. The effective SNR after LoRa processing gain shall exceed 10.5~dB to ensure BER below $10^{-6}$. & \textbf{Analysis.} Link budget showing link margin $>$10~dB, raw SNR $>$0~dB, and effective SNR after processing gain $>$10.5~dB at 125~km slant range. & TT\&C \\
+PR-008 & The EPS power budget shall demonstrate a minimum margin of 1.5$\times$ between usable battery capacity and total energy required for the full flight duration of six (6) hours. & \textbf{Analysis.} Power budget calculation showing margin $\geq$1.5$\times$ at 6-hour flight duration with cold temperature derate factor of 0.9 applied to nominal battery capacity. & EPS \\
+\end{longtable}
+
+\begin{longtable}{p{1.4cm}p{8.2cm}p{10.2cm}p{1.9cm}}
+\caption{Interface Requirements}
+\label{tab:req-interface} \\
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Verification \& Acceptance} & \textbf{Owner} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{l}{\tablename\ \thetable{} -- continued from previous page} \\
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Verification \& Acceptance} & \textbf{Owner} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{4}{r}{Continued on next page} \\
+\endfoot
+\bottomrule
+\endlastfoot
+
+IF-001 & The GPS module shall communicate with the OBC via UART at 9600~baud using NMEA 0183 protocol. & \textbf{Test.} Verify successful NMEA sentence parsing and position data extraction & CDH + OBC \\
+IF-002 & The IMU shall communicate with the OBC via I2C at 100~kHz (standard mode) or 400~kHz (fast mode). & \textbf{Test.} Verify successful I2C communication and register read/write operations & CDH + OBC \\
+IF-003 & The barometer shall communicate with the OBC via I2C at 100~kHz (standard mode) or 400~kHz (fast mode). & \textbf{Test.} Verify successful pressure and temperature data acquisition & CDH + OBC \\
+IF-004 & The SD card shall communicate with the OBC via SPI at a clock frequency between 100~kHz and 25~MHz. & \textbf{Test.} Verify successful file creation, write, and read operations & CDH + OBC \\
+IF-005 & The LoRa module shall communicate with the OBC via SPI at a clock frequency up to 10~MHz. & \textbf{Test.} Verify successful packet transmission and configuration register access & TT\&C + OBC \\
+IF-006 & The CDH subsystem shall provide sensor data to FSW in a standardized struct format updated at 1~Hz. & \textbf{Examination.} Code review verifying data structure definition and update rate & CDH + FSW \\
+IF-007 & The FSW shall provide current flight phase and system status to TT\&C in a defined packet format. & \textbf{Examination.} Code review and packet capture analysis & FSW + TT\&C \\
+IF-008 & The EPS shall provide battery voltage monitoring output to the OBC via analog voltage divider and ADC. & \textbf{Test.} Verify voltage measurement accuracy within $\pm$5\% of actual battery voltage & EPS + OBC \\
+IF-009 & The EPS shall supply a regulated 5V rail capable of sustaining a continuous current of at least 500~mA and peak transients of up to 2A to the Coral Dev Board Micro payload. & \textbf{Test.} Measure rail voltage during Coral inference burst; verify voltage remains above 4.5V throughout peak current transient. & EPS + OBC \\
+\end{longtable}
+
+\begin{longtable}{p{1.4cm}p{8.2cm}p{10.2cm}p{1.9cm}}
+\caption{Constraint Requirements}
+\label{tab:req-constraint} \\
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Verification \& Acceptance} & \textbf{Owner} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{l}{\tablename\ \thetable{} -- continued from previous page} \\
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Verification \& Acceptance} & \textbf{Owner} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{4}{r}{Continued on next page} \\
+\endfoot
+\bottomrule
+\endlastfoot
+
+CR-001 & The system total mass shall not exceed 650 kilograms. & \textbf{Examination.} Weigh fully assembled flyable system on calibrated scale; verify total does not exceed 650~g. & Structure + All \\
+CR-002 & The system shall use only COTS (Commercial Off-The-Shelf) components available within project budget. & \textbf{Examination.} Verify all components on approved BOM are commercially available & All \\
+CR-003 & The system development shall be completed within twelve (12) weeks from project start. & \textbf{Examination.} Verify all subsystems integrated and tested by Week 11 per Gantt chart & All \\
+CR-004 & The system total cost shall not exceed the approved project budget. & \textbf{Examination.} Compare actual expenditures to approved BOM budget & Project Mgmt \\
+CR-005 & The system shall comply with German/EU regulations for radio transmission in the 868~MHz ISM band, including a maximum transmit power of 25~mW ERP ($+14$~dBm) and a duty cycle not exceeding 1\% in the 868.0--868.6~MHz sub-band per ETSI EN 300 220. & \textbf{Analysis.} Verify firmware sets transmit power within legal limit. Calculate actual TX duty cycle from packet size, data rate, and transmission interval; confirm below 1\%. & TT\&C \\
+CR-006 & The GPS module shall support operation in Airborne $<$1g mode to avoid COCOM altitude limits. & \textbf{Examination + Test.} Verify GPS module datasheet specifies Airborne mode support; configure and test & CDH \\
+\end{longtable}
+
+\begin{longtable}{p{1.4cm}p{8.2cm}p{10.2cm}p{1.9cm}}
+\caption{Safety Requirements}
+\label{tab:req-safety} \\
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Verification \& Acceptance} & \textbf{Owner} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{l}{\tablename\ \thetable{} -- continued from previous page} \\
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Verification \& Acceptance} & \textbf{Owner} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{4}{r}{Continued on next page} \\
+\endfoot
+\bottomrule
+\endlastfoot
+
+SR-001 & The system shall include over-current protection on all power distribution lines. & \textbf{Examination + Test.} Verify fuses or electronic current limiters present; test trip threshold & EPS \\
+SR-002 & The system shall include reverse polarity protection on the main power input. & \textbf{Examination.} Verify diode or MOSFET reverse polarity protection circuit present & EPS \\
+SR-003 & The system shall protect the battery against over-discharge by monitoring per-cell voltage via IF-008 and commanding an orderly firmware shutdown before any cell falls below its minimum safe voltage of approximately 3.0~V per cell, with hysteresis. & \textbf{Examination.} Hardware EN-pin UVLO backstop (2.8~V cut, 3.1~V recover per cell) verified independent of firmware state; IF-008 reading verified within plus or minus 5 percent of reference. The firmware-side orderly shutdown named in this requirement is not implemented -- per FMECA, no load shedding or power switching exists in firmware; accepted risk, mitigated pre-flight through battery sizing margin (see EPS chapter). & FSW + EPS \\
+SR-004 & The system shall not pose a radio interference risk to balloon flight control systems. & \textbf{Test.} Coordinate with balloon operator; verify no interference during ground tests & TT\&C \\
+SR-005 & If Iridium is added: the FSW shall not trigger Coral Dev Board Micro inference cycles simultaneously with Iridium transmission bursts. & \textbf{Test.} If Iridium is integrated, verify firmware schedules transmissions during Coral idle periods. Measure rail voltage during worst-case concurrent load scenario. & FSW + EPS \\
+\end{longtable}
+
+\end{landscape}

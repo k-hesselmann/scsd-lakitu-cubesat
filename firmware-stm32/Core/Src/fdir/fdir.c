@@ -45,8 +45,10 @@ static FDIR_LoraWindow_t s_lora;
 
 /* One row per FMECA Section 4 debounce monitor. Escalation rules
  * (IMU ∧ baro -> bus restart, freshness, LoRa) stay explicit below.
- * TODO(FMECA C4/C6): IMU plausibility and GPS/baro altitude cross-check
- * monitors pending threshold agreement with the CDH owner. */
+ * FMECA C4/C6 (IMU plausibility, GPS/baro altitude cross-check) are
+ * implemented in cdh/sensor_validation.c: both clear dp->imu_valid /
+ * dp->baro_valid on failure, so they flow through the ordinary IMU/BARO
+ * timeout monitors below rather than needing their own table rows here. */
 static FDIR_Monitor_t s_monitors[] = {
     { EQUIPMENT_GPS,     FDIR_GPS_TIMEOUT_MS,   &g_datapool.gps_valid,
       &g_scv.gps_timeout_count,   FDIR_GPS_REINIT_PERIOD_MS, 0U, 0U },
@@ -118,6 +120,7 @@ static void FDIR_InitDefaults(SCV_t *scv)
     scv->reset_reason = RESET_REASON_UNKNOWN;
     scv->equipment_enabled = EQUIPMENT_ALL_NOMINAL;
     scv->equipment_faults = 0U;
+    scv->equipment_manual_disable = 0U;
     scv->gps_timeout_count = 0U;
     scv->imu_timeout_count = 0U;
     scv->baro_timeout_count = 0U;
@@ -199,11 +202,13 @@ static void FDIR_ApplyReducedMode(SCV_t *scv)
 {
     uint8_t resets = scv->watchdog_reset_count;
 
-    scv->equipment_enabled = EQUIPMENT_ALL_NOMINAL;
+    scv->equipment_enabled = EQUIPMENT_ALL_NOMINAL & (uint16_t)~scv->equipment_manual_disable;
     for (uint8_t i = 0U; i < (uint8_t)FDIR_SUBSYS_COUNT; i++)
     {
-        s_subsys_enabled[i] =
-            (resets < (uint8_t)(FDIR_WATCHDOG_RESET_LIMIT + i)) ? 1U : 0U;
+        uint8_t staged_off   = (resets >= (uint8_t)(FDIR_WATCHDOG_RESET_LIMIT + i));
+        uint8_t manually_off = (scv->equipment_manual_disable & s_subsys_equipment[i]) != 0U;
+
+        s_subsys_enabled[i] = (staged_off || manually_off) ? 0U : 1U;
         if (!s_subsys_enabled[i])
             scv->equipment_enabled &= (uint16_t)~s_subsys_equipment[i];
     }

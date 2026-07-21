@@ -18,18 +18,21 @@ pouch-swell risk. A USB power bank, LiPo pouch, and lithium-primary cells
 were all rejected on cold performance, altitude-pressure risk, and
 non-rechargeability respectively. Because the cells are unprotected,
 over-current, reverse-polarity, and over-discharge protection is entirely
-external (Section~\ref{sec:eps-architecture}). A boost-only (not
-buck-boost) topology is used because the battery voltage (3.0--4.2~V) is
-always below the 5~V rail target.
+external (Section~\ref{sec:eps-architecture}). A boost-only topology is
+used because the battery voltage (3.0--4.2~V) is always below the 5~V
+rail target.
 
 \section{Power Budget}
 
 The initial budget overestimated the payload: it modelled the Edge TPU at
 full inference power (1.8~W) for 40\% of the flight. A review corrected
-this to the datasheet active-power figure ($\sim$3~W) at a realistic
-duty -- Edge TPU inference latency is millisecond-scale against a 1~Hz
-capture cycle, so the TPU is only briefly active per second -- and removed
-a duplicated boost-efficiency term from the battery-referred conversion.
+this to the datasheet active-power figure ($\sim$3~W) at a conservative
+5\% duty -- Edge TPU inference latency is millisecond-scale against a
+1~Hz capture cycle, so the TPU is only briefly active per second -- and
+removed a duplicated boost-efficiency term from the battery-referred
+conversion. The 5\% assumption has since been confirmed conservative by
+about 20$\times$: the bench campaign measured $\sim$0.25\% actual TPU
+duty (Section~\ref{sec:eps-verification}).
 
 \begin{table}[H]
 \centering
@@ -73,26 +76,32 @@ voltage divider taps the post-fuse battery line to an OBC ADC input
 \textbf{Protection} is layered: the 4~A polyfuse handles over-current
 (SR-001); the SI2301 stage is the sole reverse-polarity protection
 (SR-002), the regulator itself provides none; over-discharge (SR-003) is
-layered firmware-first (orderly shutdown at $\sim$3.0~V/cell via IF-008
-telemetry -- close the SD log, send a final frame, halt) with a hardware
-EN-pin UVLO backstop below that. One interaction between the two layers was
-found and closed: the UVLO recovery point sits above the firmware shutdown
-threshold, so at end of discharge the relaxing open-circuit cell voltage
-could restart the converter and reboot the OBC into a loop. The fix is a
-boot-time guard -- read the battery voltage first and stay halted if it is
-still below the recovery point -- making the hardware backstop alone
-sufficient to prevent over-discharge regardless of firmware state.
+handled by the hardware EN-pin UVLO backstop alone (2.8~V/cell cut,
+3.1~V/cell recover, 300~mV hysteresis, all measured), independent of
+firmware state. A firmware-side orderly shutdown (close the SD log, send
+a final frame, halt on a low IF-008 reading) was scoped during design but
+not built -- the FDIR architecture has no existing notion of a persistent
+power-off state, and the independent watchdog cannot be disabled once
+armed, so a naive halt would simply reboot into itself rather than stay
+off. This is a managed risk: the FMECA records over-discharge isolation
+as ``none possible -- no load shedding or power switching exists,''
+accepted and mitigated pre-flight through battery sizing margin rather
+than firmware.
 
-\textbf{Payload power control} uses the same GPIO-switched P-MOSFET as true
-cutoff (the RT1176 cannot software-cut its own supply), paired with a UART
-\texttt{SHUTDOWN} command so the payload quiesces before the rail is cut. A
-bulk capacitor originally planned at the Coral connector was dropped after
-bench measurement showed the real inference transient to be roughly five
-times gentler than the worst-case assumption the budget had carried
+\textbf{Payload power control} uses a GPIO-switched P-MOSFET as true
+cutoff (the RT1176 cannot software-cut its own supply); measured
+reconnect inrush when the Coral rail switches on is $\sim$2.5~A decaying
+over $\sim$100~$\mu$s, comfortably within polyfuse and regulator ratings.
+The cut is unconditional -- no command warns the payload beforehand, so
+cutoff drops Coral's rail regardless of what it is doing. A bulk capacitor
+originally
+planned at the Coral connector was dropped after bench measurement showed
+the real inference transient to be roughly five times gentler than the
+worst-case assumption the budget had carried
 (Section~\ref{sec:eps-verification}); the regulator's own capacitance
 absorbs the load step without help.
 
-The platform stacks as a 10$\times$10$\times$15~cm 1U volume: TT\&C and CDH
+The platform stacks as a 10$\times$10$\times$10~cm 1U volume: TT\&C and CDH
 on top, batteries, EPS, OBC, and the Coral payload below. The EPS is a
 hand-wired perfboard carrying the battery input, polyfuse, reverse-polarity
 MOSFET, boost regulator, and telemetry divider, with header rows broken out
@@ -114,14 +123,15 @@ rail regulates at a constant 5.06~V across the full 3.0--4.2~V battery
 range; the telemetry divider is exact; the SI2301 stage fully blocks a
 reversed input; and the measured inference transient
 ($\sim$0.3~A above baseline, 2.0--2.4~ms, self-contained) is far gentler
-than the multi-amp spike the original budget assumed.
+than the multi-amp spike the original budget assumed. The full
+test-by-test campaign is in Appendix~\ref{app:eps-tests}.
 
 \begin{table}[H]
 \centering
 \small
 \begin{tabular}{p{2.1cm}p{3.3cm}p{8.0cm}}
 \toprule
-\textbf{Req.} & \textbf{Requirement} & \textbf{Verification} \\
+\textbf{ID} & \textbf{Requirement} & \textbf{Verification} \\
 \midrule
 MR-002 & Operate 6~h without external power & Analysis: budgeted demand
 (7.3~Wh) is a third of usable capacity (22.6~Wh); steady 5.06~V regulation
@@ -142,10 +152,10 @@ spec, so hold test plus trip-curve analysis is sufficient closure. \\
 SR-002 & Reverse-polarity protection & Reversed input draws zero current,
 rail stays at 0~V. \\
 SR-003 & Over-discharge protection with hysteresis & Hardware UVLO backstop
-(2.8~V cut, 3.1~V recover) is independently sufficient regardless of
-firmware state; firmware adds an earlier orderly shutdown, with the
-boot-time guard (Section~\ref{sec:eps-architecture}) closing the one
-threshold interaction found. \\
+(2.8~V cut, 3.1~V recover) is the sole protection layer, independent of
+firmware state; no firmware-side shutdown is implemented -- an accepted
+risk (Section~\ref{sec:eps-architecture}), mitigated pre-flight through
+battery sizing margin. \\
 PR-006 & Boot $\leq$30~s (EPS share $\leq$2~s) & Regulator soft-start and
 the clean, hiccup-free power-up observed throughout bench testing give
 large margin against the 2~s allocation. \\

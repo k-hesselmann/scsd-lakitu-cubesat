@@ -1,4 +1,18 @@
+% !TEX root = ../main.tex
 \chapter{Flight Software}
+
+\section{Development Workflow}
+
+The firmware was developed collaboratively on GitHub: each feature or
+subsystem was built on its own branch and integrated into \texttt{main}
+only after review, with an AI coding assistant (Claude Code) used to help
+review and merge branches so that \texttt{main} stayed buildable
+throughout. The source tree supports two independent build systems reading
+the same code: PlatformIO, the primary command-line build used for
+day-to-day development and verification, and STM32CubeIDE/CubeMX
+(Eclipse-based), which regenerates HAL peripheral-initialisation code from
+a shared \texttt{.ioc} file -- keeping the two toolchains' view of the
+hand-added peripherals in sync was itself a recurring integration task.
 
 \section{Mission Phases}
 
@@ -19,4 +33,338 @@ Landing & System touches down. All motion stops. Terminal state, no further FSM 
 \bottomrule
 \end{tabular}
 \caption{Mission phases and physical description}
+\label{tab:fsw-phases}
+\end{table}
+
+\section{Flight State Machine}
+\label{sec:fsw-fsm}
+
+The flight software's core is a single explicit state machine: one
+authoritative \texttt{FlightPhase\_t} value, advanced by at most one
+transition per cycle of the datapool CDH publishes. The loop currently
+runs CDH and FSW at 10~Hz (100~ms, \texttt{LOOP\_CDH\_FSW\_PERIOD\_MS} in
+\texttt{main.c}) rather than the 1~Hz IF-006 specifies -- a strict
+superset of the required rate, so the interface is still satisfied, and
+every debounce window below is defined in elapsed time rather than cycle
+count for exactly this reason: it stays correct regardless of which rate
+the loop actually runs at. There is no second notion of "phase" anywhere
+else in the firmware -- FDIR, TT\&C,
+and the SD logger all read the same value FSW writes, so the question
+``what phase are we in'' never has two answers. The six phases and the
+physical regime each represents were introduced in
+Table~\ref{tab:fsw-phases}; Figure~\ref{fig:fsw-fsm} gives the complete
+transition graph between them.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  st/.style={draw, rounded corners=2pt, minimum height=1.0cm,
+    minimum width=2.1cm, align=center, fill=blue!6, font=\small},
+  term/.style={st, fill=gray!15},
+  main/.style={-{Latex[length=2mm]}, thick},
+  skip/.style={-{Latex[length=2mm]}, thick, dashed, blue!45!black},
+  lbl/.style={font=\tiny, align=center, text width=2.3cm}
+]
+  \node[st] (standby) {Standby};
+  \node[st, right=1.85cm of standby] (launch) {Launch};
+  \node[st, right=1.85cm of launch] (ascent) {Ascent};
+  \node[st, right=1.85cm of ascent] (cruise) {Cruise};
+  \node[st, below=2.1cm of cruise] (descent) {Descent};
+  \node[term, left=1.85cm of descent] (landing) {Landing};
+
+  \draw[main] (standby) -- (launch)
+    node[midway, above, lbl] {accel $>$1.3\,g\\OR baro rise\\(1\,s)};
+  \draw[main] (launch) -- (ascent)
+    node[midway, above, lbl] {alt $>$100\,m\\OR descent-rate\\$>$5\,m/s (3\,s)};
+  \draw[main] (ascent) -- (cruise)
+    node[midway, above, lbl] {rate $<$0.5\,m/s\\OR alt band\\(30\,s)};
+  \draw[main] (cruise) -- (descent)
+    node[midway, right, lbl] {accel$\Delta>$0.5\,g\\OR rate$>$2\,m/s\\(10\,s)};
+  \draw[main] (descent) -- (landing)
+    node[midway, below, lbl] {speed$<$1\,m/s\\OR alt$<$200\,m\\(5\,s)};
+  \draw[skip] (ascent) to[bend left=30]
+    node[midway, right, lbl, xshift=0.2cm] {same condition --\\Cruise skipped\\on a fast burst}
+    (descent);
+\end{tikzpicture}
+\caption{FSW flight state machine. Solid arrows are the nominal path;
+each is an OR of two independently-sourced physical cues, held for a
+persistence window, before the transition fires. The dashed arrow is not
+a fault path -- it is the same Descent condition evaluated in both Ascent
+and Cruise, so a balloon that bursts before ever satisfying the Cruise
+window still reaches Descent directly.}
+\label{fig:fsw-fsm}
+\end{figure}
+
+\subsection{Redundant, Debounced Transitions}
+
+Every rule in Figure~\ref{fig:fsw-fsm} is built from the same three
+ingredients: a primary physical cue, an independent fallback cue from a
+\emph{different} sensor, and a persistence window that the combined
+condition must hold continuously before the phase actually advances
+(Table~\ref{tab:fsw-transitions}). The two cues are combined with OR, not
+AND, deliberately: the goal is that one degraded sensor should not by
+itself stall a transition the balloon has physically already made. Launch
+detection, for instance, fires on a sharp IMU acceleration spike \emph{or}
+a barometric altitude rise -- either alone is enough, so a GPS-denied,
+IMU-flatlined, or barometer-saturated edge case still has a second way in.
+The persistence window itself is an elapsed-time debounce rather than a
+sample-count debounce: the main superloop free-runs at whatever rate the
+current workload allows, so counting consecutive cycles would make the
+debounce duration depend on CPU load, which counting elapsed milliseconds
+does not.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{2.0cm}p{2.0cm}p{4.6cm}p{4.6cm}p{1.4cm}}
+\toprule
+\textbf{From} & \textbf{To} & \textbf{Primary cue} & \textbf{Fallback cue} & \textbf{Window} \\
+\midrule
+Standby & Launch & IMU accel $>$1.3\,g$^{\ast}$ & Baro altitude rise $>$3\,m & 1\,s$^{\ast}$ \\
+Launch & Ascent & Baro altitude $>$100\,m & GPS descent-rate $>$5\,m/s & 3\,s \\
+Ascent & Cruise & GPS descent-rate $<$0.5\,m/s & Baro altitude band $<$10\,m & 30\,s \\
+Ascent/Cruise & Descent & IMU accel deviates $>$0.5\,g from float baseline & GPS descent-rate $>$2\,m/s & 10\,s \\
+Descent & Landing & GPS 3D speed $<$1\,m/s & Baro altitude $<$200\,m & 5\,s \\
+\bottomrule
+\end{tabular}
+\caption{Transition logic: every rule is (primary OR fallback), debounced
+by elapsed time, not cycle count. Thresholds trace to FR-005--FR-009 and
+are first-pass values pending flight calibration. $^{\ast}$Standby$\to$Launch
+is a documented deviation from FR-005's literal 1.5\,g/2\,s wording --
+recorded in \texttt{fsm\_thresholds.h}, pending either a requirement
+update or a signed-off deviation rationale before flight.}
+\label{tab:fsw-transitions}
+\end{table}
+
+Three further design choices are worth calling out, two of them lessons
+from moving the loop from an originally-assumed 1~Hz to its current
+10~Hz. First, the Cruise-phase float baseline is not a fixed 1\,g
+reference but a running exponential average of IMU acceleration magnitude,
+updated only while the balloon is already in Cruise; burst detection then
+looks for a \emph{deviation} from that adaptive baseline rather than from
+a hard-coded assumption of what level flight looks like, so the same
+logic tolerates whatever residual acceleration the platform's actual
+float attitude produces. Its smoothing constant had to be retuned once
+the loop moved to 10~Hz: the original factor gave the baseline a
+$\sim$1\,s time constant, fast enough to absorb a genuine burst
+\emph{into} the baseline before the 10\,s debounce window could confirm
+it, silently defeating the Cruise$\to$Descent branch; the corrected
+constant instead gives a $\sim$100\,s time constant, an order of
+magnitude slower than the debounce window it feeds. Second, the Standby
+ground-pressure baseline that \texttt{baro\_alt\_m} is measured against
+had the same class of bug in the opposite direction: it was reset to the
+current reading on every tick while in Standby, which pinned the relative
+altitude at zero for as long as the vehicle sat on the pad and
+permanently defeated the Standby$\to$Launch baro branch regardless of any
+real altitude change -- caught on the bench, where a genuine
+$\sim$11\,m handling rise never crossed the 3\,m threshold (see
+\texttt{docs/bench\_session\_notes.md}). It is now an exponential average
+as well, slow enough (time constant $\sim$10\,s) to stay put across a
+launch but still slowly track weather-driven pressure drift on the
+timescale of hours. Third, phase
+transitions are treated as operationally significant events, not just
+internal bookkeeping: the instant a transition fires, FSW resets its
+debounce counters, persists the new phase to non-volatile memory
+(Section~\ref{sec:fsw-persistence}, FR-010), and requests an out-of-cycle
+telemetry frame so the ground sees the phase change immediately (IF-007)
+rather than waiting for the next scheduled downlink.
+
+\subsection{Sensor Admissibility}
+\label{sec:fsw-admissibility}
+
+The FSM does not decide for itself whether a sensor reading is trustworthy
+-- that judgment is made once, centrally, and reused everywhere. A single
+admissibility check gates every cue in Table~\ref{tab:fsw-transitions}
+before it is allowed to steer a transition: a sensor is usable only if CDH
+currently marks its datapool group valid \emph{and} FDIR has not flagged
+that equipment faulted \emph{and} staged reduced mode has not disabled it
+(Section~\ref{sec:fsw-reduced-mode}). This is the same three-source
+gate -- data validity, fault state, policy state -- applied uniformly to
+GPS, IMU, and barometer alike, so no transition rule special-cases a
+degraded sensor; it simply stops seeing that cue at all. The corollary is
+an accepted limitation rather than a hidden one: if \emph{both} backing
+sensors for a transition are inadmissible at the same time, the phase
+cannot advance on that rule and the vehicle holds its last known-good
+phase until a sensor recovers, rather than guessing.
+
+\section{Fault Detection, Isolation, and Recovery (FDIR)}
+\label{sec:fsw-fdir}
+
+FDIR is the flight software's single point of fault detection, but it is
+deliberately not a point of hardware access. Every monitor in
+\texttt{docs/FMECA.md} follows the same handling-level model -- contain a
+fault at the lowest level that can absorb it (driver retry, single-device
+reinit, bus restart, processor reset, system-wide degradation), escalating
+only when the lower level keeps failing -- and every one of those monitors
+is implemented as one row in a table-driven update loop rather than a
+family of bespoke fault handlers. What FDIR does when a fault trips is
+always the same three things: raise a fault flag, set a bit in a recovery
+request mask, and stop -- the actual recovery action belongs entirely to
+whichever subsystem owns the hardware in question (Figure~\ref{fig:fsw-fdir-loop}).
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  box/.style={draw, rounded corners=2pt, minimum height=1.05cm,
+    minimum width=3.4cm, align=center, fill=orange!8, font=\small},
+  arr/.style={-{Latex[length=2mm]}, thick}
+]
+  \node[box] (detect) {Detect\\\footnotesize fault crosses debounce};
+  \node[box, right=3.6cm of detect] (request) {Request\\\footnotesize set bit in reinit\_requests};
+  \node[box, below=1.9cm of request] (execute) {Execute\\\footnotesize owning subsystem acts};
+  \node[box, below=1.9cm of detect] (ack) {Acknowledge\\\footnotesize owning subsystem clears bit};
+
+  \draw[arr] (detect) -- (request);
+  \draw[arr] (request) -- (execute);
+  \draw[arr] (execute) -- (ack);
+  \draw[arr] (ack) -- (detect);
+\end{tikzpicture}
+\caption{The one recovery pattern FDIR uses for every equipment fault.
+FDIR never calls a HAL function -- it only ever raises a flag and
+requests. The subsystem that already owns the hardware performs the
+actual recovery and acknowledges when done.}
+\label{fig:fsw-fdir-loop}
+\end{figure}
+
+This separation keeps the fault logic itself hardware-agnostic and lets
+one mechanism cover six unrelated failure modes (Table~\ref{tab:fsw-fdir-instances}):
+FDIR's job stops at recognising that GPS, IMU, and barometer faults are
+all "sensor on the shared I2C bus went bad," while CDH's job is knowing
+that the concrete recovery for one sensor is a protocol reinit and the
+concrete recovery for two-or-more-at-once is a full bus restart with a
+bit-banged clock-clear pulse -- a distinction FDIR does not need to
+understand to detect the fault correctly.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{4.3cm}p{1.8cm}p{7.2cm}}
+\toprule
+\textbf{Fault} & \textbf{Executor} & \textbf{Recovery action} \\
+\midrule
+GPS / IMU / baro timeout or implausible reading & CDH & per-device protocol reinit, rate-limited \\
+I2C bus wedge (both IMU and baro faulted together) & CDH & bus restart: DeInit, 9-pulse clock-line clear, Init \\
+LoRa TX failure rate exceeded & TT\&C & re-run \texttt{LoRa\_Init()} via the radio's hardware RST line \\
+SD write/mount failures & SD logger & remount, rotate file, never auto-format \\
+Battery ADC reading absent & CDH & detection only -- flagged in telemetry, no reinit path exists \\
+Watchdog reset storm & FSW (\texttt{main}) & staged reduced mode, Section~\ref{sec:fsw-reduced-mode} \\
+\bottomrule
+\end{tabular}
+\caption{One request/execute/acknowledge pattern, six different faults and
+executors. The full monitor-by-monitor specification is in
+\texttt{docs/FMECA.md}.}
+\label{tab:fsw-fdir-instances}
+\end{table}
+
+\section{System-Level Recovery: Watchdog and Reduced Mode}
+\label{sec:fsw-reduced-mode}
+
+Below the per-equipment monitors sits a processor-level backstop for the
+failure mode none of them can see: the superloop itself hanging (FMECA
+F1). An independent hardware watchdog (IWDG, $\sim$30\,s timeout, FR-011)
+is armed once at boot and kicked once per superloop iteration -- but that
+kick is conditional, not unconditional. Kicking the watchdog
+unconditionally would defeat its own purpose for exactly the failure mode
+it exists to catch: a logic hang that keeps looping without doing useful
+work would still execute the kick line and never reset. FDIR instead
+exposes a single "healthy enough to kick" verdict, and the kick is only
+issued when that verdict holds, so a system that is technically still
+executing instructions but has stopped making progress (a stale datapool
+that outlives a bus-restart attempt, for example) is allowed to reset
+rather than be kept artificially alive.
+
+A single reset is recoverable by design: the phase, the equipment fault
+state, and the reset count all live in the persistent SCV
+(Section~\ref{sec:fsw-persistence}), so a reset resumes the mission rather
+than restarting it from Standby. Repeated resets are a different problem
+-- a persistent fault re-triggering every boot, without ever escalating
+past what a single watchdog cycle handles. FMECA F2 addresses this with a
+staged reduced mode: once the persisted reset count exceeds a threshold,
+each further reset disables one more subsystem's update call, in a fixed
+order, rather than either ignoring the pattern or giving up entirely
+(Table~\ref{tab:fsw-reduced-mode}). There is no power-switching hardware on
+the platform to isolate a suspect subsystem outright -- the same
+constraint the EPS chapter notes for battery over-discharge -- so peeling
+subsystems off one at a time, cheapest first, is the only isolation
+available. FDIR itself and the watchdog kick are exempt from every stage:
+whatever else is disabled, the system must still be able to detect its own
+health and still be able to reset.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{2.3cm}p{3.2cm}p{8.5cm}}
+\toprule
+\textbf{Reset count} & \textbf{Disables} & \textbf{Rationale} \\
+\midrule
+$<$3 & nothing & a single reset is the expected, fully-recoverable case \\
+3 & SD logging & cheapest to lose; a hung SD write is a plausible repeat offender and logging is not safety-critical \\
+4 & CDH sensor acquisition & removes the most complex, bus-driving subsystem next \\
+5 & TT\&C & telemetry stops; the vehicle is now flying blind to the ground but still flying the FSM \\
+6+ & FSW phase updates & last resort -- phase is frozen at its last persisted value \\
+\bottomrule
+\end{tabular}
+\caption{Staged reduced mode (FMECA F2). FDIR and the IWDG kick run at
+every stage, including the last.}
+\label{tab:fsw-reduced-mode}
+\end{table}
+
+\section{State Persistence Across Resets}
+\label{sec:fsw-persistence}
+
+FSW and FDIR own the fields that matter for continuity -- flight phase,
+equipment fault and enable bitmasks, watchdog reset count -- but not the
+flash mechanics that put them there. Those fields are carried in the same
+33-byte SCV structure, written to the same CRC-protected flash page, using
+the same wear-limited erase strategy that the CDH chapter describes in
+full (the datapool and SCV persistence mechanism, Section on Non-Volatile
+Datapool Backup). Splitting ownership this way -- FSW/FDIR decide
+\emph{what} needs to survive a reset, CDH implements \emph{how} anything
+gets into flash -- avoids two independent flash-write paths racing each
+other, and means the 1\,s persistence budget in FR-010 is met by the same
+write that already happens once per cycle rather than a special-cased
+one-off save on every transition.
+
+\section{Requirement Verification}
+\label{sec:fsw-verification}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{1.7cm}p{5.3cm}p{7.6cm}}
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Verification} \\
+\midrule
+FR-005 & Standby$\to$Launch on accel $>$1.5\,g for $\geq$2\,s & Deviation:
+implemented threshold is 1.3\,g/1\,s, not 1.5\,g/2\,s -- an intentional,
+documented change pending sign-off (Table~\ref{tab:fsw-transitions}).
+Bring-up bench testing separately caught and fixed a baro-baseline bug
+that had been masking this branch entirely; full threshold verification
+pending hardware-in-the-loop execution. \\
+FR-006--009 & Remaining five-phase transition logic per
+Table~\ref{tab:fsw-transitions} & Test: fault-injection console
+(\texttt{fdir\_test\_hooks.c}) can force sensor inputs to known values on
+the bench; full run against the FMECA~\S5 matrix pending
+hardware-in-the-loop execution. \\
+FR-010 & Persist flight phase within 1\,s of any transition & By
+construction: the write happens inside \texttt{FSW\_SetPhase()} in the same
+call that changes the in-RAM phase, so the two cannot drift apart in time;
+power-cycle-per-phase bench test pending. \\
+FR-011 & Watchdog timeout $\leq$10\,s & Partially exceeded by design: IWDG
+configured for $\sim$30\,s exceeds the 10\,s ceiling in FR-011 and is
+flagged as a deviation pending sign-off; loop-hang bench test pending. \\
+IF-006 & CDH provides sensor data to FSW at 1\,Hz in a standard struct &
+Examination: single shared \texttt{SensorData\_t} datapool, one writer
+(CDH), read by FSW every cycle (CDH chapter). Actual update rate is
+10\,Hz, a strict superset of the specified rate, not a deviation. \\
+IF-007 & FSW provides phase and status to TT\&C in a defined packet &
+Examination: phase is a field in the standard telemetry packet (TT\&C
+chapter); transitions additionally trigger an immediate out-of-cycle
+frame. \\
+SR-003 & Battery over-discharge protection & Owned jointly with EPS; the
+EPS chapter documents the as-built decision to rely on the hardware UVLO
+backstop alone, with the firmware-side orderly shutdown scoped but not
+implemented as an accepted risk. \\
+\bottomrule
+\end{tabular}
+\caption{FSW-owned requirement verification summary. Bench and
+hardware-in-the-loop rows are the pre-launch test campaign's remaining
+work; see \texttt{docs/FMECA.md}~\S5 for the full fault-injection matrix.}
+\label{tab:fsw-verification}
 \end{table}

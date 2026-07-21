@@ -28,6 +28,7 @@
 #include "cdh/baro_diag.h"
 #include "datapool.h"
 #include "fdir/fdir.h"
+#include "fdir/fdir_test_hooks.h"
 #include "fdir/scv.h"
 #include "fsw/fsm.h"
 #include "sd_logger.h"
@@ -149,6 +150,10 @@ int main(void)
   /* Arm the watchdog only after init completes; once started it can never
    * be stopped (FMECA F1). */
   IWDG_UserInit();
+
+  /* Bench-only fault-injection console (docs/FMECA.md Section 5); compiles
+   * to nothing unless FDIR_TEST_HOOKS is defined (testhooks build env). */
+  FDIR_TestHooks_Init();
 
   TelemetryPacket_t tx_packet = {0};
 
@@ -342,7 +347,7 @@ static void MX_ADC1_Init(void)
   * and number of conversion)
   */
   hadc1.Instance = ADC1;
-  hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
   hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
@@ -365,7 +370,7 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_5;
   sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_92CYCLES_5;
+  sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
   sConfig.SingleDiff = ADC_SINGLE_ENDED;
   sConfig.OffsetNumber = ADC_OFFSET_NONE;
   sConfig.Offset = 0;
@@ -374,6 +379,10 @@ static void MX_ADC1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN ADC1_Init 2 */
+  if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
   /* USER CODE END ADC1_Init 2 */
 

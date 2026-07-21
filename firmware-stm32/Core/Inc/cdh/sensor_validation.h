@@ -7,8 +7,33 @@
 #define IMU_FLATLINE_THRESHOLD     0.001f
 #define IMU_FLATLINE_TIMEOUT_S     4
 
+/* FMECA C4: plausibility check for "frozen/garbage values while ACKing"
+ * (distinct from C3's NACK/timeout case, already covered by imu_valid). */
+#define IMU_ACCEL_MAG_MAX_G        3.0f  /* MPU6050_Init configures AFS_SEL=0
+                                           * (+-2g/axis, mpu6050.c); combined-
+                                           * axis magnitude tops out near 2g
+                                           * in real flight, sqrt(3)*2=3.46g
+                                           * only if all 3 axes saturate at
+                                           * once. Anything above this is
+                                           * implausible, not just a hard
+                                           * event. */
+#define IMU_STUCK_CYCLES           3     /* consecutive bit-identical reads
+                                           * while imu_valid=1 (ACKing) =
+                                           * frozen registers, matches the
+                                           * "3 cycles" debounce FMECA already
+                                           * uses for C3/C5. */
+
 #define BARO_MAX_PRESSURE_PA       151987.5f
 #define BARO_MIN_TEMP_C            -100.0f
+
+/* FMECA C6: GPS/baro altitude cross-check, run only when both are already
+ * individually valid. Threshold is a first pass pending flight calibration
+ * (fsm_thresholds.h-style TBD) -- GPS vertical error can reach ~15 m
+ * (docs/sensor_parameters.html), so this stays well clear of nominal GPS
+ * noise while still catching a grossly wrong baro reading (PROM corruption,
+ * stuck ADC). */
+#define BARO_GPS_ALT_DISAGREE_M    200.0f
+#define BARO_CROSSCHECK_DEBOUNCE_MS 5000U
 
 #define GPS_MAX_ALTITUDE_M         40000.0f
 #define GPS_MIN_ALTITUDE_M         0.0f
@@ -25,6 +50,8 @@ typedef struct {
     uint32_t imu_fault_count;
     uint32_t baro_fault_count;
     uint32_t gps_fault_count;
+    uint32_t imu_plausibility_fault_count;   /* FMECA C4 */
+    uint32_t baro_crosscheck_fault_count;    /* FMECA C6 */
     uint32_t last_imu_check_ms;
     uint32_t last_baro_check_ms;
     uint32_t last_gps_update_ms;
