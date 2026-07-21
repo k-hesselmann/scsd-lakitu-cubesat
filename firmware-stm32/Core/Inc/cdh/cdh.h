@@ -8,7 +8,7 @@
 void CDH_Init(void);
 
 /* Read all sensors, update g_datapool, update g_scv health fields.
- * Called once per 1 Hz superloop tick. */
+ * Called by the 100 ms CDH/FSW scheduler slot in main.c. */
 void CDH_Update(SensorData_t *dp, SCV_t *scv);
 
 /* Request an I2C bus restart. Called by FDIR when it decides recovery is due;

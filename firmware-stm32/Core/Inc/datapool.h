@@ -39,7 +39,8 @@
 #define RESET_REASON_INVALID      SCV_INVALID_U8
 
 /* ICD Section 1 — SensorData_t
- * Written by CDH_Update() at 1 Hz. Read by FSW_Update() and TTC_Transmit().
+ * Written by CDH_Update() at the 100 ms CDH/FSW scheduler slot.
+ * Read by FSW_Update() and TTC_Transmit().
  * Check *_valid flags before using any field. */
 typedef struct __attribute__((packed)) {
 
