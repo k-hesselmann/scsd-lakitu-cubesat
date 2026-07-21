@@ -122,7 +122,9 @@ its SCV equipment flag: a peripheral that fails to start is flagged
 faulty and the boot continues -- the OBC always comes up, in a degraded
 mode if necessary, rather than hanging in an init retry loop. The
 boot-time battery-voltage guard (EPS chapter) is checked before normal
-operation resumes.
+operation resumes. The staged escalation this gating implements after
+repeated watchdog resets is detailed in the Flight Software chapter
+(Section~\ref{sec:fsw-reduced-mode}).
 
 \subsection{SD Card Storage}
 \label{sec:obc-sd}

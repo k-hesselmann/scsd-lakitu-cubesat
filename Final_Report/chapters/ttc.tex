@@ -428,8 +428,13 @@ Action initialization / RX & Full recovery or return-to-service, then restore RX
 
 
 \section{FDIR and Radio Health}
+\label{sec:ttc-fdir-radio}
 
-TT\&C records facts; FDIR applies policy. 
+TT\&C records facts; FDIR applies policy. This is one instance of the
+general detect/request/execute/acknowledge pattern FDIR uses for every
+equipment fault, described once in the Flight Software chapter
+(Section~\ref{sec:fsw-fdir}); the table below is the LoRa-specific
+thresholds within that pattern, not a separate mechanism.
 
 \begin{table}[H]
 \centering

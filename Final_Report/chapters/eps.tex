@@ -82,8 +82,9 @@ firmware state. A firmware-side orderly shutdown (close the SD log, send
 a final frame, halt on a low IF-008 reading) was scoped during design but
 not built -- the FDIR architecture has no existing notion of a persistent
 power-off state, and the independent watchdog cannot be disabled once
-armed, so a naive halt would simply reboot into itself rather than stay
-off. This is a managed risk: the FMECA records over-discharge isolation
+armed (Flight Software chapter, Section~\ref{sec:fsw-reduced-mode}), so a
+naive halt would simply reboot into itself rather than stay off. This is a
+managed risk: the FMECA records over-discharge isolation
 as ``none possible -- no load shedding or power switching exists,''
 accepted and mitigated pre-flight through battery sizing margin rather
 than firmware.
