@@ -239,6 +239,23 @@ static int TestFdirReinitBitTriggersRecovery(void)
     return 0;
 }
 
+static int TestRejectedRecoveryRequestIsNotAcked(void)
+{
+    Mock_Reset(); StartHealthyTtc();
+
+    mock_fdir_requests = EQUIPMENT_LORA;
+    mock_isolate_result = LORA_BUSY;
+    CHECK(TTC_FDIR_RequestIsolation() == TTC_FDIR_RESULT_ACCEPTED);
+    TTC_Service();
+    CHECK((mock_fdir_requests & EQUIPMENT_LORA) != 0U);
+    mock_busy = 0U;
+    mock_state = LORA_STATE_ISOLATED;
+    mock_status = LORA_OK;
+    TTC_Service();
+    CHECK((mock_fdir_requests & EQUIPMENT_LORA) == 0U);
+    return 0;
+}
+
 int main(void)
 {
     int result;
@@ -254,5 +271,7 @@ int main(void)
     if (result != 0) return result;
     result = TestCommandAndAckLatchesAreIndependent();
     if (result != 0) return result;
-    return TestFdirReinitBitTriggersRecovery();
+    result = TestFdirReinitBitTriggersRecovery();
+    if (result != 0) return result;
+    return TestRejectedRecoveryRequestIsNotAcked();
 }

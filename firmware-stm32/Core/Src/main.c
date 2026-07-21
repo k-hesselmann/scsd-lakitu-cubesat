@@ -108,52 +108,80 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+  /* Arm the independent watchdog before clock, peripheral, and subsystem init.
+   * Once started it cannot be stopped; any init hang now resets the MCU. */
+  IWDG_UserInit();
   /* USER CODE END Init */
 
   /* Configure the system clock */
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
+  (void)HAL_IWDG_Refresh(&hiwdg);
+  /* FDIR first: restores the SCV from flash and evaluates staged reduced
+   * mode (FMECA F2) before subsystem-specific init begins. */
+  FDIR_Init(&g_scv);
+  (void)HAL_IWDG_Refresh(&hiwdg);
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  (void)HAL_IWDG_Refresh(&hiwdg);
   MX_I2C1_Init();
+  (void)HAL_IWDG_Refresh(&hiwdg);
   MX_USB_DEVICE_Init();
+  (void)HAL_IWDG_Refresh(&hiwdg);
   MX_USART3_UART_Init();
+  (void)HAL_IWDG_Refresh(&hiwdg);
   MX_USART2_UART_Init();
+  (void)HAL_IWDG_Refresh(&hiwdg);
   MX_UART5_Init();
+  (void)HAL_IWDG_Refresh(&hiwdg);
   MX_ADC1_Init();
+  (void)HAL_IWDG_Refresh(&hiwdg);
   /* USER CODE BEGIN 2 */
-  SPI2_UserInit();   /* hand-added SPI2 for the SD card (must precede CDH_Init) */
-  SPI1_UserInit();   /* hand-added SPI1 for the LoRa radio */
+  /* The gates below skip subsystems disabled after repeated watchdog resets.
+   * FDIR and the IWDG kick always run. */
+  if (FDIR_SubsystemEnabled(FDIR_SUBSYS_SD))
+  {
+    SPI2_UserInit();   /* hand-added SPI2 for the SD card */
+    (void)HAL_IWDG_Refresh(&hiwdg);
+  }
+  if (FDIR_SubsystemEnabled(FDIR_SUBSYS_TTC))
+  {
+    SPI1_UserInit();   /* hand-added SPI1 for the LoRa radio */
+    (void)HAL_IWDG_Refresh(&hiwdg);
+  }
 
-  /* FDIR first: restores the SCV from flash and evaluates staged reduced
-   * mode (FMECA F2) — the gates below skip subsystems disabled after
-   * repeated watchdog resets. FDIR and the IWDG kick always run. */
-  FDIR_Init(&g_scv);
   if (FDIR_SubsystemEnabled(FDIR_SUBSYS_CDH))
   {
     CDH_Init();
+    (void)HAL_IWDG_Refresh(&hiwdg);
     GPS_Diag_Test(&hi2c1);
+    (void)HAL_IWDG_Refresh(&hiwdg);
     Baro_Diag_Test(&hi2c1);
+    (void)HAL_IWDG_Refresh(&hiwdg);
   }
   if (FDIR_SubsystemEnabled(FDIR_SUBSYS_FSW))
+  {
     FSW_Init();
+    (void)HAL_IWDG_Refresh(&hiwdg);
+  }
   if (FDIR_SubsystemEnabled(FDIR_SUBSYS_TTC))
+  {
     TTC_Init();
+    (void)HAL_IWDG_Refresh(&hiwdg);
+  }
   if (FDIR_SubsystemEnabled(FDIR_SUBSYS_SD))
+  {
     SD_Logger_Init(&g_scv);
-
-  /* Arm the watchdog only after init completes; once started it can never
-   * be stopped (FMECA F1). */
-  IWDG_UserInit();
+    (void)HAL_IWDG_Refresh(&hiwdg);
+  }
 
   /* Bench-only fault-injection console (docs/FMECA.md Section 5); compiles
    * to nothing unless FDIR_TEST_HOOKS is defined (testhooks build env). */
   FDIR_TestHooks_Init();
+  (void)HAL_IWDG_Refresh(&hiwdg);
 
   TelemetryPacket_t tx_packet = {0};
 
@@ -208,7 +236,7 @@ int main(void)
 
     /* Kick at the END of the loop, so a blocked task above is recovered by
      * reset; FDIR withholds the kick to escalate a stuck datapool (C10).
-     * IWDG timeout must be < 10 s (FR-011). TTC_Transmit()/TTC_Service() are
+     * IWDG timeout is nominally 10 s (FR-011). TTC_Transmit()/TTC_Service() are
      * now non-blocking (queued, advanced by LoRa_Service() over subsequent
      * ticks), so correctness here depends on TTC_Service() being called
      * every loop iteration rather than tolerating one long blocking send. */
@@ -635,17 +663,15 @@ static void SPI2_UserInit(void)
 }
 
 /* Independent watchdog. Also configured in the .ioc (IWDG_PRESCALER_256,
- * reload 3750 — keep BOTH in sync!), so a CubeMX regen emits an identical
+ * reload 1249 — keep BOTH in sync!), so a CubeMX regen emits an identical
  * MX_IWDG_Init(); this user-code copy keeps pre-regen sources self-contained
  * and is idempotent alongside it, same pattern as SPIx_UserInit above.
- * LSI ~32 kHz / 256 = 125 Hz; reload 3750 gives a ~30 s timeout —
- * comfortably above the worst-case superloop tick (1 s delay + 5 s LoRa
- * TxDone wait + SD retries). */
+ * LSI ~32 kHz / 256 = 125 Hz; reload 1249 gives a nominal 10 s timeout. */
 static void IWDG_UserInit(void)
 {
   hiwdg.Instance = IWDG;
   hiwdg.Init.Prescaler = IWDG_PRESCALER_256;
-  hiwdg.Init.Reload = 3750U;
+  hiwdg.Init.Reload = 1249U;
   hiwdg.Init.Window = IWDG_WINDOW_DISABLE;
   if (HAL_IWDG_Init(&hiwdg) != HAL_OK)
     Error_Handler();

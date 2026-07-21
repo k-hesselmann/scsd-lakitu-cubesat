@@ -116,12 +116,17 @@ static uint8_t TTC_ActionIsActive(void)
 
 static void TTC_SyncFdirHealth(void)
 {
+    uint8_t action_is_recovery =
+        (s_action_status.action == TTC_FDIR_ACTION_RECOVERY ||
+         s_action_status.action == TTC_FDIR_ACTION_RETURN_TO_SERVICE) ? 1U : 0U;
+
     s_fdir_health.radio_ready = (s_radio_ready && LoRa_IsReady()) ? 1U : 0U;
     s_fdir_health.rx_active = LoRa_IsRxActive();
+    s_fdir_health.radio_busy = LoRa_IsBusy();
     s_fdir_health.recovery_in_progress =
-        (s_action_status.state == TTC_FDIR_ACTION_IN_PROGRESS &&
-         (s_action_status.action == TTC_FDIR_ACTION_RECOVERY ||
-          s_action_status.action == TTC_FDIR_ACTION_RETURN_TO_SERVICE)) ? 1U : 0U;
+        (action_is_recovery &&
+         (s_action_status.state == TTC_FDIR_ACTION_PENDING ||
+          s_action_status.state == TTC_FDIR_ACTION_IN_PROGRESS)) ? 1U : 0U;
     s_fdir_health.isolation_active = LoRa_IsIsolated();
 }
 
@@ -575,14 +580,14 @@ void TTC_Service(void)
     LoRaStatus_t status;
     uint32_t now = HAL_GetTick();
 
-    /* Consume FDIR-requested LoRa recovery (FMECA T1). Fire-and-forget: the
-     * TTC_FDIR_Result_t is ignored, ack happens on acceptance, not on
-     * completion — TTC_FDIR_RequestRecovery() is idempotent while a recovery
-     * is already pending/in-progress. */
+    /* Consume FDIR-requested LoRa recovery (FMECA T1). Ack only once TTC has
+     * accepted it, found it already complete, or is already doing the same
+     * action. A different active action leaves the request bit set. */
     if (FDIR_GetReinitRequests() & EQUIPMENT_LORA)
     {
-        (void)TTC_FDIR_RequestRecovery();
-        FDIR_AcknowledgeReinit(EQUIPMENT_LORA);
+        TTC_FDIR_Result_t result = TTC_FDIR_RequestRecovery();
+        if (result != TTC_FDIR_RESULT_REJECTED)
+            FDIR_AcknowledgeReinit(EQUIPMENT_LORA);
     }
 
     LoRa_Service();
