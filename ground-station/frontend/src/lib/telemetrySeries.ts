@@ -73,18 +73,15 @@ export function prependTimelineEvents(
 ) {
   if (incoming.length === 0) return existing
 
-  const newestFirst = [...incoming].sort((a, b) => b.time_unix - a.time_unix)
-  const seen = new Set<string>()
-  const result: TimelineEvent[] = []
+  const unique = new Map<string, TimelineEvent>()
 
-  for (const event of [...newestFirst, ...existing]) {
-    if (seen.has(event.id)) continue
-    seen.add(event.id)
-    result.push(event)
-    if (result.length === limit) break
+  for (const event of [...existing, ...incoming]) {
+    unique.set(event.id, event)
   }
 
-  return result
+  return [...unique.values()]
+    .sort((a, b) => b.time_unix - a.time_unix)
+    .slice(0, limit)
 }
 
 export function sampleEvenly<T>(values: T[], maxPoints: number) {
