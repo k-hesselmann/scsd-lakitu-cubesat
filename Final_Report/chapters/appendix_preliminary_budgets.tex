@@ -1,0 +1,268 @@
+\chapter{Preliminary Design Budgets}
+\label{app:prelim-budgets}
+
+\section{Preliminary Budgets}
+
+The following power, mass, link, and data budgets represent the -- now outdated -- preliminary design state of the mission. Blue-coded values in the underlying spreadsheets are taken directly from datasheets; yellow-coded values are engineering assumptions with explanations given alongside each figure; green-coded cells indicate a cited source. All figures are subject to change as hardware is measured, tested, and finalised in later project phases.
+
+\subsection{Power Budget}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{p{1.4cm}p{5cm}rrrr}
+\toprule
+\textbf{Subsystem} & \textbf{Component} & \textbf{I (mA)} & \textbf{V} & \textbf{Avg. power (mW)} & \textbf{Battery rail (mW)} \\
+\midrule
+OBC & STM32L476RG @ 80 MHz, active run mode & 10.2 & 3.3 & 33.66 & 60.00 \\
+CDH & u-blox MAX-M10S GPS, continuous tracking & 7.6 & 3.3 & 25.08 & 44.71 \\
+CDH & ANN-MB5 GNSS antenna & 17.0 & 3.3 & 56.10 & 100.00 \\
+CDH & MPU-6050 IMU, 6-axis + DMP active & 3.9 & 3.3 & 12.87 & 22.94 \\
+CDH & MS5607 altimeter, max resolution sampling & 1.4 & 3.3 & 4.62 & 8.24 \\
+CDH & SanDisk 32 GB microSD, active write bursts & 60.0 & 3.3 & 39.60 & 70.59 \\
+CDH & SparkFun SD level-shift breakout & 1.0 & 3.3 & 3.30 & 5.88 \\
+TT\&C & RFM95W LoRa, receive/listen mode & 10.3 & 3.3 & 32.29 & 57.56 \\
+TT\&C & RFM95W LoRa, transmit +20 dBm & 120.0 & 3.3 & 19.80 & 35.29 \\
+EPS & Pololu U3V40F5 boost regulator, quiescent & 1.5 & 3.7 & 5.55 & 5.55 \\
+EPS & Series losses (MOSFET, fuse) & -- & -- & 20.00 & 20.00 \\
+Payload & Coral Dev Board Micro, idle & 100.0 & 5.0 & 300.00 & 588.24 \\
+Payload & Coral Dev Board Micro, inference active & 600.0 & 5.0 & 150.00 & 176.47 \\
+\bottomrule
+\end{tabular}
+\caption{Power budget: component-level breakdown}
+\end{table}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lr}
+\toprule
+\textbf{Subsystem total} & \textbf{Average power (mW)} \\
+\midrule
+Onboard Computer (OBC) & 60.0 \\
+Command \& Data Handling (CDH) & 252.4 \\
+Tracking, Telemetry \& Command (TT\&C) & 92.9 \\
+Electrical Power Subsystem (EPS) & 25.6 \\
+Payload & 764.7 \\
+\midrule
+\textbf{Total average battery power drawn} & \textbf{1195.5} \\
+\bottomrule
+\end{tabular}
+\caption{Power budget: subsystem totals}
+\end{table}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrp{7cm}}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Note} \\
+\midrule
+Flight duration & 6.0 h & Assumption: ascent, cruise, descent approx. 2 h each \\
+Total average power draw & 1.195 W & \\
+Energy required for full flight & 7.17 Wh & Power $\times$ time \\
+Battery nominal capacity & 25.10 Wh & 2$\times$ Panasonic NCR18650B in parallel: 2 $\times$ 3400 mAh $\times$ 3.7 V \\
+Cold-temperature derate factor & 0.90 & Assumption: 90\% usable capacity; internal box stays near room temperature due to insulation and internal dissipation \\
+Usable battery capacity & 22.59 Wh & Nominal capacity $\times$ derate factor \\
+\midrule
+\textbf{Margin} & \textbf{3.15$\times$} & Usable energy $\div$ energy required; must exceed 1.5$\times$, target over 2$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{Power budget: battery sizing check}
+\end{table}
+
+\subsection{Mass Budget}
+
+\small
+\begin{longtable}{p{1.6cm}p{6cm}rrr}
+\caption{Mass budget: component-level breakdown}
+\label{tab:mass-budget} \\
+\toprule
+\textbf{Subsystem} & \textbf{Component} & \textbf{Qty} & \textbf{Unit mass (g)} & \textbf{Total (g)} \\
+\midrule
+\endfirsthead
+\multicolumn{5}{l}{\tablename\ \thetable{} -- continued from previous page} \\
+\toprule
+\textbf{Subsystem} & \textbf{Component} & \textbf{Qty} & \textbf{Unit mass (g)} & \textbf{Total (g)} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{5}{r}{Continued on next page} \\
+\endfoot
+\bottomrule
+\endlastfoot
+OBC & STM32 Nucleo-64 L476RG board & 1 & 35.05 & 35.05 \\
+\midrule
+\multicolumn{4}{r}{\textbf{OBC total:}} & \textbf{35.05} \\
+CDH & u-blox MAX-M10S GPS breakout & 1 & 6.90 & 6.90 \\
+CDH & u-blox ANN-MB5 GNSS antenna & 1 & 94.50 & 94.50 \\
+CDH & MPU-6050 IMU breakout board & 1 & 3.00 & 3.00 \\
+CDH & MS5607 altimeter breakout & 1 & 3.00 & 3.00 \\
+CDH & SparkFun SD level-shift breakout & 1 & 2.08 & 2.08 \\
+CDH & SanDisk 32 GB microSD card & 1 & 0.25 & 0.25 \\
+\midrule
+\multicolumn{4}{r}{\textbf{CDH total:}} & \textbf{109.73} \\
+TT\&C & Adafruit RFM95W LoRa breakout, flight unit & 1 & 6.00 & 6.00 \\
+TT\&C & EAD BKR868 half-wave dipole antenna & 1 & 15.00 & 15.00 \\
+TT\&C & Taoglas FXP280 flexible FPC antenna (alt.) & 1 & 1.50 & 1.50 \\
+TT\&C & SMA edge-mount RF connector & 1 & 4.76 & 4.76 \\
+\midrule
+\multicolumn{4}{r}{\textbf{TT\&C total (flight mass):}} & \textbf{30.56} \\
+EPS & Panasonic NCR18650B cell & 2 & 45.50 & 91.00 \\
+EPS & Keystone 1049 dual-18650 holder & 1 & 14.24 & 14.24 \\
+EPS & Pololu U3V40F5 regulator PCB & 1 & 2.08 & 2.08 \\
+EPS & SI2301 P-MOSFET reverse-polarity stage & 1 & 0.50 & 0.50 \\
+EPS & 4A PTC resettable fuse (THT) & 1 & 1.00 & 1.00 \\
+EPS & Decoupling capacitors & 2 & 3.00 & 6.00 \\
+EPS+CDH & Perfboard 70$\times$50 mm + discretes & 2 & 12.00 & 24.00 \\
+\midrule
+\multicolumn{4}{r}{\textbf{EPS total:}} & \textbf{138.82} \\
+Payload & Coral Dev Board Micro & 1 & 10.33 & 10.33 \\
+\midrule
+\multicolumn{4}{r}{\textbf{Payload total:}} & \textbf{10.33} \\
+Structure & 1U frame (aluminium COTS or 3D-printed) & 1 & 150.00 & 150.00 \\
+Structure & Closed-cell PE foam insulation & 1 & 12.00 & 12.00 \\
+Structure & M2.5/M3 standoffs and screws & 1 & 15.00 & 15.00 \\
+Structure & Silicone hookup wire 22 AWG & 1 & 15.00 & 15.00 \\
+Structure & Dupont + JST-XH connector kits & 1 & 10.00 & 10.00 \\
+Structure & MG Chemicals 422B conformal coating & 1 & 5.00 & 5.00 \\
+\midrule
+\multicolumn{4}{r}{\textbf{Structure total:}} & \textbf{207.00} \\
+\end{longtable}
+\normalsize
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lr}
+\toprule
+\textbf{Total estimated system mass (flyable)} & \textbf{531.49 g} \\
+\textbf{Total estimated system mass with 15\% margin (flyable)} & \textbf{611.21 g} \\
+\bottomrule
+\end{tabular}
+\caption{Mass budget: total summary}
+\end{table}
+
+\subsection{Link Budget}
+
+\textit{RFM95W LoRa, 868 MHz, SF9, BW 125 kHz}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{6.5cm}rp{5.5cm}}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Note} \\
+\midrule
+Balloon altitude (vertical) & 35 km & Conservative maximum burst altitude \\
+Horizontal drift & 120 km & Average 20 km/h $\times$ 6 h flight, conservative wind estimate \\
+Slant range & 125 km & $\sqrt{\text{altitude}^2 + \text{drift}^2}$ \\
+Transmit power (Tx) & 20 dBm & RFM95W at +20 dBm, 3.3 V \\
+Transmit antenna gain & 2.15 dBi & Half-wave dipole theoretical gain \\
+Transmission line loss & -0.5 dB & SMA connector and PCB trace \\
+\midrule
+\textbf{EIRP} & \textbf{21.65 dBm} & Sum of transmitter-side gains and losses \\
+\midrule
+Frequency & 868 MHz & European ISM band 863--870 MHz \\
+Free-space path loss (FSPL) & -133.15 dB & At 125 km slant range, 868 MHz \\
+Atmospheric absorption & -0.5 dB & O$_2$/H$_2$O and scintillation margin \\
+Polarisation mismatch loss & -3.0 dB & Worst case: gondola tumbles freely \\
+Receive antenna gain & 5.0 dBi & Waveshare WS-24412 omni antenna \\
+Receive cable/connector loss & -0.5 dB & \\
+\midrule
+\textbf{Received signal power (Prx)} & \textbf{-110.50 dBm} & Sum of all gains and losses \\
+Receiver sensitivity (SF9, BW 125 kHz) & -130 dBm & RFM95W datasheet \\
+\midrule
+\textbf{Link margin} & \textbf{19.50 dB} & Prx $-$ receiver sensitivity; positive confirms link closes \\
+\bottomrule
+\end{tabular}
+\caption{Link budget: signal path summary}
+\end{table}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{6.5cm}rp{5.5cm}}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Note} \\
+\midrule
+Thermal noise power & -123.01 dBm & $N = k \times T \times BW$, $T$ = 290 K, $BW$ = 125 kHz \\
+Receiver noise figure (NF) & 6 dB & SX1276 datasheet, at 868 MHz \\
+Total noise floor & -117.01 dBm & Thermal noise + NF \\
+\midrule
+\textbf{Signal-to-Noise Ratio (SNR)} & \textbf{6.51 dB} & Prx $-$ total noise floor \\
+Minimum SNR for BER $<10^{-6}$ & 10.5 dB & From standard BPSK BER curves \\
+LoRa processing gain at SF9 & 27.1 dB & $10 \log_{10}(2^9)$ \\
+\midrule
+\textbf{Effective SNR after processing gain} & \textbf{33.51 dB} & Exceeds 10.5 dB threshold; BER confirmed well below $10^{-6}$ \\
+\bottomrule
+\end{tabular}
+\caption{Link budget: noise and bit error rate analysis}
+\end{table}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lr}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+LoRa data rate (SF9, BW 125 kHz, CR 4/5) & 1758 bps \\
+Required data rate (76-byte packet at 1 packet/20 s) & 30.4 bps \\
+\midrule
+\textbf{Channel utilisation} & \textbf{1.73\%} \\
+\bottomrule
+\end{tabular}
+\caption{Link budget: data rate check}
+\end{table}
+
+\subsection{Data Budget}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lp{4.5cm}rrr}
+\toprule
+\textbf{Data source} & \textbf{Fields logged} & \textbf{Bytes/sample} & \textbf{Rate (Hz)} & \textbf{Rate (bytes/s)} \\
+\midrule
+GPS & Latitude, longitude, altitude, velocity & 16 & 1 & 16 \\
+IMU & Accel X/Y/Z, Gyro X/Y/Z & 12 & 1 & 12 \\
+MS5607 Barometer & Pressure, derived altitude & 8 & 1 & 8 \\
+System & Timestamp, flight phase, battery voltage & 7 & 1 & 7 \\
+Coral payload & Inference result & 16 & 1 & 16 \\
+\midrule
+\textbf{Total} & & \textbf{59} & & \textbf{59} \\
+\bottomrule
+\end{tabular}
+\caption{Data budget: onboard data rate by source}
+\end{table}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrp{5cm}}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Note} \\
+\midrule
+Flight duration & 21{,}600 s & 6 hours \\
+Total raw data & 1.3 MB & 59 bytes/s $\times$ 21{,}600 s \\
+File system overhead (10\%) & 0.13 MB & \\
+Total with overhead & 1.43 MB & \\
+SD card capacity & 32{,}000 MB & \\
+\midrule
+\textbf{Storage margin} & \textbf{$\sim$24{,}600$\times$} & SD capacity $\div$ total data with overhead \\
+\bottomrule
+\end{tabular}
+\caption{Data budget: storage sizing check}
+\end{table}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lr}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Telemetry packet size & 76 bytes \\
+Transmission rate & 1 packet per 20 s \\
+Telemetry data rate & 30.4 bps \\
+LoRa capacity at SF9 & 1758 bps \\
+\midrule
+\textbf{Channel utilisation} & \textbf{1.73\%} \\
+\bottomrule
+\end{tabular}
+\caption{Data budget: telemetry sizing check}
+\end{table}
+
+\textit{Note: all values presented in this section are preliminary. They are based on datasheet figures, measured component weights where available, and engineering assumptions clearly documented in the underlying budget worksheets. Final figures will be updated as hardware is procured, measured, and tested, and as flight duration and mission parameters are confirmed.}

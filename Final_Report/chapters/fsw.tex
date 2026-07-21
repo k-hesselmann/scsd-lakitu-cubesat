@@ -1,6 +1,11 @@
 % !TEX root = ../main.tex
 \chapter{Flight Software}
 
+\textit{Code for this chapter lives under \texttt{firmware-stm32/Core/Src/} --
+\href{\repourl/tree/main/firmware-stm32/Core/Src/fsw}{\texttt{fsw/}} and
+\href{\repourl/tree/main/firmware-stm32/Core/Src/fdir}{\texttt{fdir/}} -- in the
+\href{\repourl}{scsd-lakitu-cubesat} repository.}
+
 \section{Development Workflow}
 
 The firmware was developed collaboratively on GitHub: each feature or
@@ -43,13 +48,14 @@ The flight software's core is a single explicit state machine: one
 authoritative \texttt{FlightPhase\_t} value, advanced by at most one
 transition per cycle of the datapool CDH publishes. The loop currently
 runs CDH and FSW at 10~Hz (100~ms, \texttt{LOOP\_CDH\_FSW\_PERIOD\_MS} in
-\texttt{main.c}). The six phases and the
+\href{\repourl/blob/main/firmware-stm32/Core/Src/main.c}{\texttt{main.c}}). The six phases and the
 physical regime each represents were introduced in
 Table~\ref{tab:fsw-phases}; Figure~\ref{fig:fsw-fsm} gives the complete
 transition graph between them.
 
 \begin{figure}[H]
 \centering
+\resizebox{0.8\textwidth}{!}{%
 \begin{tikzpicture}[
   st/.style={draw, rounded corners=2pt, minimum height=1.0cm,
     minimum width=2.1cm, align=center, fill=blue!6, font=\small},
@@ -78,7 +84,8 @@ transition graph between them.
   \draw[skip] (ascent) to[bend left=30] (descent);
   \node[lbl, align=center, right=0.3cm of landing, yshift=1.0cm]
     {same condition --\\Cruise skipped\\on a fast burst};
-\end{tikzpicture}
+\end{tikzpicture}%
+}
 \caption{FSW flight state machine. Solid arrows are the nominal path;
 each is an OR of two independently-sourced physical cues, held for a
 persistence window, before the transition fires. The dashed arrow is not
@@ -149,7 +156,7 @@ phase until a sensor recovers, rather than guessing.
 
 FDIR is the flight software's single point of fault detection, but it is
 deliberately not a point of hardware access. Every monitor in
-\texttt{docs/FMECA.md} follows the same handling-level model -- contain a
+\href{\repourl/blob/main/firmware-stm32/docs/FMECA.md}{\texttt{docs/FMECA.md}} follows the same handling-level model -- contain a
 fault at the lowest level that can absorb it (driver retry, single-device
 reinit, bus restart, processor reset, system-wide degradation), escalating
 only when the lower level keeps failing -- and every one of those monitors
@@ -176,7 +183,7 @@ L3 & Processor & IWDG reset, SCV persistence across reset & FDIR + hardware \\
 L4 & System & Staged reduced mode: disable one subsystem update per further reset & FDIR policy, FSW executes \\
 \bottomrule
 \end{tabular}
-\caption{FDIR handling levels (\texttt{docs/FMECA.md} \S2). Every monitor in
+\caption{FDIR handling levels (\href{\repourl/blob/main/firmware-stm32/docs/FMECA.md}{\texttt{docs/FMECA.md}} \S2). Every monitor in
 Table~\ref{tab:fsw-fdir-instances} sits at L1 or L2; L3/L4 are the
 system-level backstops in Section~\ref{sec:fsw-reduced-mode}.}
 \label{tab:fsw-fdir-levels}
@@ -248,7 +255,7 @@ Watchdog reset storm & FSW (\texttt{main}) & staged reduced mode, Section~\ref{s
 \end{tabular}
 \caption{One request/execute/acknowledge pattern, six different faults and
 executors. The full monitor-by-monitor specification is in
-\texttt{docs/FMECA.md}.}
+\href{\repourl/blob/main/firmware-stm32/docs/FMECA.md}{\texttt{docs/FMECA.md}}.}
 \label{tab:fsw-fdir-instances}
 \end{table}
 
@@ -329,7 +336,8 @@ fault and enable bitmasks, the watchdog reset count, and the boot count and
 last reset reason. Ownership includes the flash mechanics themselves:
 unlike the datapool backup described in the CDH chapter, which is a
 separate mirror CDH maintains independently, the SCV's load/backup/erase
-logic lives in FDIR's own module (\texttt{fdir/scv.c}) and is called
+logic lives in FDIR's own module
+(\href{\repourl/blob/main/firmware-stm32/Core/Src/fdir/scv.c}{\texttt{fdir/scv.c}}) and is called
 directly from \texttt{FDIR\_Init()} and the superloop, with no CDH
 involvement. \texttt{FDIR\_Init()} restores the newest valid record (a
 16-bit magic word and CRC-16 guard against a blank or corrupt page) before
