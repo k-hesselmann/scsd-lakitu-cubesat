@@ -2,8 +2,25 @@
 #define TTC_TTC_H
 
 #include "datapool.h"
+#include "ttc/lora_driver.h"
 
 #define TTC_TELEMETRY_INTERVAL_MS  20000U
+
+typedef struct
+{
+    uint8_t radio_ready;
+    LoRaStatus_t last_init_status;
+    LoRaStatus_t last_send_status;
+    uint8_t last_lora_version;
+    uint8_t last_irq_flags;
+    uint16_t last_sequence_number;
+    uint16_t last_crc16;
+    uint8_t last_payload_length;
+    uint32_t tx_attempt_count;
+    uint32_t tx_success_count;
+    uint32_t tx_timeout_count;
+    uint32_t tx_error_count;
+} TTCDebugStatus_t;
 
 /* Initialise the TTC state machine. Hardware work is queued, not awaited. */
 void TTC_Init(void);
@@ -30,6 +47,7 @@ void TTC_Transmit(const TelemetryPacket_t *pkt);
  * compact protocol-v8 packet builder. */
 const LoRaHealth_t *TTC_GetHealth(void);
 const UplinkState_t *TTC_GetUplinkState(void);
+void TTC_GetDebugStatus(TTCDebugStatus_t *status);
 
 /* Raw TTC observations for FDIR. These fields are not SCV fields and TTC never
  * writes g_scv; FDIR owns EQUIPMENT_LORA, thresholds and cooldowns. */
