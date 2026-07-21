@@ -1,9 +1,424 @@
 \chapter{Structures}
 
-% TODO(Structures owner): mechanical layout, mounting, thermal/vibration.
-
 \section{Responsibilities}
+
+The structures subsystem is the mechanical backbone of Lakitu: it holds every
+other subsystem -- the Coral payload, the battery pack, the EPS board, the
+OBC, the LoRa radio and its antenna, the GPS module, and the sensor breakouts
+-- in a defined position inside a 1U envelope, and keeps them there through
+ground handling, launch, the stratospheric flight, and a parachute landing.
+Concretely, the subsystem owns five things:
+
+\begin{itemize}
+  \item \textbf{Envelope compliance.} The complete assembly, including every
+        protruding fastener, must fit the gondola's merged 1U payload slot,
+        where one unit is a 100\,mm cube in the CubeSat
+        sense~\cite{cds,kessler}.
+  \item \textbf{Placement.} The structure has to realise placement
+        constraints set by other subsystems: the Coral's camera must look
+        straight down through an unobstructed aperture, the transmitting
+        LoRa antenna must sit as far from the GPS receiver as the stack
+        allows, and the high-dissipation components stay clustered to
+        support the passive thermal concept of the Machine-Learning Payload
+        chapter.
+  \item \textbf{Retention.} Every component must stay seated under vibration
+        and landing shock, without its wiring being pulled loose.
+  \item \textbf{Serviceability.} The platform was assembled, modified, and
+        re-assembled continuously between bench sessions (EPS bring-up on
+        2026-07-07, the endurance run on 2026-07-20), so the structure must
+        come apart and go back together quickly without damage.
+  \item \textbf{Mass.} The structure's own mass must remain a small fraction
+        of the 650\,g flyable-mass ceiling (CR-001).
+\end{itemize}
 
 \section{Interfaces}
 
+The structure touches every subsystem, so its interfaces are mostly
+mechanical hole patterns sized to the boards they carry:
+
+\begin{itemize}
+  \item \textbf{ML payload.} The Coral Dev Board Micro
+        ($65.0 \times 30.0 \times 6.8$\,mm, 10.4\,g~\cite{coralds}) mounts on
+        the dedicated bottom plate, camera facing down through the plate's
+        central aperture (Section~\ref{sec:bottomplate}).
+  \item \textbf{EPS.} The pack of two Panasonic NCR18650B cells
+        (18.5\,mm diameter $\times$ 65.3\,mm, $\approx$48\,g per
+        cell~\cite{ncr}) sits in its own tray on an upper level; at roughly
+        95\,g it is the heaviest single mass on the stack and drives the
+        retention concept (Section~\ref{sec:retention}). The hand-wired EPS
+        perfboard mounts on standoffs.
+  \item \textbf{OBC / CDH.} The Nucleo board and the sensor breakouts mount
+        on standoffs of one uniform height; a separate tray was designed for
+        the SD logger.
+  \item \textbf{TT\&C.} The LoRa module mounts via its own bracket; the
+        antenna is carried by a ring seat in the topmost plate (visible at
+        the top of Figure~\ref{fig:v1assembly}), the point of maximum
+        separation from the GPS module lower in the stack.
+  \item \textbf{Gondola.} The assembled cube slides into the gondola's
+        payload frame, which merges two adjacent 0.5U bays into one 1U
+        slot~\cite{kessler}; a window in the gondola's underside preserves
+        the Coral's optical path (Section~\ref{sec:gondola}).
+\end{itemize}
+
 \section{Design Decisions}
+
+Two structural iterations were built. Both share the same architecture: a
+stacked-plate layout in the CubeSat tradition -- horizontal
+$100 \times 100$\,mm plates carried by four corner columns, one subsystem
+level per plate -- manufactured by fused-deposition 3D printing. FDM was
+chosen for the same reasons the gondola platform itself is
+printed~\cite{kessler}:
+
+\begin{itemize}
+  \item the highly component-specific geometry (pockets, apertures, cable
+        cutouts) would be slow and expensive to machine, but is free in a
+        printed part;
+  \item a printed plate can be re-designed and re-printed between two lab
+        sessions, which the project schedule ultimately depended on;
+  \item printing keeps the structure in the same manufacturing ecosystem as
+        the gondola frame it integrates into.
+\end{itemize}
+
+All plates are printed flat, so the dominant in-plane loads run along the
+deposited layers rather than across them. Printed polymers are strongly
+anisotropic -- for printed PLA, ultimate tensile strength roughly doubles
+when loaded in-plane rather than across layers~\cite{yao} -- and the
+manufacturer's data for both materials used here shows the same trend
+(Table~\ref{tab:materials}). What changed between the iterations is the
+material -- and with it, nearly everything about how well the architecture
+worked.
+
+\subsection{First Iteration: A Compliant TPU Structure}
+
+The first structure (Figure~\ref{fig:v1assembly}) was printed in Bambu TPU
+95A HF, a Shore 95A thermoplastic polyurethane. The reasoning was driven by
+the landing case: a balloon payload ends its flight with a parachute landing
+on unprepared terrain, and the first verification milestone on the horizon
+was a drop test. TPU promised three things:
+
+\begin{itemize}
+  \item \textbf{Toughness without brittleness.} The datasheet lists an
+        elongation at break above 650\,\% and a Charpy impact strength of
+        123.2\,kJ/m$^2$ in-plane (86.3\,kJ/m$^2$ across layers) at
+        27.3\,MPa tensile strength~\cite{tpu}. A structure printed from it
+        cannot crack on impact in any realistic scenario; it deforms and
+        returns.
+  \item \textbf{Built-in vibration isolation.} An elastomeric frame acts as
+        its own isolator between the gondola and the electronics,
+        attenuating what reaches solder joints and connectors.
+  \item \textbf{Cold tolerance.} The manufacturer credits the material with
+        ``impact resistance, flexibility, and cold-temperature
+        resilience''~\cite{tpu} -- relevant on a platform that spends its
+        cruise phase in stratospheric cold.
+\end{itemize}
+
+The retention concept followed the same philosophy
+(Figure~\ref{fig:v1brackets}): instead of seating boards on standoffs, each
+component received an individually modelled bracket -- a conformal pocket
+sized to that component's outline -- so that the part is held over its whole
+footprint, cannot rattle, and is mechanically isolated from its neighbours.
+The layout made three placement calls:
+
+\begin{itemize}
+  \item \textbf{Coral and battery low.} The two heaviest items shared the
+        lowest plate, keeping the centre of mass low, with the camera
+        looking down through a central aperture in the base.
+  \item \textbf{Antenna on top.} The antenna got its own plate at the very
+        top of the stack, carried by the top-plate ring seat.
+  \item \textbf{Maximum antenna--GPS separation.} The stack height between
+        the two is the point: GPS L1 arrives at a minimum specified
+        received power of only $-128.5$\,dBm~\cite{isgps}, while the LoRa
+        transmitter may radiate up to $+14$\,dBm~e.r.p.\ in the EU
+        868\,MHz band~\cite{etsi} -- a disparity of more than 140\,dB.
+        Even out-of-band energy from a transmitter that close can
+        desensitise a GNSS front end, which is why receiver vendors warn
+        against placing GNSS antennas near active
+        transmitters~\cite{ublox}; separation along the stack was the one
+        mitigation available for free.
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.38\textwidth]{v1_assembly.png}
+  \caption{First-iteration (TPU) structure, as designed: a 100\,mm cube of
+  stacked $100 \times 100$\,mm plates on four corner columns, with the
+  antenna ring seat in the top plate and a side cutout for interior access.}
+  \label{fig:v1assembly}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \begin{minipage}[t]{0.24\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{v1_battery_bracket.png}\\
+    \footnotesize (a) battery-pack bracket
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.24\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{v1_coral_bracket.png}\\
+    \footnotesize (b) Coral bracket
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.24\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{v1_lora_bracket.png}\\
+    \footnotesize (c) LoRa bracket
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.24\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{v1_sd_tray.png}\\
+    \footnotesize (d) SD-logger tray
+  \end{minipage}
+  \caption{Per-component conformal brackets of the first iteration, intended
+  to replace standoffs, improve retention, and isolate components from
+  vibration. Bounding dimensions: battery bracket
+  $59.5 \times 97.8 \times 11$\,mm, Coral bracket
+  $65.5 \times 70 \times 7$\,mm, SD tray $90 \times 85.5 \times 8$\,mm.}
+  \label{fig:v1brackets}
+\end{figure}
+
+\subsection{Failure Review of the First Iteration}
+
+Assembled, the TPU structure failed at its most basic job: holding its own
+shape. The cause is visible in one line of the datasheet -- TPU 95A HF has
+a Young's modulus of $9.8 \pm 0.7$\,MPa~\cite{tpu}, roughly 145 times lower
+than the PETG used later ($1420 \pm 160$\,MPa~\cite{petg}). To place both
+numbers (Figure~\ref{fig:modulus}): 9.8\,MPa sits at the bottom edge of the
+0.01--0.1\,GPa range quoted for rubber at small strains~\cite{etb} -- in
+stiffness terms, the plates were sheets of soft rubber -- whereas the PETG
+value is ordinary engineering-plastic territory. Since a plate's bending
+stiffness scales linearly with the modulus, a TPU plate of identical
+geometry carries about two orders of magnitude less flexural rigidity. The
+moment components were bolted down, the fastening preload alone was enough
+to bow the plates: they would not pull flat, would not stay parallel, and
+the stack never closed square under its own assembly forces. Three further
+problems compounded this:
+
+\begin{itemize}
+  \item \textbf{Solder joints were not budgeted.} The through-hole joints
+        protruding beneath the hand-soldered perfboards and breakouts had no
+        clearance in the bracket pockets, so boards rocked on their joints
+        instead of seating flat -- a mechanical and an electrical risk at
+        once.
+  \item \textbf{No wiring volume.} The design reserved no space for the
+        harness. Cables had to be forced between plates and around brackets,
+        and the assembly degenerated into exactly the kind of undefined,
+        strain-loaded mess the brackets were meant to prevent.
+  \item \textbf{Brackets did not fit their components.} The conformal
+        pockets were modelled from nominal component outlines, but several
+        as-built parts -- with headers, connectors, and solder differing
+        from the datasheet drawing -- had different dimensions than
+        expected, so the very feature meant to improve retention prevented
+        installation.
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.86\textwidth]{modulus_comparison.png}
+  \caption{Young's modulus of the two flight materials (dark) against
+  familiar reference materials, log scale. Flight and PLA values from the
+  Bambu Lab technical data sheets~\cite{tpu,petg,plabasic}; reference
+  ranges for rubber, nylon-6, aluminium, and structural steel
+  from~\cite{etb}.}
+  \label{fig:modulus}
+\end{figure}
+
+The iteration was abandoned rather than patched, and its lessons carried
+directly into the second design:
+
+\begin{itemize}
+  \item stiffness is the primary structural requirement -- impact tolerance
+        must come from somewhere else (Section~\ref{sec:gondola});
+  \item retention features must be modelled from measured, as-built
+        component dimensions, including solder and connectors;
+  \item cable routing is a design input, not an afterthought.
+\end{itemize}
+
+\subsection{Second Iteration: Translucent PETG}
+
+The second structure keeps the stacked-plate architecture and re-executes it
+in Bambu PETG Translucent. The material swap buys back the stiffness the
+first iteration lacked -- a Young's modulus of $1420 \pm 160$\,MPa and a
+bending modulus of $1610 \pm 130$\,MPa, roughly half the stiffness of the
+PLA the gondola frame is printed from (Figure~\ref{fig:modulus}) and
+comfortably sufficient for plates of this span -- while remaining moderately
+ductile (elongation at break $8.2 \pm 1.3$\,\%, unnotched Charpy impact
+strength $37.4 \pm 3.3$\,kJ/m$^2$ in-plane) rather than glassy and brittle;
+the datasheet additionally credits the material with resistance to moisture,
+UV, and temperature changes~\cite{petg}, none of which hurts on a platform
+that ends its mission outdoors in an uncontrolled spot. The translucency is
+not cosmetic: with the stack assembled, the interior harness, the seating of
+every board, and the battery retention can be inspected visually between
+tests without opening the structure. Table~\ref{tab:materials} contrasts
+the two structural materials.
+
+\begin{table}[H]
+  \centering
+  \caption{Manufacturer data for the two structural materials (Bambu Lab
+  technical data sheets, ISO 527/178/179 test methods; X--Y denotes
+  in-plane, Z across layers)~\cite{tpu,petg}. See
+  Figure~\ref{fig:modulus} for the moduli in context.}
+  \label{tab:materials}
+  \begin{tabular}{lcc}
+    \toprule
+    Property & TPU 95A HF (v1) & PETG Translucent (v2) \\
+    \midrule
+    Density & 1.22\,g/cm$^3$ & 1.25\,g/cm$^3$ \\
+    Young's modulus (X--Y) & $9.8 \pm 0.7$\,MPa & $1420 \pm 160$\,MPa \\
+    Young's modulus (Z) & $7.4 \pm 0.6$\,MPa & $1230 \pm 140$\,MPa \\
+    Tensile strength (X--Y) & $27.3 \pm 0.8$\,MPa & $33 \pm 4$\,MPa \\
+    Elongation at break (X--Y) & $> 650$\,\% & $8.2 \pm 1.3$\,\% \\
+    Charpy impact, unnotched (X--Y) & 123.2\,kJ/m$^2$ & $37.4 \pm 3.3$\,kJ/m$^2$ \\
+    Glass transition temp. & n/a (elastomer) & 70\,$^\circ$C \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The redesign also reversed the first iteration's retention concept. The
+brackets are gone; in their place:
+
+\begin{itemize}
+  \item \textbf{Uniform-height standoffs.} Every soldered board sits on
+        standoffs of one common height, which provides defined clearance
+        for the solder joints beneath each board (the first iteration's
+        unbudgeted millimetres), seats every component flat regardless of
+        its underside, and standardises fastener lengths across the stack.
+  \item \textbf{As-built hole patterns.} Instead of conformal pockets, each
+        plate carries custom mounting holes matched to the measured hole
+        pattern of its specific component.
+  \item \textbf{Cable-management cutouts.} Dedicated cutouts route the
+        harness between levels along defined paths -- the wiring volume the
+        first iteration never had.
+\end{itemize}
+
+\subsection{Envelope Recovery and the Dedicated Coral Bottom Plate}
+\label{sec:bottomplate}
+
+The first PETG build failed the envelope requirement: with screw heads and
+nuts protruding from the outer faces, the assembly stood 2\,mm proud of the
+100\,mm slot dimension. The violation was resolved by redesigning the bottom
+of the stack. A new bottom plate (Figure~\ref{fig:v2bottom}) hosts only the
+Coral: its footprint is inset to $95 \times 95$\,mm so that all external
+fastener hardware stays inside the 100\,mm envelope, and its central aperture
+frames the camera. The battery pack, which had shared the lowest level with
+the Coral since the first iteration, moved onto an upper level. Splitting
+the two also decouples the optical interface -- which wants a clean, rigid,
+minimal bottom plate directly above the gondola window -- from the heaviest
+and most service-intensive component, which wants access for cable ties and
+frequent removal. (Dimensions quoted in the figure captions of this chapter
+are overall bounding dimensions measured from the project CAD models.)
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.36\textwidth]{v2_bottom_plate.png}
+  \caption{Second-iteration bottom plate: a $95 \times 95$\,mm inset
+  footprint (15\,mm overall height including retention features) recovers
+  the 100\,mm envelope from protruding fastener hardware, hosts only the
+  Coral, and frames the downward-facing camera aperture.}
+  \label{fig:v2bottom}
+\end{figure}
+
+\subsection{Fasteners and Retention}
+\label{sec:retention}
+
+The stack is assembled exclusively with M2.5 nylon machine screws and nuts.
+Nylon was chosen over steel for three reasons:
+
+\begin{itemize}
+  \item \textbf{Electrical safety.} Polyamide fasteners are standard PCB
+        mounting hardware precisely because a dropped or protruding
+        fastener cannot short exposed traces -- and here the screws pass
+        directly beside hand-soldered perfboard undersides.
+  \item \textbf{RF neutrality.} Nylon cannot detune the antennas the way
+        loose metal hardware near a radiating element can, which matters on
+        a structure whose top plate carries the LoRa antenna.
+  \item \textbf{Mass.} At a density of $\approx$1.14\,g/cm$^3$ against
+        $\approx$7.9\,g/cm$^3$ for steel, the full fastener set becomes
+        mass-wise negligible.
+\end{itemize}
+
+The strength penalty is acceptable by a wide margin: published test data
+for molded nylon 6/6 fasteners puts the ultimate tensile load of an M2.5
+screw at roughly 160\,N and nut pull-through at
+$\approx$135\,N~\cite{microplastics}. For scale -- as an illustrative
+figure, not a verified load case -- even if the entire 650\,g flyable mass
+(CR-001) decelerated at 20\,g, the resulting $\approx$128\,N would be
+shared across several fasteners in parallel, each loaded well below its
+single-fastener ultimate load.
+
+The battery pack is the one component where bracket geometry and friction
+were judged insufficient on their own: following the 2026-07-20 endurance
+session, cable ties are being reinstated around the pack and its bracket --
+a retention path that does not depend on the bracket's fit -- so that the
+pack demonstrably stays seated under the vibration environment before the
+flight and drop campaigns.
+
+\section{Gondola Integration}
+\label{sec:gondola}
+
+Lakitu flies inside the reusable gondola platform developed for the
+course~\cite{kessler}: a 3D-printed frame enclosed in a styrofoam insulation
+shroud, whose payload frame merges two adjacent 0.5U bays into the single 1U
+slot the cube occupies. Integration adds two structure-relevant features:
+
+\begin{itemize}
+  \item \textbf{Optical path.} The gondola provides a window at its
+        underside, aligned beneath the payload bay, so the Coral's camera
+        keeps an unobstructed view of the ground through the bottom-plate
+        aperture.
+  \item \textbf{Outboard impact protection.} The impact-tolerance role that
+        the TPU iteration tried to build into the primary structure moves
+        outboard: the styrofoam shroud already absorbs part of the landing
+        energy for the components it encloses~\cite{kessler}, and for the
+        drop test the gondola will additionally be padded externally with
+        sponge material.
+\end{itemize}
+
+This division of labour -- a stiff, dimensionally stable payload structure
+inside a compliant, energy-absorbing vehicle -- is the direct architectural
+conclusion of the first iteration's failure. The gondola platform's own
+9\,m drop test also informs the integration: the structural damage it
+recorded was concentrated where unsecured test masses struck the payload
+frame on impact~\cite{kessler}, which is precisely the failure mode a
+rigidly mounted, fully retained payload avoids.
+
+\section{Verification Status}
+
+Table~\ref{tab:structverif} summarises the verification state of the
+structural design at the time of writing. The assembled second-iteration
+structure carried the full avionics stack through the four-hour
+vacuum-and-freezer endurance run on 2026-07-20; the anomaly that ended the
+run was an avionics hang, with battery, thermal state, and RF link nominal
+at cutoff and no mechanical failure implicated~\cite{anomaly} -- every
+board, connector, and harness remained seated through pump-down, cold soak,
+and recovery handling. The drop test, in the sponge-padded gondola
+configuration described above, is scheduled after this report's deadline;
+its procedure is defined, but its results and any resulting design changes
+cannot be documented here.
+
+\begin{table}[H]
+  \centering
+  \caption{Structures verification summary.}
+  \label{tab:structverif}
+  \begin{tabular}{p{0.28\textwidth}p{0.62\textwidth}}
+    \toprule
+    Item & Status \\
+    \midrule
+    1U envelope (100\,mm slot, incl.\ fasteners) &
+    Closed by design: first PETG build exceeded the slot by 2\,mm at the
+    fastener heads; resolved by the inset $95 \times 95$\,mm bottom plate. \\
+    Component retention and seating &
+    Uniform-height standoffs with as-built hole patterns; held through
+    repeated assembly cycles and the 2026-07-20 endurance run with no
+    mechanical anomalies~\cite{anomaly}. \\
+    Battery retention under vibration &
+    In work: cable ties being reinstated around pack and bracket following
+    the 2026-07-20 session. \\
+    Optical path for the Coral camera &
+    Bottom-plate aperture aligned with the gondola's underside window; to
+    be confirmed at integration ahead of the drop test. \\
+    Landing / impact survival &
+    Planned: drop test in the externally sponge-padded gondola, scheduled
+    after this report's deadline; results not documented here. \\
+    \bottomrule
+  \end{tabular}
+\end{table}

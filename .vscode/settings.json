@@ -1,20 +1,20 @@
 {
   "latex-workshop.latex.recipes": [
     {
-      "name": "tectonic",
-      "tools": ["tectonic"]
+      "name": "latexmk",
+      "tools": ["latexmk"]
     }
   ],
   "latex-workshop.latex.tools": [
     {
-      "name": "tectonic",
-      "command": "tectonic",
+      "name": "latexmk",
+      "command": "latexmk",
       "args": [
-        "-X",
-        "compile",
-        "%DOC%.tex",
-        "--synctex",
-        "--keep-logs"
+        "-synctex=1",
+        "-interaction=nonstopmode",
+        "-file-line-error",
+        "-pdf",
+        "%DOC%"
       ]
     }
   ],
