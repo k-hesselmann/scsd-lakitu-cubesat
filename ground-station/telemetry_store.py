@@ -554,9 +554,25 @@ class TelemetryStore:
 
             return None
 
-    def get_history(self, valid_only=False):
-        """Return copied history, optionally excluding diagnostic/invalid rows."""
+    def get_history(self, valid_only=False, limit=None):
+        """Return copied history, optionally filtered and limited to newest rows."""
         with self.lock:
+            if limit is not None:
+                if limit < 1:
+                    return []
+
+                newest = []
+                for row in reversed(self.history):
+                    if valid_only and row.get("telemetry_valid") is not True:
+                        continue
+
+                    newest.append(dict(row))
+                    if len(newest) >= limit:
+                        break
+
+                newest.reverse()
+                return newest
+
             if valid_only:
                 return [dict(row) for row in self.history
                         if row.get("telemetry_valid") is True]

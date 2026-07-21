@@ -90,6 +90,13 @@ remain unavailable because no onboard producer currently supplies them.
 The radio uses SPI1: PA5/D13 = SCK, PA6/D12 = MISO, and PA7/D11 = MOSI.
 Connect RFM95W NSS to PB6/D10 and RESET to PC7/D9. The SD card uses SPI2.
 
+The normal radio profile on flight and ground is **869.525 MHz, SF8,
+125 kHz bandwidth, coding rate 4/5, 17 dBm PA_BOOST, preamble 8, explicit
+header, payload CRC, and private sync word `0x12`**. A 92-byte frame occupies
+about 287 ms, so the nominal 20-second cadence uses about 1.44% duty cycle;
+three transmissions of the same frame use about 4.31% in the conservative
+retry case. Antenna gain and feeder loss must be included when checking ERP.
+
 
 ### LoRa FDIR
 

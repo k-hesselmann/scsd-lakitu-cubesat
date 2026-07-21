@@ -36,10 +36,14 @@ class BackendConfig:
     history = 1000
     log_dir = "logs"
 
-    frequency_hz = 868000000
-    spreading_factor = 9
+    frequency_hz = 869525000
+    spreading_factor = 8
     sync_word = 0x12
-    tx_power_dbm = 10
+    tx_power_dbm = 17
+
+    # Half-duplex turnaround guard. The flight RFM95 must finish TxDone
+    # processing and enter continuous RX before the ground ACK starts.
+    telemetry_ack_turnaround_s = 0.75
 
     cors_origins = [
         "http://127.0.0.1:5173",
@@ -305,6 +309,7 @@ def send_automatic_downlink_ack(sequence_number: int) -> None:
     try:
         with radio_lock:
             try:
+                time.sleep(CONFIG.telemetry_ack_turnaround_s)
                 ok = current_radio.send_packet(payload, timeout_s=5.0)
             finally:
                 current_radio.start_rx_continuous()
@@ -394,6 +399,7 @@ def backend_status_payload():
             "spreading_factor": CONFIG.spreading_factor,
             "sync_word": CONFIG.sync_word,
             "tx_power_dbm": CONFIG.tx_power_dbm,
+            "telemetry_ack_turnaround_s": CONFIG.telemetry_ack_turnaround_s,
             "telemetry_packet_size": TELEMETRY_PACKET_SIZE,
             "csv_enabled": CONFIG.enable_csv,
             "history": CONFIG.history,
@@ -800,7 +806,7 @@ def api_history(limit: int = 500):
     if limit > 5000:
         limit = 5000
 
-    history = current_store.get_history(valid_only=True)
+    history = current_store.get_history(valid_only=True, limit=limit)
 
     return {
         "count": min(len(history), limit),

@@ -15,13 +15,13 @@ The reduction comes from fixed-point encoding, removing derived and duplicated
 values, and sending decoded Coral results instead of its complete internal
 16-byte block. It does not depend on C compiler padding or bitfields.
 
-At the configured 868 MHz, SF9, 125 kHz, CR 4/5 radio settings, the estimated
+At the configured 869.525 MHz, SF8, 125 kHz, CR 4/5 radio settings, the estimated
 airtime of one explicit-header packet with radio CRC enabled is:
 
 | Layout | Payload | Estimated airtime |
 |---|---:|---:|
-| Current v7 | 155 bytes | 800 ms |
-| Proposed v8 | 92 bytes | 513 ms |
+| Current v7 | 155 bytes | 451 ms |
+| Proposed v8 | 92 bytes | 287 ms |
 
 This is a **41% payload-size reduction** and approximately a **36% airtime
 reduction** per transmission or retry.

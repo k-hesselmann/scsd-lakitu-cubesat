@@ -39,6 +39,8 @@ function formatEventTime(timeIso: string) {
 }
 
 export function TimelinePanel({ events }: { events: TimelineEvent[] }) {
+  const visibleEvents = events.slice(0, 80)
+
   if (events.length === 0) {
     return (
       <div className="flex h-full items-center justify-center rounded-md border text-sm text-muted-foreground">
@@ -49,41 +51,46 @@ export function TimelinePanel({ events }: { events: TimelineEvent[] }) {
 
   return (
     <div className="h-full overflow-auto rounded-md border bg-background">
-      <div className="relative p-3">
-        <div className="absolute bottom-3 left-[25px] top-3 w-px bg-border" />
+      {events.length > visibleEvents.length ? (
+        <div className="sticky top-0 z-20 border-b bg-background/95 px-2 py-1 text-[10px] text-muted-foreground backdrop-blur">
+          Showing newest {visibleEvents.length} of {events.length} events
+        </div>
+      ) : null}
+      <div className="relative p-2">
+        <div className="absolute bottom-2 left-[19px] top-2 w-px bg-border" />
 
-        <div className="space-y-3">
-          {events.map((event) => (
-            <div key={event.id} className="relative flex gap-3">
-              <div className="z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border bg-background">
+        <div className="space-y-1.5">
+          {visibleEvents.map((event) => (
+            <div key={event.id} className="relative flex gap-2">
+              <div className="z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border bg-background [&_svg]:h-3 [&_svg]:w-3">
                 {eventIcon(event.type)}
               </div>
 
-              <div className="min-w-0 flex-1 rounded-md border bg-card p-2">
+              <div className="min-w-0 flex-1 rounded-md border bg-card px-2 py-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="truncate text-sm font-semibold">
+                  <div className="truncate text-xs font-semibold">
                     {event.title}
                   </div>
 
-                  <Badge variant={badgeVariant(event.severity)} className="shrink-0">
+                  <Badge variant={badgeVariant(event.severity)} className="h-4 shrink-0 px-1 text-[9px]">
                     {formatEventTime(event.time_iso)}
                   </Badge>
                 </div>
 
                 {event.description ? (
-                  <div className="mt-1 text-xs text-muted-foreground">
+                  <div className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-muted-foreground">
                     {event.description}
                   </div>
                 ) : null}
 
                 {event.sequence_number !== undefined ? (
-                  <div className="mt-1 text-xs">
+                  <div className="mt-0.5 text-[10px]">
                     Seq: {event.sequence_number}
                   </div>
                 ) : null}
 
                 {event.payload ? (
-                  <div className="mt-1 text-xs">
+                  <div className="mt-0.5 truncate text-[10px]" title={event.payload}>
                     Payload: {event.payload}
                   </div>
                 ) : null}
