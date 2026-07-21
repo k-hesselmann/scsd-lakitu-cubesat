@@ -76,8 +76,11 @@ static void sd_spi_set_prescaler(uint32_t prescaler)
 static void sd_spi_set_high_speed(void)
 {
   /* Initialization must stay below 400 kHz. After the card leaves idle,
-   * raise SPI2 from /256 (312.5 kHz) to /8 (10 MHz at 80 MHz PCLK1). */
-  sd_spi_set_prescaler(SPI_BAUDRATEPRESCALER_8);
+   * raise SPI2 from /256 (312.5 kHz) to /64 (1.25 MHz at 80 MHz PCLK1).
+   * Telemetry logging is a handful of rows/sec, so this keeps plenty of
+   * headroom while cutting SPI clock harmonics by 8x vs. the previous
+   * /8 (10 MHz) setting to reduce radiated EMI near the radio front end. */
+  sd_spi_set_prescaler(SPI_BAUDRATEPRESCALER_64);
 }
 
 static void sd_cs_high(void)
