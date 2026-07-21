@@ -6,6 +6,8 @@ properties that must remain true even when the STM32 build environment is absent
 from pathlib import Path
 
 FIRMWARE = Path(__file__).resolve().parents[2]
+CORE_INC = FIRMWARE / "Core" / "Inc"
+CORE_SRC = FIRMWARE / "Core" / "Src"
 TTC_INC = FIRMWARE / "Core" / "Inc" / "ttc"
 TTC_SRC = FIRMWARE / "Core" / "Src" / "ttc"
 
@@ -117,10 +119,30 @@ def test_flight_radio_profile_is_869525_sf8_17_dbm() -> None:
     assert "{ LORA_ACTION_WRITE, REG_PA_DAC, LORA_PA_DAC_NORMAL }" in source
     assert "{ LORA_ACTION_READ_VERIFY, REG_PA_CONFIG, LORA_PA_CONFIG_17_DBM }" in source
 
+
+def test_sd_recovery_policy_is_owned_by_fdir() -> None:
+    sd_logger = (CORE_SRC / "sd_logger.c").read_text(encoding="utf-8")
+    fdir = (CORE_SRC / "fdir" / "fdir.c").read_text(encoding="utf-8")
+    sd_header = (CORE_INC / "sd_logger.h").read_text(encoding="utf-8")
+
+    assert "SD_LoggerHealth_t" in sd_header
+    assert "SD_Logger_GetHealth" in sd_header
+
+    assert "FDIR_SetEquipmentFault" not in sd_logger
+    assert "FDIR_GetReinitRequests() & EQUIPMENT_SD" in sd_logger
+    assert "FDIR_AcknowledgeReinit(EQUIPMENT_SD)" in sd_logger
+    assert "USER_force_reinitialize();" in sd_logger
+
+    assert "SD_Logger_GetHealth" in fdir
+    assert "FDIR_SetEquipmentFault(EQUIPMENT_SD" in fdir
+    assert "s_reinit_requests |= EQUIPMENT_SD" in fdir
+    assert "FDIR_SD_REINIT_PERIOD_MS" in fdir
+
 if __name__ == "__main__":
     test_driver_has_no_blocking_delay_or_tx_done_wait_loop()
     test_ttc_has_no_scv_or_autonomous_recovery_policy()
     test_fdir_interface_and_queued_operations_are_exposed()
     test_recovery_regressions_have_behavioral_harnesses()
     test_flight_radio_profile_is_869525_sf8_17_dbm()
+    test_sd_recovery_policy_is_owned_by_fdir()
     print("TTC source-contract checks passed")

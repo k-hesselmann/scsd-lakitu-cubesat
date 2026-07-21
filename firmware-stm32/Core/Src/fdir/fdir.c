@@ -3,6 +3,7 @@
 #include "fdir/scv.h"
 #include "fsw/fsm.h"
 #include "main.h"
+#include "sd_logger.h"
 #include "ttc/ttc.h"
 #include <string.h>
 
@@ -24,8 +25,10 @@ static uint16_t s_reinit_requests;
 static uint8_t  s_batt_timeout_count;   /* RAM-only: no SCV field for batt  */
 static uint8_t  s_subsys_enabled[FDIR_SUBSYS_COUNT];
 static uint32_t s_last_bus_restart_ms;
+static uint32_t s_last_sd_reinit_ms;
 static uint32_t s_prev_datapool_timestamp_ms;
 static uint32_t s_stale_since_ms;       /* 0 = datapool timestamp currently advancing */
+static uint8_t  s_prev_sd_consecutive_faults;
 
 /* LoRa TX outcome ring buffer (FMECA T1): tracks the last
  * FDIR_LORA_RECOVERY_WINDOW attempts to evaluate both the recovery and SCV
@@ -109,6 +112,12 @@ static uint8_t FDIR_StaleSeconds(uint32_t now_ms, uint32_t last_ok_ms)
     uint32_t seconds = (now_ms - last_ok_ms) / 1000U;
 
     return (seconds > UINT8_MAX) ? UINT8_MAX : (uint8_t)seconds;
+}
+
+static void FDIR_AddSdFaultEvidence(SCV_t *scv, uint8_t delta)
+{
+    uint16_t total = (uint16_t)scv->sd_fault_count + delta;
+    scv->sd_fault_count = (total > UINT8_MAX) ? UINT8_MAX : (uint8_t)total;
 }
 
 static void FDIR_InitDefaults(SCV_t *scv)
@@ -267,8 +276,10 @@ void FDIR_Init(SCV_t *scv)
     s_reinit_requests = 0U;
     s_batt_timeout_count = 0U;
     s_last_bus_restart_ms = 0U;
+    s_last_sd_reinit_ms = 0U;
     s_prev_datapool_timestamp_ms = 0U;
     s_stale_since_ms = 0U;
+    s_prev_sd_consecutive_faults = 0U;
     memset(&s_lora, 0, sizeof(s_lora));
     for (uint32_t i = 0U; i < FDIR_MONITOR_COUNT; i++)
     {
@@ -308,6 +319,33 @@ static void FDIR_RunMonitor(FDIR_Monitor_t *m, const SCV_t *scv,
     }
 }
 
+static void FDIR_RunSdMonitor(SCV_t *scv, uint32_t now_ms)
+{
+    SD_LoggerHealth_t health;
+    uint8_t faulted;
+
+    SD_Logger_GetHealth(&health);
+
+    if (health.consecutive_faults > s_prev_sd_consecutive_faults)
+        FDIR_AddSdFaultEvidence(scv,
+            (uint8_t)(health.consecutive_faults - s_prev_sd_consecutive_faults));
+    s_prev_sd_consecutive_faults = health.consecutive_faults;
+
+    faulted = ((health.state != SD_LOGGER_ACTIVE) ||
+               (health.last_error != FR_OK) ||
+               (health.consecutive_faults > 0U)) ? 1U : 0U;
+
+    FDIR_SetEquipmentFault(EQUIPMENT_SD, faulted);
+
+    if (faulted &&
+        (scv->equipment_enabled & EQUIPMENT_SD) &&
+        FDIR_CooldownElapsed(now_ms, &s_last_sd_reinit_ms,
+                             FDIR_SD_REINIT_PERIOD_MS))
+    {
+        s_reinit_requests |= EQUIPMENT_SD;
+    }
+}
+
 void FDIR_Update(SensorData_t *dp, SCV_t *scv)
 {
     uint32_t now_ms = HAL_GetTick();
@@ -329,6 +367,9 @@ void FDIR_Update(SensorData_t *dp, SCV_t *scv)
 
     if (dp->batt_valid)
         scv->last_batt_mv = dp->batt_voltage_mv;
+
+    if (s_subsys_enabled[FDIR_SUBSYS_SD])
+        FDIR_RunSdMonitor(scv, now_ms);
 
     /* L2 escalation (FMECA C7): both fast I2C monitors faulted means the
      * shared bus is suspect, not the devices. CDH owns the bus and executes
