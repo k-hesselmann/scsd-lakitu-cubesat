@@ -45,6 +45,8 @@
 /* Superloop scheduling periods. FDIR runs every iteration (ungated). */
 #define LOOP_CDH_FSW_PERIOD_MS  100U   /* CDH + FSW at 10 Hz */
 #define LOOP_SD_PERIOD_MS       1000U  /* SD logging at 1 Hz */
+#define BOARD_BUTTON_DEBOUNCE_MS  50U
+#define BOARD_SCV_RESET_HOLD_MS 1500U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -84,10 +86,18 @@ static void MX_ADC1_Init(void);
 static void SPI1_UserInit(void);
 static void SPI2_UserInit(void);
 static void IWDG_UserInit(void);
+static void BoardButton_Init(void);
+static void BoardButton_Update(uint32_t now_ms);
+static void BoardResetScvAndReboot(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static uint8_t  s_button_last_raw_pressed;
+static uint8_t  s_button_stable_pressed;
+static uint8_t  s_button_reset_armed;
+static uint32_t s_button_last_change_ms;
+static uint32_t s_button_pressed_since_ms;
 
 /* USER CODE END 0 */
 
@@ -120,6 +130,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  BoardButton_Init();
   MX_I2C1_Init();
   MX_USB_DEVICE_Init();
   MX_USART3_UART_Init();
@@ -172,6 +183,8 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     uint32_t now_ms = HAL_GetTick();
+
+    BoardButton_Update(now_ms);
 
     if ((now_ms - last_cdh_fsw_ms) >= LOOP_CDH_FSW_PERIOD_MS)
     {
@@ -529,6 +542,12 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
+  /* B1 is polled by the board service; no EXTI/NVIC handler is required. */
+  GPIO_InitStruct.Pin = B1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pins : PC12 PD2 for UART5 */
   GPIO_InitStruct.Pin = GPIO_PIN_12;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
@@ -547,6 +566,61 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+static uint8_t BoardButton_IsPressed(void)
+{
+  return (HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == GPIO_PIN_RESET) ? 1U : 0U;
+}
+
+static void BoardButton_Init(void)
+{
+  uint32_t now_ms = HAL_GetTick();
+  uint8_t pressed = BoardButton_IsPressed();
+
+  s_button_last_raw_pressed = pressed;
+  s_button_stable_pressed = pressed;
+  s_button_reset_armed = 0U;
+  s_button_last_change_ms = now_ms;
+  s_button_pressed_since_ms = pressed ? now_ms : 0U;
+}
+
+static void BoardButton_Update(uint32_t now_ms)
+{
+  uint8_t raw_pressed = BoardButton_IsPressed();
+
+  if (raw_pressed != s_button_last_raw_pressed)
+  {
+    s_button_last_raw_pressed = raw_pressed;
+    s_button_last_change_ms = now_ms;
+    return;
+  }
+
+  if ((uint32_t)(now_ms - s_button_last_change_ms) < BOARD_BUTTON_DEBOUNCE_MS)
+    return;
+
+  if (raw_pressed != s_button_stable_pressed)
+  {
+    s_button_stable_pressed = raw_pressed;
+    s_button_reset_armed = 0U;
+    s_button_pressed_since_ms = raw_pressed ? now_ms : 0U;
+  }
+
+  if (s_button_stable_pressed &&
+      !s_button_reset_armed &&
+      ((uint32_t)(now_ms - s_button_pressed_since_ms) >= BOARD_SCV_RESET_HOLD_MS))
+  {
+    s_button_reset_armed = 1U;
+    BoardResetScvAndReboot();
+  }
+}
+
+static void BoardResetScvAndReboot(void)
+{
+  (void)HAL_IWDG_Refresh(&hiwdg);
+  SCV_Erase();
+  (void)HAL_IWDG_Refresh(&hiwdg);
+  NVIC_SystemReset();
+}
+
 static void SPI1_UserInit(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
