@@ -44,7 +44,7 @@
 /* USER CODE BEGIN PD */
 /* Superloop scheduling periods. FDIR runs every iteration (ungated). */
 #define LOOP_CDH_FSW_PERIOD_MS  100U   /* CDH + FSW at 10 Hz */
-#define LOOP_SD_PERIOD_MS       1000U  /* SD logging at 1 Hz */
+#define LOOP_SD_PERIOD_MS        100U  /* SD logging at 10 Hz, batched in logger */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
