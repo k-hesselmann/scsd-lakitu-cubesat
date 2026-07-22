@@ -107,9 +107,17 @@ class TelemetryV8DecoderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "expected 92"):
             decode_telemetry_packet(bytes(155))
 
-    def test_previous_protocol_version_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "protocol version: 7"):
-            decode_telemetry_packet(build_v8_packet(protocol_version=7))
+    def test_previous_protocol_version_is_retained_as_invalid_observation(self):
+        packet = decode_telemetry_packet(build_v8_packet(protocol_version=7))
+
+        self.assertFalse(packet.validation_ok)
+        self.assertFalse(packet.protocol_version_ok)
+        self.assertTrue(packet.packet_type_ok)
+
+    def test_stale_uplink_status_is_named(self):
+        packet = decode_telemetry_packet(build_v8_packet(uplink_state=6))
+
+        self.assertEqual(packet.uplink_last_status_name, "STALE")
 
     def test_v8_invalid_sentinels_decode_to_none(self):
         raw = build_v8_packet(

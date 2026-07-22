@@ -181,7 +181,10 @@ typedef enum {
     UPLINK_STATUS_INVALID_FORMAT,
     UPLINK_STATUS_UNSUPPORTED,
     UPLINK_STATUS_DUPLICATE,
-    UPLINK_STATUS_UNEXPECTED_ACK
+    UPLINK_STATUS_UNEXPECTED_ACK,
+    /* Command ID is older than the replay window and was not executed. */
+    UPLINK_STATUS_STALE,
+    UPLINK_STATUS_RATE_LIMITED
 } UplinkStatus_t;
 
 typedef struct __attribute__((packed)) {

@@ -155,6 +155,10 @@ The proposed C definition should use only fixed-width integer members and
 | 3..5 | status of the last telemetry `ACK` using existing `UplinkStatus_t` values |
 | 6..7 | reserved; transmit as zero |
 
+The implemented `UplinkStatus_t` values are `0 NONE`, `1 ACCEPTED`,
+`2 INVALID_FORMAT`, `3 UNSUPPORTED`, `4 DUPLICATE`, `5 UNEXPECTED_ACK`,
+`6 STALE`, and `7 RATE_LIMITED`.
+
 Command ID/status and ACK status must be maintained as independent latches.
 In the current v7 implementation, processing an `ACK` sets
 `last_command_id = 0` and overwrites `last_status`, which can hide a command
@@ -183,6 +187,9 @@ sample; `equipment_faults` describes debounced FDIR health; and
   across every attempt.
 - A telemetry ACK must not overwrite the last command ID or command status.
   Each latch changes only when its own packet class is processed.
+- Operational uplinks are authenticated with a 64-bit SipHash-2-4 tag and a
+  provisioned 128-bit key. Telemetry ACKs include boot count, sequence, and TX
+  uptime so a captured ACK cannot be reused for a later outstanding frame.
 - CRC remains CRC-16/CCITT-FALSE with polynomial `0x1021` and initial value
   `0xFFFF`.
 

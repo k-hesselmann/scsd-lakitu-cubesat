@@ -67,6 +67,8 @@ def test_recovery_regressions_have_behavioral_harnesses() -> None:
     driver_harness = (
         Path(__file__).parent / "test_lora_driver_state_machine.c"
     ).read_text(encoding="utf-8")
+    assert (Path(__file__).parent / "run_host_tests.py").is_file()
+    assert (Path(__file__).parent / "include" / "main.h").is_file()
 
     assert "TTC_ReconcileDriverFault" in ttc_source
     assert "TTC_STATE_ACTION_ISOLATION" in ttc_source
@@ -75,9 +77,14 @@ def test_recovery_regressions_have_behavioral_harnesses() -> None:
     assert "TestStartupFailureCanRecover" in ttc_harness
     assert "TestRxFaultIsRecordedOnce" in ttc_harness
     assert "TestAckRetriesAndNackCounter" in ttc_harness
+    assert "TestCommandReplayDistinguishesDuplicateFromStale" in ttc_harness
+    assert "TestNewCommandsAreRateLimitedWithoutConsumingTheirId" in ttc_harness
+    assert "TestUplinkAuthenticationRejectsTampering" in ttc_harness
+    assert 'Mock_Authenticated("ACK,3,77,456"' in ttc_harness
     assert "TestOversizedObservationIsConsumed" in driver_harness
     assert "TestAbortRejectionStillAllowsRecovery" in driver_harness
     assert "TestAbortTimeoutStillAllowsRecovery" in driver_harness
+    assert "TestCompletedTransferWinsOverDelayedService" in driver_harness
 
 
 def test_flight_radio_profile_is_869525_sf8_17_dbm() -> None:
@@ -92,10 +99,20 @@ def test_flight_radio_profile_is_869525_sf8_17_dbm() -> None:
         "#define LORA_SYNC_WORD            0x12U",
         "#define LORA_PA_CONFIG_17_DBM     0x8FU",
         "#define LORA_PA_DAC_NORMAL        0x84U",
+        "#define LORA_LNA_BOOST_HF         0x23U",
     ):
         assert declaration in source
     assert "{ LORA_ACTION_WRITE, REG_PA_DAC, LORA_PA_DAC_NORMAL }" in source
     assert "{ LORA_ACTION_READ_VERIFY, REG_PA_CONFIG, LORA_PA_CONFIG_17_DBM }" in source
+    assert "{ LORA_ACTION_READ_VERIFY, REG_LNA, LORA_LNA_BOOST_HF }" in source
+
+
+def test_uplink_authentication_key_is_required_at_compile_time() -> None:
+    header = (TTC_INC / "ttc_auth.h").read_text(encoding="utf-8")
+    source = read("ttc_auth.c")
+    assert '#error "Define TTC_AUTH_KEY_0' in header
+    assert '#error "Define TTC_AUTH_KEY_1' in header
+    assert "TTC_AuthVerifyHex" in source
 
 if __name__ == "__main__":
     test_driver_has_no_blocking_delay_or_tx_done_wait_loop()
@@ -103,4 +120,5 @@ if __name__ == "__main__":
     test_fdir_interface_and_queued_operations_are_exposed()
     test_recovery_regressions_have_behavioral_harnesses()
     test_flight_radio_profile_is_869525_sf8_17_dbm()
+    test_uplink_authentication_key_is_required_at_compile_time()
     print("TTC source-contract checks passed")

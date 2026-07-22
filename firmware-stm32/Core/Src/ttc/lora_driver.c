@@ -12,6 +12,7 @@ extern SPI_HandleTypeDef hspi1;
 #define REG_FRF_MID              0x07U
 #define REG_FRF_LSB              0x08U
 #define REG_PA_CONFIG            0x09U
+#define REG_LNA                  0x0CU
 #define REG_FIFO_ADDR_PTR        0x0DU
 #define REG_FIFO_TX_BASE_ADDR    0x0EU
 #define REG_FIFO_RX_BASE_ADDR    0x0FU
@@ -40,6 +41,7 @@ extern SPI_HandleTypeDef hspi1;
 
 #define LORA_SPI_TIMEOUT_MS       100U
 #define LORA_SPI_ABORT_TIMEOUT_MS 100U
+#define LORA_RX_POLL_INTERVAL_MS  10U
 #define LORA_RESET_LOW_MS         10U
 #define LORA_RESET_SETTLE_MS      20U
 #define LORA_SLEEP_SETTLE_MS      10U
@@ -57,6 +59,7 @@ extern SPI_HandleTypeDef hspi1;
 #define LORA_SYNC_WORD            0x12U
 #define LORA_PA_CONFIG_17_DBM     0x8FU
 #define LORA_PA_DAC_NORMAL        0x84U
+#define LORA_LNA_BOOST_HF         0x23U
 
 typedef enum
 {
@@ -109,6 +112,7 @@ static const LoRaAction_t s_init_actions[] =
     { LORA_ACTION_WRITE, REG_PREAMBLE_MSB, 0x00U },
     { LORA_ACTION_WRITE, REG_PREAMBLE_LSB, 0x08U },
     { LORA_ACTION_WRITE, REG_SYNC_WORD, LORA_SYNC_WORD },
+    { LORA_ACTION_WRITE, REG_LNA, LORA_LNA_BOOST_HF },
     { LORA_ACTION_WRITE, REG_PA_DAC, LORA_PA_DAC_NORMAL },
     { LORA_ACTION_WRITE, REG_PA_CONFIG, LORA_PA_CONFIG_17_DBM },
     { LORA_ACTION_WRITE, REG_IRQ_FLAGS, 0xFFU },
@@ -120,6 +124,7 @@ static const LoRaAction_t s_init_actions[] =
     { LORA_ACTION_READ_VERIFY, REG_MODEM_CONFIG_2, LORA_MODEM_CONFIG_2 },
     { LORA_ACTION_READ_VERIFY, REG_MODEM_CONFIG_3, LORA_MODEM_CONFIG_3 },
     { LORA_ACTION_READ_VERIFY, REG_SYNC_WORD, LORA_SYNC_WORD },
+    { LORA_ACTION_READ_VERIFY, REG_LNA, LORA_LNA_BOOST_HF },
     { LORA_ACTION_READ_VERIFY, REG_PA_DAC, LORA_PA_DAC_NORMAL },
     { LORA_ACTION_READ_VERIFY, REG_PA_CONFIG, LORA_PA_CONFIG_17_DBM }
 };
@@ -175,6 +180,7 @@ static LoRaStatus_t s_rx_pending_status = LORA_NO_PACKET;
 static uint8_t s_rx_pending_length;
 static uint32_t s_deadline_ms;
 static uint32_t s_tx_start_ms;
+static uint32_t s_rx_last_poll_ms;
 
 static uint8_t s_spi_tx[LORA_MAX_PAYLOAD + 1U];
 static uint8_t s_spi_rx[LORA_MAX_PAYLOAD + 1U];
@@ -524,6 +530,7 @@ static void LoRa_ServiceRx(void)
 {
     uint8_t error;
     uint8_t irq;
+    uint32_t now = HAL_GetTick();
 
     if (s_action_waiting)
     {
@@ -636,11 +643,14 @@ static void LoRa_ServiceRx(void)
 
     if (s_driver_state == DRIVER_RX_POLL)
     {
+        if (!LoRa_Elapsed(now, s_rx_last_poll_ms, LORA_RX_POLL_INTERVAL_MS))
+            return;
         if (!LoRa_StartRead(REG_IRQ_FLAGS))
         {
             LoRa_SetFault(LORA_SPI_ERROR);
             return;
         }
+        s_rx_last_poll_ms = now;
         s_action_waiting = 1U;
     }
 }
@@ -718,6 +728,7 @@ LoRaStatus_t LoRa_Send(const uint8_t *data, uint8_t length, uint32_t timeout_ms)
     s_action_index = 0U;
     s_action_waiting = 0U;
     s_rx_active = 0U;
+    s_rx_last_poll_ms = HAL_GetTick() - LORA_RX_POLL_INTERVAL_MS;
     s_last_status = LORA_BUSY;
     s_state = LORA_STATE_TRANSMITTING;
     s_driver_state = DRIVER_TX_ACTIONS;
@@ -754,7 +765,20 @@ void LoRa_Service(void)
 
     if (s_spi_active)
     {
-        if (!s_spi_abort_pending && LoRa_Elapsed(now, s_spi_start_ms, LORA_SPI_TIMEOUT_MS))
+        /* Completion is authoritative even when the superloop services the
+         * driver after the nominal timeout. The IRQ may have completed the
+         * transfer on time while unrelated SD/payload work delayed this call. */
+        if (s_spi_complete)
+        {
+            LoRa_Deselect();
+            s_spi_active = 0U;
+            s_spi_complete = 0U;
+            s_spi_finished = 1U;
+            s_spi_result_error = s_spi_error;
+            s_spi_error = 0U;
+        }
+        else if (!s_spi_abort_pending &&
+                 LoRa_Elapsed(now, s_spi_start_ms, LORA_SPI_TIMEOUT_MS))
         {
             if (HAL_SPI_Abort_IT(&hspi1) == HAL_OK)
             {
@@ -769,7 +793,19 @@ void LoRa_Service(void)
             }
         }
 
-        if (s_spi_abort_pending)
+        /* A completion callback can race the timeout branch above. Preserve
+         * the same completion-wins rule before interpreting an abort result. */
+        if (s_spi_active && s_spi_complete)
+        {
+            LoRa_Deselect();
+            s_spi_active = 0U;
+            s_spi_complete = 0U;
+            s_spi_finished = 1U;
+            s_spi_result_error = s_spi_error;
+            s_spi_error = 0U;
+        }
+
+        if (s_spi_active && s_spi_abort_pending)
         {
             if (!s_spi_abort_complete &&
                 !LoRa_Elapsed(now, s_spi_abort_start_ms, LORA_SPI_ABORT_TIMEOUT_MS))
@@ -788,16 +824,7 @@ void LoRa_Service(void)
             s_spi_finished = 1U;
             s_spi_result_error = 1U;
         }
-        else if (s_spi_complete)
-        {
-            LoRa_Deselect();
-            s_spi_active = 0U;
-            s_spi_complete = 0U;
-            s_spi_finished = 1U;
-            s_spi_result_error = s_spi_error;
-            s_spi_error = 0U;
-        }
-        else
+        else if (s_spi_active)
         {
             return;
         }

@@ -17,8 +17,9 @@ export type AlertThresholds = {
 }
 
 export const defaultAlertThresholds: AlertThresholds = {
-  staleTelemetryWarningS: 6,
-  staleTelemetryCriticalS: 12,
+  // Nominal flight telemetry is one packet every 20 s.
+  staleTelemetryWarningS: 30,
+  staleTelemetryCriticalS: 60,
 
   batteryWarningV: 3.5,
   batteryCriticalV: 3.3,
@@ -34,7 +35,7 @@ export const defaultAlertThresholds: AlertThresholds = {
   alarmRepeatS: 8,
 }
 
-const STORAGE_KEY = "mission-alert-thresholds"
+const STORAGE_KEY = "mission-alert-thresholds-v2"
 
 export function loadAlertThresholds(): AlertThresholds {
   try {

@@ -1,0 +1,115 @@
+\chapter{SCV Field Layout and FDIR Specification}
+\label{app:fsw-fdir}
+
+\section{SCV Field Layout}
+
+Full byte-level layout of the \texttt{SCV\_t} structure, referenced from
+Section~\ref{sec:fsw-persistence}. The structure is packed (no padding),
+so its 35-byte size is exactly the sum of its fields; that is 2 bytes
+larger than earlier figures quoted elsewhere in this report, which predate
+\texttt{equipment\_manual\_disable} being added to the struct.
+
+\begin{longtable}{@{}llr p{6.0cm}@{}}
+\caption{\texttt{SCV\_t} field layout (packed, 35~bytes).}
+\label{tab:fsw-scv-fields}\\
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{B} & \textbf{Description} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{l}{\small\itshape Table~\ref{tab:fsw-scv-fields} continued}\\
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{B} & \textbf{Description} \\
+\midrule
+\endhead
+\multicolumn{4}{l}{\textit{Integrity}}\\
+\texttt{magic}                     & \texttt{u16} & 2 & Fixed \texttt{0xCAFE}; guards against a blank or corrupt flash page \\
+\texttt{crc16}                     & \texttt{u16} & 2 & CRC-16 over the whole record, computed once by \texttt{SCV\_Backup()} immediately before programming \\
+\midrule
+\multicolumn{4}{l}{\textit{Boot / reset bookkeeping}}\\
+\texttt{boot\_count}               & \texttt{u32} & 4 & Lifetime boot counter, saturates rather than wraps \\
+\texttt{mission\_elapsed\_ms}      & \texttt{u32} & 4 & Boot-offset-corrected mission time (Section~\ref{sec:fsw-persistence}); 0 while in Standby \\
+\texttt{reset\_reason}             & \texttt{u8}  & 1 & Classified cause of the last reset (\texttt{RESET\_REASON\_*}) \\
+\texttt{watchdog\_reset\_count}    & \texttt{u8}  & 1 & Consecutive watchdog resets; drives staged reduced mode (Table~\ref{tab:fsw-reduced-mode}) \\
+\midrule
+\multicolumn{4}{l}{\textit{Flight state}}\\
+\texttt{flight\_phase}             & \texttt{u8}  & 1 & \texttt{FlightPhase\_t}; the single authoritative phase value (Section~\ref{sec:fsw-fsm}) \\
+\midrule
+\multicolumn{4}{l}{\textit{Equipment policy / health}}\\
+\texttt{equipment\_enabled}        & \texttt{u16} & 2 & Rebuilt from \texttt{EQUIPMENT\_ALL\_NOMINAL} every boot, staged reduced mode and manual disable applied on top \\
+\texttt{equipment\_faults}         & \texttt{u16} & 2 & Live per-equipment fault bitmask, set/cleared by \texttt{FDIR\_SetEquipmentFault()} \\
+\texttt{equipment\_manual\_disable} & \texttt{u16} & 2 & Ground/bench-settable disable mask, persists as-is across boots (Section~\ref{sec:fsw-persistence}) \\
+\midrule
+\multicolumn{4}{l}{\textit{Per-device fault counters}}\\
+\texttt{gps\_timeout\_count}       & \texttt{u8}  & 1 & Seconds since last valid GPS sample, saturated \\
+\texttt{imu\_timeout\_count}       & \texttt{u8}  & 1 & Seconds since last valid IMU sample, saturated \\
+\texttt{baro\_timeout\_count}      & \texttt{u8}  & 1 & Seconds since last valid barometer sample, saturated \\
+\texttt{coral\_timeout\_count}     & \texttt{u8}  & 1 & Seconds since last valid Coral status block, saturated \\
+\texttt{lora\_timeout\_count}      & \texttt{u8}  & 1 & Mirror of TT\&C's consecutive TX-failure count (FMECA T1) \\
+\texttt{lora\_tx\_fault\_counter}  & \texttt{u16} & 2 & Lifetime (not consecutive) failed LoRa TX attempts since boot \\
+\texttt{sd\_fault\_count}          & \texttt{u8}  & 1 & Consecutive failed SD writes/mounts \\
+\midrule
+\multicolumn{4}{l}{\textit{Telemetry carryover}}\\
+\texttt{last\_batt\_mv}            & \texttt{u16} & 2 & Last valid battery reading, mV \\
+\texttt{baro\_ground\_alt\_cm}     & \texttt{i32} & 4 & Standby ground-pressure baseline (exponential average, Section~\ref{sec:fsw-fsm}) \\
+\midrule
+\textbf{Total}                     &              & \textbf{35} & \\
+\bottomrule
+\end{longtable}
+
+\section{FMECA: Processor / FSW Failure Modes}
+
+The Processor/FSW rows of the project FMECA (\texttt{docs/FMECA.md}),
+reproduced here; CDH, TT\&C, payload, and storage failure modes are in the
+same document and not duplicated in this report.
+
+\small
+\begin{longtable}{p{0.5cm}p{1.3cm}p{2.3cm}p{3.1cm}p{3.0cm}p{0.5cm}p{0.5cm}}
+\caption{FMECA: Processor / FSW (owner: FSW/FDIR).}
+\label{tab:fsw-fmeca-processor}\\
+\toprule
+\textbf{\#} & \textbf{Item} & \textbf{Failure mode} & \textbf{Detection} & \textbf{Recovery} & \textbf{Sev} & \textbf{Lvl} \\
+\midrule
+\endfirsthead
+\multicolumn{7}{l}{\small\itshape Table~\ref{tab:fsw-fmeca-processor} continued}\\
+\toprule
+\textbf{\#} & \textbf{Item} & \textbf{Failure mode} & \textbf{Detection} & \textbf{Recovery} & \textbf{Sev} & \textbf{Lvl} \\
+\midrule
+\endhead
+F1 & MCU & Superloop hangs & IWDG, kicked once per loop iff FDIR reports the system healthy enough & Watchdog reset; SCV restores phase/state & 4 & L3 \\
+F2 & MCU & Repeated watchdog resets (boot loop) & Persisted reset count $\geq$ 3 & Staged reduced mode (Table~\ref{tab:fsw-reduced-mode}); FDIR + IWDG kick stay alive & 4 & L4 \\
+F3 & SCV / flash & SCV corrupt or erased & Magic + CRC-16 check on load & Reinitialise defaults; log the event & 2 & L1 \\
+F4 & FSW time & Boot-relative tick used as mission time & Code-review finding, not a runtime monitor & Boot-offset reconstruction from SCV & 2 & --- \\
+\bottomrule
+\end{longtable}
+
+\section{Derived Monitor Specification}
+
+Every row below is one entry in the table-driven \texttt{FDIR\_Update()}
+loop (Figure~\ref{fig:fsw-fdir-loop}), except the escalation rules, which
+stay explicit code.
+
+\small
+\begin{longtable}{p{1.7cm}p{2.0cm}p{1.7cm}p{2.4cm}p{2.4cm}p{2.4cm}}
+\caption{Derived monitor specification (\texttt{docs/FMECA.md} \S4).}
+\label{tab:fsw-fmeca-monitors}\\
+\toprule
+\textbf{Monitor} & \textbf{Signal} & \textbf{Debounce} & \textbf{Recovery request} & \textbf{Executor} & \textbf{Escalation} \\
+\midrule
+\endfirsthead
+\multicolumn{6}{l}{\small\itshape Table~\ref{tab:fsw-fmeca-monitors} continued}\\
+\toprule
+\textbf{Monitor} & \textbf{Signal} & \textbf{Debounce} & \textbf{Recovery request} & \textbf{Executor} & \textbf{Escalation} \\
+\midrule
+\endhead
+GPS no-data & I2C response absent & 30\,s & Protocol reinit, 60\,s cooldown & CDH & Part of I2C bus escalation \\
+IMU timeout & \texttt{imu\_valid} & 3\,s & Reinit, 10\,s cooldown & CDH & With baro fault $\to$ bus restart \\
+Baro timeout & \texttt{baro\_valid} & 3\,s & Reinit, 10\,s cooldown & CDH & With IMU fault $\to$ bus restart \\
+I2C bus & IMU $\wedge$ baro faulted & --- & Bus restart + 9-pulse SCL clear, 10\,s cooldown & CDH & Affects GPS too; SPI buses unaffected \\
+Battery ADC & \texttt{batt\_valid} & 3\,s & None (detection only) & CDH & None -- low risk \\
+Coral timeout & \texttt{coral\_valid} & 5\,s & None (RX-only) & --- & None \\
+SD failures & Consecutive write/mount failures & 3 failures & Remount request & SD logger & Rotate file; never auto-format \\
+LoRa TX & Consecutive / lifetime TX counters & 5 in a row, or $\geq$60\% of 20 & Re-run LoRa init (RST pulse), 10\,s cooldown & TT\&C & None \\
+CDH freshness & Datapool \texttt{timestamp\_ms} stalls & 2 cycles & Bus restart & CDH & Loop hung $\to$ IWDG \\
+Watchdog escalation & Persisted reset count & $\geq$3 at boot & --- & FSW & Enter reduced mode \\
+\bottomrule
+\end{longtable}

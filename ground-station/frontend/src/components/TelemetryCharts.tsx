@@ -14,6 +14,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import type { TelemetryRow } from "@/types/telemetry"
 import { sampleEvenly } from "@/lib/telemetrySeries"
+import { rawFlagIsValid } from "@/lib/telemetryHealth"
 
 function formatTime(value: unknown): string {
   if (typeof value !== "string") return ""
@@ -87,7 +88,22 @@ export function TelemetryCharts({
   compact?: boolean
 }) {
   const chartHistory = useMemo(
-    () => sampleEvenly(history, 180),
+    () => sampleEvenly(history, 180).map((row) => ({
+      ...row,
+      battery_v: rawFlagIsValid(row.batt_valid_raw) ? row.battery_v : null,
+      gnss_altitude_m: rawFlagIsValid(row.gps_valid_raw) ? row.gnss_altitude_m : null,
+      vertical_speed_ms: rawFlagIsValid(row.gps_valid_raw) ? row.vertical_speed_ms : null,
+      ground_speed_ms: rawFlagIsValid(row.gps_valid_raw) ? row.ground_speed_ms : null,
+      baro_pressure_pa: rawFlagIsValid(row.baro_valid_raw) ? row.baro_pressure_pa : null,
+      baro_temperature_c: rawFlagIsValid(row.baro_valid_raw) ? row.baro_temperature_c : null,
+      baro_altitude_m: rawFlagIsValid(row.baro_valid_raw) ? row.baro_altitude_m : null,
+      accel_x_ms2: rawFlagIsValid(row.imu_valid_raw) ? row.accel_x_ms2 : null,
+      accel_y_ms2: rawFlagIsValid(row.imu_valid_raw) ? row.accel_y_ms2 : null,
+      accel_z_ms2: rawFlagIsValid(row.imu_valid_raw) ? row.accel_z_ms2 : null,
+      coral_fraction_percent: rawFlagIsValid(row.coral_valid_raw)
+        ? row.coral_fraction_percent
+        : null,
+    })),
     [history],
   )
   const gridClass = compact

@@ -74,7 +74,9 @@ every handler once before the superloop starts and records the ground
 pressure baseline; \texttt{CDH\_Update(dp, scv)} runs the entire
 acquire-validate-publish cycle for one tick; and
 \texttt{CDH\_RequestBusRestart()} is the single call FDIR uses to ask CDH to
-recover the I2C bus.
+recover the I2C bus -- one instance of the general detect/request/execute/
+acknowledge pattern FDIR uses for every equipment fault, described once in
+the Flight Software chapter (Section~\ref{sec:fsw-fdir}).
 
 \section{Design Decisions}
 
