@@ -7,8 +7,6 @@
 
 #define SD_LOG_ROTATE_SECONDS       60U
 #define SD_LOG_FLUSH_PERIOD_MS    5000U
-#define SD_LOG_REMOUNT_THRESHOLD     3U
-#define SD_LOG_RETRY_DELAY_MS     5000U
 
 typedef enum
 {
@@ -22,8 +20,18 @@ extern volatile FRESULT sd_logger_last_error;
 extern volatile uint32_t sd_logger_session;
 extern volatile uint32_t sd_logger_rows_in_file;
 
+typedef struct
+{
+    SD_LoggerState_t state;
+    FRESULT last_error;
+    uint8_t consecutive_faults;
+    uint32_t last_success_ms;
+    uint8_t file_open;
+} SD_LoggerHealth_t;
+
 void SD_Logger_Init(SCV_t *scv);
 void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv);
 void SD_Logger_Close(void);
+void SD_Logger_GetHealth(SD_LoggerHealth_t *health);
 
 #endif /* SD_LOGGER_H */

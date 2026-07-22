@@ -66,7 +66,7 @@ void CDH_Init(void)
 }
 
 /* ------------------------------------------------------------------ */
-/*  CDH_Update  (called at 1 Hz from the superloop)                   */
+/*  CDH_Update  (called by the 100 ms CDH/FSW scheduler slot)         */
 /* ------------------------------------------------------------------ */
 void CDH_Update(SensorData_t *dp, SCV_t *scv)
 {

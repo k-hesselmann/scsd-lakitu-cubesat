@@ -22,8 +22,8 @@ static uint8_t s_file_open;
 static uint8_t s_fatfs_linked;
 static uint8_t s_consecutive_faults;
 static uint32_t s_file_start_s;
-static uint32_t s_retry_at_ms;
 static uint32_t s_last_flush_ms;
+static uint32_t s_last_success_ms;
 static char s_open_name[SD_LOG_NAME_SIZE];
 static char s_log_buffer[SD_LOG_BUFFER_SIZE];
 static size_t s_log_buffer_used;
@@ -48,19 +48,14 @@ static int32_t scale_float(float value, float scale)
     return (int32_t)(scaled >= 0.0f ? scaled + 0.5f : scaled - 0.5f);
 }
 
-static void sd_set_fault(SCV_t *scv, FRESULT result)
+static void sd_note_successful_sync(void)
 {
-    sd_logger_last_error = result;
-    sd_logger_state = SD_LOGGER_WAITING_RETRY;
-    s_retry_at_ms = HAL_GetTick() + SD_LOG_RETRY_DELAY_MS;
+    s_consecutive_faults = 0U;
+    s_last_success_ms = HAL_GetTick();
+}
 
-    if (s_consecutive_faults < UINT8_MAX)
-        s_consecutive_faults++;
-    if (scv != NULL && scv->sd_fault_count < UINT8_MAX)
-        scv->sd_fault_count++;
-    if (scv != NULL)
-        FDIR_SetEquipmentFault(EQUIPMENT_SD, 1U);
-
+static void sd_drop_filesystem_state(void)
+{
     if (s_file_open)
     {
         (void)f_close(&s_file);
@@ -68,14 +63,24 @@ static void sd_set_fault(SCV_t *scv, FRESULT result)
     }
     s_log_buffer_used = 0U;
     (void)f_mount(NULL, USERPath, 0U);
+    USER_force_reinitialize();
 }
 
-static void sd_set_healthy(SCV_t *scv)
+static void sd_record_fault(FRESULT result)
+{
+    sd_logger_last_error = result;
+    sd_logger_state = SD_LOGGER_WAITING_RETRY;
+
+    if (s_consecutive_faults < UINT8_MAX)
+        s_consecutive_faults++;
+
+    sd_drop_filesystem_state();
+}
+
+static void sd_set_healthy(void)
 {
     sd_logger_last_error = FR_OK;
     sd_logger_state = SD_LOGGER_ACTIVE;
-    if (scv != NULL)
-        FDIR_SetEquipmentFault(EQUIPMENT_SD, 0U);
 }
 
 static uint32_t find_next_session(void)
@@ -121,6 +126,7 @@ static FRESULT flush_buffer(void)
     {
         s_log_buffer_used = 0U;
         s_last_flush_ms = HAL_GetTick();
+        sd_note_successful_sync();
     }
     return result;
 }
@@ -154,6 +160,8 @@ static FRESULT open_new_file(void)
     result = write_all(s_csv_header, (UINT)(sizeof(s_csv_header) - 1U));
     if (result == FR_OK)
         result = f_sync(&s_file);
+    if (result == FR_OK)
+        sd_note_successful_sync();
     return result;
 }
 
@@ -185,12 +193,9 @@ static FRESULT close_and_name_file(void)
     return f_rename(s_open_name, final_name);
 }
 
-static FRESULT mount_and_open(SCV_t *scv)
+static FRESULT mount_and_open(void)
 {
     FRESULT result;
-
-    if (s_consecutive_faults >= SD_LOG_REMOUNT_THRESHOLD)
-        USER_force_reinitialize();
 
     result = f_mount(&USERFatFS, USERPath, 1U);
     if (result != FR_OK)
@@ -199,7 +204,7 @@ static FRESULT mount_and_open(SCV_t *scv)
     sd_logger_session = find_next_session();
     result = open_new_file();
     if (result == FR_OK)
-        sd_set_healthy(scv);
+        sd_set_healthy();
     return result;
 }
 
@@ -213,9 +218,11 @@ void SD_Logger_Init(SCV_t *scv)
         s_fatfs_linked = 1U;
     }
 
-    result = mount_and_open(scv);
+    (void)scv;
+
+    result = mount_and_open();
     if (result != FR_OK)
-        sd_set_fault(scv, result);
+        sd_record_fault(result);
 }
 
 void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
@@ -229,30 +236,31 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
     if (dp == NULL || scv == NULL)
         return;
 
-    if (sd_logger_state != SD_LOGGER_ACTIVE)
+    if ((FDIR_GetReinitRequests() & EQUIPMENT_SD) != 0U)
     {
-        if ((int32_t)(now_ms - s_retry_at_ms) >= 0)
-        {
-            result = mount_and_open(scv);
-            if (result != FR_OK)
-                sd_set_fault(scv, result);
-        }
-        return;
+        sd_drop_filesystem_state();
+        result = mount_and_open();
+        if (result != FR_OK)
+            sd_record_fault(result);
+        FDIR_AcknowledgeReinit(EQUIPMENT_SD);
     }
+
+    if (sd_logger_state != SD_LOGGER_ACTIVE)
+        return;
 
     if ((now_ms / 1000U) - s_file_start_s >= SD_LOG_ROTATE_SECONDS)
     {
         result = close_and_name_file();
         if (result != FR_OK)
         {
-            sd_set_fault(scv, result);
+            sd_record_fault(result);
             return;
         }
         sd_logger_session++;
         result = open_new_file();
         if (result != FR_OK)
         {
-            sd_set_fault(scv, result);
+            sd_record_fault(result);
             return;
         }
     }
@@ -318,7 +326,7 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
 
     if (length <= 0 || (size_t)length >= sizeof(line))
     {
-        sd_set_fault(scv, FR_INVALID_PARAMETER);
+        sd_record_fault(FR_INVALID_PARAMETER);
         return;
     }
 
@@ -327,10 +335,9 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
         result = flush_buffer();
         if (result != FR_OK)
         {
-            sd_set_fault(scv, result);
+            sd_record_fault(result);
             return;
         }
-        s_consecutive_faults = 0U;
     }
 
     memcpy(&s_log_buffer[s_log_buffer_used], line, (size_t)length);
@@ -342,13 +349,9 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
         result = flush_buffer();
         if (result != FR_OK)
         {
-            sd_set_fault(scv, result);
+            sd_record_fault(result);
             return;
         }
-
-        /* Only a completed write/sync proves the recovered path is healthy.
-         * Do not reset this counter merely because mounting/opening succeeded. */
-        s_consecutive_faults = 0U;
     }
 }
 
@@ -357,4 +360,16 @@ void SD_Logger_Close(void)
     (void)close_and_name_file();
     (void)f_mount(NULL, USERPath, 0U);
     sd_logger_state = SD_LOGGER_OFF;
+}
+
+void SD_Logger_GetHealth(SD_LoggerHealth_t *health)
+{
+    if (health == NULL)
+        return;
+
+    health->state = sd_logger_state;
+    health->last_error = sd_logger_last_error;
+    health->consecutive_faults = s_consecutive_faults;
+    health->last_success_ms = s_last_success_ms;
+    health->file_open = s_file_open;
 }
