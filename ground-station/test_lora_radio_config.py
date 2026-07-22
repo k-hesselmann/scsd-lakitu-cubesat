@@ -46,8 +46,45 @@ def test_ground_register_configuration(monkeypatch):
     assert radio.registers[lora_radio.REG_MODEM_CONFIG_2] == 0x84
     assert radio.registers[lora_radio.REG_MODEM_CONFIG_3] == 0x04
     assert radio.registers[lora_radio.REG_SYNC_WORD] == 0x12
+    assert radio.registers[lora_radio.REG_LNA] == lora_radio.LNA_BOOST_HF
     assert radio.registers[lora_radio.REG_PA_DAC] == 0x84
     assert radio.registers[lora_radio.REG_PA_CONFIG] == 0x8F
     assert radio.writes.index((lora_radio.REG_PA_DAC, 0x84)) < radio.writes.index(
         (lora_radio.REG_PA_CONFIG, 0x8F)
     )
+
+
+def test_close_releases_ch347_device():
+    class FakeCH347Device:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class FakeSPIDevice:
+        def __init__(self, device):
+            self.dev = device
+
+    device = FakeCH347Device()
+    radio = RFM95Radio()
+    radio.spi = FakeSPIDevice(device)
+
+    radio.close()
+
+    assert device.closed is True
+    assert radio.spi is None
+
+
+def test_packet_power_includes_negative_snr():
+    snr_db, rssi_dbm = lora_radio.decode_packet_metrics(0xF0, 80)
+
+    assert snr_db == -4.0
+    assert rssi_dbm == -81.0
+
+
+def test_packet_power_does_not_add_positive_snr():
+    snr_db, rssi_dbm = lora_radio.decode_packet_metrics(8, 80)
+
+    assert snr_db == 2.0
+    assert rssi_dbm == -77.0

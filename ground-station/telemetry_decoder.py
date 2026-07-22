@@ -43,6 +43,8 @@ LORA_EVENTS = {
 UPLINK_STATUSES = {
     0: "NONE", 1: "ACCEPTED", 2: "INVALID_FORMAT",
     3: "UNSUPPORTED", 4: "DUPLICATE", 5: "UNEXPECTED_ACK",
+    6: "STALE",
+    7: "RATE_LIMITED",
 }
 LORA_RX_HEALTH = {
     0: "NONE", 1: "ACTIVE", 2: "PACKET_OK", 3: "CRC_ERROR",
@@ -395,10 +397,9 @@ def decode_telemetry_packet(raw: bytes) -> TelemetryPacket:
             f"Invalid telemetry packet length: {len(raw)} bytes; "
             f"expected {TELEMETRY_PACKET_SIZE}"
         )
-    if raw[0] != TELEMETRY_PACKET_TYPE:
-        raise ValueError(f"Unsupported telemetry packet type: {raw[0]}")
-    if raw[1] != TELEMETRY_PROTOCOL_VERSION:
-        raise ValueError(f"Unsupported telemetry protocol version: {raw[1]}; expected 8")
+    # A structurally compatible 92-byte frame is decoded even when its
+    # envelope is unsupported. Callers can log the observation while
+    # validation_ok prevents it from advancing trusted mission state.
     return _decode_v8(raw)
 
 

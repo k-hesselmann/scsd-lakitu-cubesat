@@ -59,7 +59,7 @@ Phases: Standby / Launch / Ascent / Cruise / Descent / Landing (fsm.h).
 | S2 | SD | card full | long mission, log rate | writes fail | log stops | FR_DENIED / free-space check | keep telemetry | accepted low risk (card sized for mission); no rotation policy needed | Landing | 1 | — |
 | S3 | SD | corrupted filesystem after power loss | reset during write | mount fails at boot | no logging this boot | mount result at init | — | never auto-format (destructive); log the event, continue without SD | any | 3 | L2 |
 
-### TTC — LoRa RFM9x (SPI1, downlink only)
+### TTC — LoRa RFM9x (SPI1, bidirectional telemetry/ACK/command link)
 
 Detection and recovery are both implemented: bounded 100 ms SPI timeouts,
 version-register (0x42) check at init, TxDone wait with timeout, and `fdir.c`
@@ -71,7 +71,7 @@ The radio also has a hardware RST line pulsed by `LoRa_Init()`, invoked via
 | # | Item | Failure mode | Possible cause | Local effect | System effect | Detection means | Isolation | Recovery | Worst phase | Sev | Lvl |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | T1 | LoRa | init fails at boot, or send fails / TxDone timeout | SPI fault, module hang | packet not sent, LORA fault set | ground blind | FDIR thresholds TTC_FDIR_GetHealth() → EQUIPMENT_LORA (≥90% of last 10 TX failed) | logging continues | recovery request (reinit bitmask) → `TTC_FDIR_RequestRecovery()` (pulses RST), on ≥5 consecutive failures or ≥60% of last 20, 10 s cooldown | any | 3 | L1 |
-| T2 | LoRa | TX reports OK but nothing radiated | antenna, RF stage | packets lost silently | ground blind | not software-detectable (downlink only, no ACK) | — | accepted risk; mitigate by pre-flight RF range test | any | 3 | — |
+| T2 | LoRa | TX reports OK but no usable frame reaches ground | antenna, RF stage | telemetry ACK absent | degraded or lost ground link | bounded telemetry-ACK timeout and retry counter; cannot distinguish ground outage from RF-stage failure | retain exact frame and retry up to three attempts | pre-flight RF range test; FDIR monitors sustained failures | any | 3 | L1 |
 | T3 | LoRa | driver blocks the superloop | SPI hang | loop stalls | whole FSW hung | already mitigated at L0: all SPI calls bounded (100 ms), TxDone wait bounded (5 s) | — | IWDG backstop (F1) | any | 4 | L0/L3 |
 
 ### Processor / FSW (owner: Andrei)

@@ -1,6 +1,7 @@
 import { MetricCard } from "@/components/MetricCard"
 import { TelemetryCharts } from "@/components/TelemetryCharts"
 import { fmt, formatGnssUtc } from "@/lib/format"
+import { rawFlagIsValid } from "@/lib/telemetryHealth"
 import type { DashboardPageProps } from "@/pages/pageTypes"
 
 const GNSS_FIX_NAMES: Record<number, string> = {
@@ -13,7 +14,9 @@ const GNSS_FIX_NAMES: Record<number, string> = {
 }
 
 export function OverviewPage({ latest, history }: DashboardPageProps) {
-  const fixType = latest?.gnss_fix_type
+  const gpsValid = rawFlagIsValid(latest?.gps_valid_raw)
+  const coralValid = rawFlagIsValid(latest?.coral_valid_raw)
+  const fixType = gpsValid ? latest?.gnss_fix_type : null
   const fixName = typeof fixType === "number"
     ? (GNSS_FIX_NAMES[fixType] ?? `TYPE ${fixType}`)
     : "\u2014"
@@ -35,27 +38,31 @@ export function OverviewPage({ latest, history }: DashboardPageProps) {
         <MetricCard
           title="GNSS Fix"
           value={fixName}
-          subtitle={`${fmt(latest?.gnss_satellites_used)} satellites`}
+          subtitle={
+            gpsValid
+              ? `${fmt(latest?.gnss_satellites_used)} satellites`
+              : "GNSS sample invalid"
+          }
           variant={!latest ? "default" : fixType === 2 || fixType === 3 || fixType === 4 ? "good" : "warning"}
         />
         <MetricCard
           title="GNSS UTC"
-          value={formatGnssUtc(latest?.gnss_utc_sod)}
+          value={formatGnssUtc(gpsValid ? latest?.gnss_utc_sod : null)}
           subtitle="Seconds-of-day field"
         />
         <MetricCard
           title="GNSS Course"
-          value={fmt(latest?.course_deg, "\u00B0", 2)}
+          value={fmt(gpsValid ? latest?.course_deg : null, "\u00B0", 2)}
           subtitle="Course over ground"
         />
         <MetricCard
           title="Coral Cloud Fraction"
-          value={fmt(latest?.coral_fraction_percent, "%", 2)}
+          value={fmt(coralValid ? latest?.coral_fraction_percent : null, "%", 2)}
           subtitle={`Sequence ${fmt(latest?.coral_sequence_low)}`}
         />
         <MetricCard
           title="Coral Result Age"
-          value={fmt(latest?.coral_result_age_s, " s")}
+          value={fmt(coralValid ? latest?.coral_result_age_s : null, " s")}
           subtitle={`Status ${fmt(latest?.coral_status)}`}
         />
       </section>

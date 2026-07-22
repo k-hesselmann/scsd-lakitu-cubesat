@@ -1,4 +1,5 @@
 #include "ttc/ttc.h"
+#include "ttc/ttc_auth.h"
 #include "ttc/lora_driver.h"
 #include "fdir/fdir.h"
 
@@ -19,6 +20,7 @@ _Static_assert(sizeof(TelemetryPacket_t) == TELEMETRY_PACKET_V8_SIZE,
 #define TTC_MAX_TX_ATTEMPTS                3U
 #define TTC_UPLINK_MAX_LENGTH              64U
 #define TTC_COMMAND_REPLAY_WINDOW_SIZE     16U
+#define TTC_COMMAND_MIN_INTERVAL_MS        TTC_TELEMETRY_INTERVAL_MS
 
 typedef enum
 {
@@ -54,7 +56,16 @@ static TTC_FDIR_Action_t s_requested_action;
 static uint16_t s_command_high_water;
 static uint16_t s_command_seen_mask;
 static uint8_t s_has_command_high_water;
+static uint8_t s_has_accepted_command;
+static uint32_t s_last_accepted_command_ms;
 static TTC_State_t s_state;
+
+typedef enum
+{
+    TTC_COMMAND_ID_ACCEPTED = 0,
+    TTC_COMMAND_ID_DUPLICATE,
+    TTC_COMMAND_ID_STALE
+} TTC_CommandIdResult_t;
 
 static void TTC_IncrementU8(uint8_t *value)
 {
@@ -67,18 +78,41 @@ static uint16_t TTC_IncrementU16(uint16_t value)
     return (value < UINT16_MAX) ? (uint16_t)(value + 1U) : value;
 }
 
-static uint8_t TTC_AcceptCommandId(uint16_t command_id)
+static TTC_CommandIdResult_t TTC_ClassifyCommandId(uint16_t command_id)
 {
     uint16_t forward;
     uint16_t age;
     uint16_t bit;
 
     if (!s_has_command_high_water)
+        return TTC_COMMAND_ID_ACCEPTED;
+
+    forward = (uint16_t)(command_id - s_command_high_water);
+    if (forward != 0U && forward < 0x8000U)
+        return TTC_COMMAND_ID_ACCEPTED;
+
+    age = (uint16_t)(s_command_high_water - command_id);
+    if (age >= TTC_COMMAND_REPLAY_WINDOW_SIZE)
+        return TTC_COMMAND_ID_STALE;
+
+    bit = (uint16_t)(1U << age);
+    if ((s_command_seen_mask & bit) != 0U)
+        return TTC_COMMAND_ID_DUPLICATE;
+
+    return TTC_COMMAND_ID_ACCEPTED;
+}
+
+static void TTC_RecordCommandId(uint16_t command_id)
+{
+    uint16_t forward;
+    uint16_t age;
+
+    if (!s_has_command_high_water)
     {
         s_command_high_water = command_id;
         s_command_seen_mask = 1U;
         s_has_command_high_water = 1U;
-        return 1U;
+        return;
     }
 
     forward = (uint16_t)(command_id - s_command_high_water);
@@ -87,25 +121,26 @@ static uint8_t TTC_AcceptCommandId(uint16_t command_id)
         s_command_seen_mask = (forward >= TTC_COMMAND_REPLAY_WINDOW_SIZE) ? 1U :
                               (uint16_t)((s_command_seen_mask << forward) | 1U);
         s_command_high_water = command_id;
-        return 1U;
+        return;
     }
 
     age = (uint16_t)(s_command_high_water - command_id);
-    if (age >= TTC_COMMAND_REPLAY_WINDOW_SIZE)
-        return 0U;
-
-    bit = (uint16_t)(1U << age);
-    if ((s_command_seen_mask & bit) != 0U)
-        return 0U;
-
-    s_command_seen_mask |= bit;
-    return 1U;
+    if (age < TTC_COMMAND_REPLAY_WINDOW_SIZE)
+        s_command_seen_mask |= (uint16_t)(1U << age);
 }
 
 static uint8_t TTC_IntervalElapsed(uint32_t now)
 {
     return (!s_has_transmitted ||
             (uint32_t)(now - s_last_tx_ms) >= TTC_TELEMETRY_INTERVAL_MS) ? 1U : 0U;
+}
+
+static void TTC_RequestCommandResponse(void)
+{
+    /* Uplink traffic must not drive the downlink above its nominal duty-cycle
+     * budget. A response is queued only when the ordinary 20 s slot is due. */
+    if (TTC_IntervalElapsed(HAL_GetTick()))
+        TTC_RequestTelemetry();
 }
 
 static uint8_t TTC_ActionIsActive(void)
@@ -261,25 +296,85 @@ static void TTC_RecordRxError(LoRaStatus_t status)
     TTC_RecordRxModeResult(status);
 }
 
-static uint8_t TTC_ParseAcknowledgement(const uint8_t *data, uint8_t length,
-                                        uint16_t *sequence)
+static uint8_t TTC_ParseDecimalField(const uint8_t *data, uint8_t length,
+                                     uint8_t *index, uint8_t has_separator,
+                                     uint32_t maximum, uint32_t *value)
 {
-    uint32_t value = 0U;
-    uint8_t i;
+    uint32_t parsed = 0U;
+    uint8_t digits = 0U;
+    uint8_t digit;
+    uint8_t i = *index;
 
-    if (length < 5U || length > 9U || memcmp(data, "ACK,", 4U) != 0)
-        return 0U;
-
-    for (i = 4U; i < length; i++)
+    while (i < length && data[i] != (uint8_t)',')
     {
         if (data[i] < (uint8_t)'0' || data[i] > (uint8_t)'9')
             return 0U;
-        value = (value * 10U) + (uint32_t)(data[i] - (uint8_t)'0');
-        if (value > UINT16_MAX)
+        digit = (uint8_t)(data[i] - (uint8_t)'0');
+        if (parsed > (maximum - digit) / 10U)
             return 0U;
+        parsed = (parsed * 10U) + digit;
+        digits++;
+        i++;
     }
 
-    *sequence = (uint16_t)value;
+    if (digits == 0U)
+        return 0U;
+    if (has_separator)
+    {
+        if (i >= length || data[i] != (uint8_t)',')
+            return 0U;
+        i++;
+    }
+    else if (i != length)
+    {
+        return 0U;
+    }
+
+    *index = i;
+    *value = parsed;
+    return 1U;
+}
+
+static uint8_t TTC_ParseAcknowledgement(const uint8_t *data, uint8_t length,
+                                        uint16_t *boot_count,
+                                        uint16_t *sequence,
+                                        uint32_t *tx_uptime_s)
+{
+    uint32_t parsed_boot;
+    uint32_t parsed_sequence;
+    uint32_t parsed_uptime;
+    uint8_t index = 4U;
+
+    if (length < 9U || length > 26U || memcmp(data, "ACK,", 4U) != 0)
+        return 0U;
+    if (!TTC_ParseDecimalField(data, length, &index, 1U,
+                               UINT16_MAX, &parsed_boot) ||
+        !TTC_ParseDecimalField(data, length, &index, 1U,
+                               UINT16_MAX, &parsed_sequence) ||
+        !TTC_ParseDecimalField(data, length, &index, 0U,
+                               UINT32_MAX, &parsed_uptime))
+        return 0U;
+
+    *boot_count = (uint16_t)parsed_boot;
+    *sequence = (uint16_t)parsed_sequence;
+    *tx_uptime_s = parsed_uptime;
+    return 1U;
+}
+
+static uint8_t TTC_VerifyAuthenticatedEnvelope(const uint8_t *data,
+                                                uint8_t length,
+                                                uint8_t *payload_length)
+{
+    uint8_t separator;
+
+    if (length <= (TTC_AUTH_TAG_HEX_LENGTH + 1U))
+        return 0U;
+    separator = (uint8_t)(length - TTC_AUTH_TAG_HEX_LENGTH - 1U);
+    if (data[separator] != (uint8_t)',')
+        return 0U;
+    if (!TTC_AuthVerifyHex(data, separator, &data[separator + 1U]))
+        return 0U;
+    *payload_length = separator;
     return 1U;
 }
 
@@ -314,9 +409,14 @@ static uint8_t TTC_ParseCommandEnvelope(const uint8_t *data, uint8_t length,
     return 1U;
 }
 
-static void TTC_ProcessAcknowledgement(uint16_t acknowledged_sequence)
+static void TTC_ProcessAcknowledgement(uint16_t acknowledged_boot_count,
+                                       uint16_t acknowledged_sequence,
+                                       uint32_t acknowledged_uptime_s)
 {
-    if (s_pending_valid && acknowledged_sequence == s_pending_packet.sequence_number)
+    if (s_pending_valid &&
+        acknowledged_boot_count == s_pending_packet.boot_count_sat &&
+        acknowledged_sequence == s_pending_packet.sequence_number &&
+        acknowledged_uptime_s == s_pending_packet.tx_uptime_s)
     {
         s_uplink.last_ack_status = UPLINK_STATUS_ACCEPTED;
         s_uplink.last_ack_sequence = acknowledged_sequence;
@@ -339,10 +439,24 @@ static void TTC_ProcessUplink(const uint8_t *data, uint8_t length)
     uint16_t value;
     const uint8_t *verb;
     uint8_t verb_length;
+    uint8_t authenticated_length;
+    uint16_t acknowledged_boot_count;
+    uint32_t acknowledged_uptime_s;
+    TTC_CommandIdResult_t command_id_result;
 
-    if (TTC_ParseAcknowledgement(data, length, &value))
+    if (!TTC_VerifyAuthenticatedEnvelope(data, length, &authenticated_length))
     {
-        TTC_ProcessAcknowledgement(value);
+        /* Unauthenticated RF input must not mutate trusted command/ACK state.
+         * Authenticated but malformed envelopes are classified below. */
+        return;
+    }
+    length = authenticated_length;
+
+    if (TTC_ParseAcknowledgement(data, length, &acknowledged_boot_count,
+                                 &value, &acknowledged_uptime_s))
+    {
+        TTC_ProcessAcknowledgement(acknowledged_boot_count, value,
+                                   acknowledged_uptime_s);
         return;
     }
 
@@ -352,23 +466,39 @@ static void TTC_ProcessUplink(const uint8_t *data, uint8_t length)
         {
             s_uplink.last_command = UPLINK_COMMAND_REQUEST_TELEMETRY;
             s_uplink.last_command_id = value;
-            if (!TTC_AcceptCommandId(value))
+            command_id_result = TTC_ClassifyCommandId(value);
+            if (command_id_result == TTC_COMMAND_ID_DUPLICATE)
             {
                 s_uplink.last_command_status = UPLINK_STATUS_DUPLICATE;
             }
+            else if (command_id_result == TTC_COMMAND_ID_STALE)
+            {
+                s_uplink.last_command_status = UPLINK_STATUS_STALE;
+            }
             else
             {
+                uint32_t now = HAL_GetTick();
+                if (s_has_accepted_command &&
+                    (uint32_t)(now - s_last_accepted_command_ms) <
+                    TTC_COMMAND_MIN_INTERVAL_MS)
+                {
+                    s_uplink.last_command_status = UPLINK_STATUS_RATE_LIMITED;
+                    return;
+                }
+                TTC_RecordCommandId(value);
                 s_uplink.last_command_status = UPLINK_STATUS_ACCEPTED;
                 s_uplink.command_count = TTC_IncrementU16(s_uplink.command_count);
+                s_has_accepted_command = 1U;
+                s_last_accepted_command_ms = now;
             }
-            TTC_RequestTelemetry();
+            TTC_RequestCommandResponse();
             return;
         }
 
         s_uplink.last_command = UPLINK_COMMAND_NONE;
         s_uplink.last_command_id = value;
         s_uplink.last_command_status = UPLINK_STATUS_UNSUPPORTED;
-        TTC_RequestTelemetry();
+        TTC_RequestCommandResponse();
         return;
     }
 
@@ -384,7 +514,7 @@ static void TTC_ProcessUplink(const uint8_t *data, uint8_t length)
             (length >= 4U && memcmp(data, "CMD,", 4U) == 0) ?
             UPLINK_STATUS_INVALID_FORMAT : UPLINK_STATUS_UNSUPPORTED;
     }
-    TTC_RequestTelemetry();
+    TTC_RequestCommandResponse();
 }
 
 static void TTC_PollUplink(uint32_t now)
@@ -558,6 +688,8 @@ void TTC_Init(void)
     s_command_high_water = 0U;
     s_command_seen_mask = 0U;
     s_has_command_high_water = 0U;
+    s_has_accepted_command = 0U;
+    s_last_accepted_command_ms = 0U;
     s_state = TTC_STATE_STARTUP_INIT;
     s_action_status.action = TTC_FDIR_ACTION_NONE;
     s_action_status.state = TTC_FDIR_ACTION_IDLE;

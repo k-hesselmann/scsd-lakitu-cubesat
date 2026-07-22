@@ -1,16 +1,15 @@
 # lora_radio.py
 
 import time
-import sys
 
 
 try:
     from ch347api import SPIDevice, SPIClockFreq
-except ImportError:
-    print("ERROR: ch347api is not installed.")
-    print("Run:")
-    print("  py -m pip install ch347api hidapi")
-    sys.exit(1)
+    CH347_IMPORT_ERROR = None
+except ImportError as exc:
+    SPIDevice = None
+    SPIClockFreq = None
+    CH347_IMPORT_ERROR = str(exc)
 
 
 # ============================================================
@@ -54,6 +53,16 @@ MODE_RX_CONTINUOUS       = 0x05
 IRQ_RX_DONE              = 0x40
 IRQ_PAYLOAD_CRC_ERROR    = 0x20
 IRQ_TX_DONE              = 0x08
+LNA_BOOST_HF             = 0x23
+HF_RSSI_OFFSET_DBM       = -157
+
+
+def decode_packet_metrics(raw_snr, raw_rssi):
+    """Return SX1276 packet SNR and packet power for the 779-1020 MHz port."""
+    signed_snr = raw_snr - 256 if raw_snr > 127 else raw_snr
+    snr_db = signed_snr / 4.0
+    rssi_dbm = raw_rssi + HF_RSSI_OFFSET_DBM + min(snr_db, 0.0)
+    return snr_db, rssi_dbm
 
 
 class RFM95Radio:
@@ -83,6 +92,12 @@ class RFM95Radio:
             RFM95 version register = 0x12
         """
 
+        if SPIDevice is None or SPIClockFreq is None:
+            raise RuntimeError(
+                "CH347 support is unavailable. Install ch347api and hidapi "
+                f"before enabling the radio ({CH347_IMPORT_ERROR})."
+            )
+
         self.spi = SPIDevice(
             clock_freq_level=SPIClockFreq.f_468K75,
             is_MSB=True,
@@ -95,6 +110,19 @@ class RFM95Radio:
 
         # Give the CH347/HID interface a moment after opening.
         time.sleep(0.2)
+
+    def close(self):
+        """Close the underlying CH347 HID handle, if it is open."""
+        spi = self.spi
+        self.spi = None
+
+        if spi is None:
+            return
+
+        device = getattr(spi, "dev", None)
+        close = getattr(device, "close", None)
+        if callable(close):
+            close()
 
     def spi_xfer(self, tx_bytes, retries=3):
         if self.spi is None:
@@ -244,8 +272,10 @@ class RFM95Radio:
         # Private LoRa sync word
         self.write_reg(REG_SYNC_WORD, self.sync_word)
 
-        # Improve LNA gain
-        self.write_reg(REG_LNA, self.read_reg(REG_LNA) | 0x03)
+        # Match the flight receiver: maximum manual gain plus HF LNA boost.
+        self.write_reg(REG_LNA, LNA_BOOST_HF)
+        if self.read_reg(REG_LNA) != LNA_BOOST_HF:
+            raise RuntimeError("RFM95W LNA configuration readback failed")
 
         self.set_tx_power_dbm(self.tx_power_dbm)
 
@@ -300,11 +330,7 @@ class RFM95Radio:
         raw_snr = self.read_reg(REG_PKT_SNR_VALUE)
         raw_rssi = self.read_reg(REG_PKT_RSSI_VALUE)
 
-        if raw_snr > 127:
-            raw_snr -= 256
-
-        snr_db = raw_snr / 4.0
-        rssi_dbm = raw_rssi - 157
+        snr_db, rssi_dbm = decode_packet_metrics(raw_snr, raw_rssi)
 
         self.write_reg(REG_IRQ_FLAGS, 0xFF)
 
@@ -319,7 +345,7 @@ class RFM95Radio:
     # TX packet logic, kept for future command/dashboard use
     # ========================================================
 
-    def send_packet(self, payload, timeout_s=5.0):
+    def send_packet(self, payload, timeout_s=5.0, cancel_event=None):
         if isinstance(payload, str):
             payload = payload.encode("ascii")
 
@@ -347,9 +373,12 @@ class RFM95Radio:
 
         self.set_mode(MODE_TX)
 
-        start = time.time()
+        start = time.monotonic()
 
-        while time.time() - start < timeout_s:
+        while time.monotonic() - start < timeout_s:
+            if cancel_event is not None and cancel_event.is_set():
+                self.set_mode(MODE_STDBY)
+                return False
             irq = self.read_reg(REG_IRQ_FLAGS)
 
             if irq & IRQ_TX_DONE:
@@ -357,7 +386,12 @@ class RFM95Radio:
                 self.set_mode(MODE_STDBY)
                 return True
 
-            time.sleep(0.01)
+            if cancel_event is not None:
+                if cancel_event.wait(0.01):
+                    self.set_mode(MODE_STDBY)
+                    return False
+            else:
+                time.sleep(0.01)
 
         self.set_mode(MODE_STDBY)
         return False
