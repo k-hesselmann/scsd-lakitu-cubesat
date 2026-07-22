@@ -46,6 +46,7 @@ SLOT_SIZE = 104
 SLOTS_PER_PAGE = PAGE_SIZE // SLOT_SIZE      # 19
 PAGE_COUNT = NVM_SIZE // PAGE_SIZE           # 52
 RECORD_MAGIC = 0xDA7A
+SNAPSHOT_PERIOD_S = 30
 
 # --- SensorData_t, packed, little-endian (keep in sync with datapool.h) -----
 #   u32 timestamp_ms
@@ -207,7 +208,6 @@ def main():
     ap.add_argument("-o", "--output", default="datapool.csv", help="CSV to write (default: datapool.csv)")
     ap.add_argument("--from-bin", metavar="FILE", help="parse an existing dump instead of reading the board")
     ap.add_argument("--save-bin", metavar="FILE", help="keep the raw flash dump at this path")
-    ap.add_argument("--keep-invalid", action="store_true", help="also report slots that failed magic/CRC")
     args = ap.parse_args()
 
     # --- obtain the raw region -------------------------------------------
@@ -248,10 +248,12 @@ def main():
         return 1
 
     first, last = records[0], records[-1]
-    span_s = (last["timestamp_ms"] - first["timestamp_ms"]) / 1000.0
+    # timestamp_ms is boot-local and can reset after a watchdog/power reset while
+    # seq continues from flash, so derive the span from the record cadence.
+    span_s = max(0, len(records) - 1) * SNAPSHOT_PERIOD_S
     print(f"[parse] seq {first['seq']}..{last['seq']}, "
           f"uptime {first['timestamp_ms'] / 1000.0:.0f}s..{last['timestamp_ms'] / 1000.0:.0f}s "
-          f"({span_s / 60.0:.1f} min of flight)")
+          f"(~{span_s / 60.0:.1f} min at {SNAPSHOT_PERIOD_S}s cadence; uptime resets across reboots)")
     if stats["bad_crc"]:
         print(f"[parse] note: {stats['bad_crc']} slot(s) failed CRC and were dropped "
               "(expected at most one, from a snapshot interrupted by power loss)")
