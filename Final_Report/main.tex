@@ -1,0 +1,80 @@
+\documentclass[12pt,a4paper]{report}
+
+% ---------------------------------------------------------------------------
+% Packages
+% ---------------------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[english]{babel}
+\usepackage{graphicx}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{float}
+\usepackage[colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue]{hyperref}
+
+\graphicspath{{../}{./figures/}}
+\emergencystretch=3em
+\renewcommand{\arraystretch}{1.2}
+
+% Project repository, referenced throughout the report
+\newcommand{\repourl}{https://github.com/k-hesselmann/scsd-lakitu-cubesat}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  columns=fullflexible,
+  frame=single,
+  numbers=none,
+  keywordstyle=\color{blue!60!black}\bfseries,
+  commentstyle=\color{gray},
+  stringstyle=\color{green!40!black},
+  showstringspaces=false,
+}
+
+% ---------------------------------------------------------------------------
+% Title page
+% ---------------------------------------------------------------------------
+\title{%
+  \includegraphics[width=0.35\textwidth]{scsd_lakitu_logo.png}\\[1.5em]
+  Lab Course:\\Spacecraft Computer, Software and Data\\Final Report
+}
+\author{%
+  \small Andrei Arteev \\
+  \small Alisher Orynbek \\
+  \small Alberto S\'anchez Calvo \\
+  \small Frederik Alexander Simon \\
+  \small Angela Ghurburrun \\
+  \small Keval Satish Mohite \\
+  \small Konstantin Hesselmann
+}
+\date{July 2026}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\newpage
+\tableofcontents
+
+% ---------------------------------------------------------------------------
+% Chapters
+% ---------------------------------------------------------------------------
+\input{chapters/introduction}
+\input{chapters/payload}
+\input{chapters/cdh}
+\input{chapters/ttc}
+\input{chapters/obc}
+\input{chapters/eps}
+\input{chapters/fsw}
+\input{chapters/structures}
+
+\end{document}

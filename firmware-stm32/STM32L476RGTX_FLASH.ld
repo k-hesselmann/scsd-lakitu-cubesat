@@ -47,7 +47,11 @@ MEMORY
 {
   RAM    (xrw)    : ORIGIN = 0x20000000,   LENGTH = 96K
   RAM2    (xrw)    : ORIGIN = 0x10000000,   LENGTH = 32K
-  FLASH    (rx)    : ORIGIN = 0x8000000,   LENGTH = 1024K
+  /* Top 106K reserved for non-volatile data, kept out of the firmware image:
+   *   0x080E5800..0x080FF7FF (104K) datapool black-box (cdh/datapool_nvm.c)
+   *   0x080FF800..0x080FFFFF (  2K) SCV persistence      (fdir/scv.c)
+   * 1024K - 106K = 918K usable, ending exactly at 0x080E5800. */
+  FLASH    (rx)    : ORIGIN = 0x8000000,   LENGTH = 918K
 }
 
 /* Sections */

@@ -1,15 +1,18 @@
 # TTC → FDIR functionality reference
 
-Describes the functionality `ttc.c` exposes to FDIR on the `ttc` branch, as of
-the merge with current `main` (branch `ttc-mainsync`). This supersedes the
-"TTC owner" section of `docs/FDIR_INTEGRATION.md`, which still documents the
-older synchronous `TTC_ConsecutiveTxFailures()`/`TTC_SetLoRaFault()` contract
-that this branch replaces. All declarations are in `Core/Inc/ttc/ttc.h`.
+Describes the functionality `ttc.c` exposes to FDIR, as of the merge with
+current `main` (branch `ttc-mainsync`) plus FDIR's subsequent integration.
+This supersedes the "TTC owner" section of `docs/FDIR_INTEGRATION.md`, which
+documented the older synchronous `TTC_ConsecutiveTxFailures()`/
+`TTC_SetLoRaFault()` contract this branch replaced. All declarations are in
+`Core/Inc/ttc/ttc.h`.
 
-**Status: built but not wired up.** `Core/Src/fdir/fdir.c` still calls the old
-`TTC_ConsecutiveTxFailures()` hook, which `ttc.c` no longer defines — the weak
-stub in `fdir_hooks.c` silently returns 0, so today none of the functionality
-below is actually invoked by FDIR. See "Integration gap" at the bottom.
+**Status: wired up.** `fdir.c` polls `TTC_FDIR_GetHealth()` every FDIR cycle,
+derives its own thresholds/failure-rate windows, and requests recovery via the
+shared reinit-request bitmask (`FDIR_GetReinitRequests()`/
+`FDIR_AcknowledgeReinit()`, `EQUIPMENT_LORA`) rather than calling
+`TTC_FDIR_RequestRecovery()` directly — see "Recovery trigger: the reinit
+bitmask" below for why.
 
 ## Design boundary
 
@@ -40,16 +43,43 @@ Fills a snapshot FDIR should poll every cycle:
 | `last_tx_success_ms` | `HAL_GetTick()` value of the most recent successful transmit. |
 | `last_rx_success_ms` | `HAL_GetTick()` value of the most recent CRC-valid received packet. |
 
-These are the raw counters FDIR is expected to threshold and turn into
-`EQUIPMENT_LORA` set/clear decisions, per the "FDIR integration TODOs" in
-`Core/Inc/ttc/FDIR_INTEGRATION.md`.
+These are the raw counters FDIR thresholds into recovery/fault decisions (see
+`fdir.c`'s LoRa block, FMECA T1): recovery trips on
+`consecutive_tx_failures >= FDIR_LORA_TX_FAILURE_LIMIT` (5) or a failure rate
+of at least 60% over the last 20 TX attempts; `EQUIPMENT_LORA` is set once at
+least 90% of the last 10 attempts failed, cleared once that ratio drops.
+`lora_tx_fault_counter` is also mirrored into a new persisted
+`SCV_t.lora_tx_fault_counter` field (flash/SD-log only, not yet in the
+telemetry packet — same deferred-v4 treatment as `lora_timeout_count`). TTC
+itself derives no attempt history; FDIR reconstructs a pass/fail window by
+edge-detecting changes in `lora_tx_fault_counter` and `last_tx_success_ms`
+each cycle (exactly one changes per real TX attempt).
+
+## Recovery trigger: the reinit bitmask, not a direct call
+
+`fdir.c` does not call `TTC_FDIR_RequestRecovery()` (or any `Request*()`)
+directly. Instead, once its policy trips, it sets `EQUIPMENT_LORA` in the same
+`FDIR_GetReinitRequests()` bitmask used for GPS/IMU/BARO reinit and I2C bus
+restart. `TTC_Service()` polls that bit at the top of every call: if set, it
+calls `TTC_FDIR_RequestRecovery()` on itself and immediately calls
+`FDIR_AcknowledgeReinit(EQUIPMENT_LORA)` — fire-and-forget, ignoring the
+returned `TTC_FDIR_Result_t`. This keeps one uniform trigger mechanism across
+every FDIR-requested recovery, at the cost of `ttc.c` now depending on
+`fdir.h` (previously a one-directional FDIR → TTC dependency). The full
+`Request*()`/`GetActionStatus()` API below is otherwise unchanged and remains
+directly callable — the C test harness (`test_ttc_state_machine.c`) still
+exercises it that way, and `TTC_FDIR_RequestIsolation()`/
+`RequestReturnToService()` remain available, unused, for a future give-up
+escalation (see the TODO in `fdir.c`'s LoRa block).
 
 ## Requesting actions
 
 All four request calls are **asynchronous**: a return of `ACCEPTED` only means
 the action was queued, not that it finished. `TTC_Service()` (called every
-superloop tick from `main.c`) advances it; FDIR must poll
-`TTC_FDIR_GetActionStatus()` to see it complete.
+superloop tick from `main.c`) advances it; a caller polling directly (as the
+test harness does) would poll `TTC_FDIR_GetActionStatus()` to see it complete.
+FDIR itself does not poll action status for the LoRa recovery path above — it
+is fire-and-forget.
 
 ```c
 typedef enum {
@@ -99,27 +129,32 @@ diagnostics/telemetry.
 - `TTC_RequestTelemetry()` — queues an out-of-cycle telemetry send; called by
   `FSW_SetPhase()` on every flight-phase change. Not FDIR-related.
 
-## Integration gap (as of this merge)
+## Integration status
 
-`Core/Src/fdir/fdir.c` was not touched by this branch. It still calls the
-pre-existing `TTC_ConsecutiveTxFailures()` hook (declared in
-`Core/Inc/fdir/fdir_hooks.h`), which `ttc.c` no longer implements — the weak
-stub in `fdir_hooks.c` returns 0 unconditionally, so the LoRa monitor in
-`fdir.c` is permanently inert. None of the API above is called from anywhere
-in the firmware yet. Per `Core/Inc/ttc/FDIR_INTEGRATION.md`, the outstanding
-work for the FDIR owner is:
+Closed:
 
-1. Call `TTC_FDIR_GetHealth()` every FDIR cycle instead of
-   `TTC_ConsecutiveTxFailures()`.
-2. Derive and own SCV LoRa fault/NACK counters from the raw snapshot.
-3. Set/clear `EQUIPMENT_LORA` using FDIR-owned thresholds and hysteresis.
-4. Decide isolation / recovery / RX-restart thresholds, retry limits, and any
-   recovery cooldown — TTC deliberately implements none of this policy.
-5. Invoke the appropriate `TTC_FDIR_Request*()` call and monitor its action
-   status to completion.
-6. Have the main-loop owner call `TTC_Service()` more often than the current
-   superloop cadence, since every queued SPI/register step only advances one
-   step per call.
+1. `fdir.c` calls `TTC_FDIR_GetHealth()` every FDIR cycle.
+2. `SCV_t.lora_timeout_count` (consecutive) and the new
+   `SCV_t.lora_tx_fault_counter` (lifetime) are derived and owned by FDIR from
+   the raw snapshot. `nack_counter` is not currently consumed by FDIR (it
+   also always reads 0 on this branch — see the health table above).
+3. `EQUIPMENT_LORA` is set/cleared by FDIR using its own thresholds
+   (`FDIR_LORA_FAULT_WINDOW`/`_FAILS` in `fdir.h`) — previously this bit was
+   never actually set anywhere.
+4. Recovery thresholds/cooldown are FDIR-owned
+   (`FDIR_LORA_TX_FAILURE_LIMIT`, `FDIR_LORA_RECOVERY_WINDOW`/`_FAILS`,
+   `FDIR_REINIT_PERIOD_MS`); TTC still implements none of this policy itself.
+5. The trigger is the reinit bitmask (see above), not a direct
+   `TTC_FDIR_Request*()` call, and is fire-and-forget rather than polled to
+   completion.
+6. `TTC_Service()` is already called unconditionally every superloop
+   iteration in `main.c` (no period gate), satisfying this.
+
+Open:
+
+- Isolation / return-to-service give-up policy (escalate after N recovery
+  attempts with no lasting improvement) — TODO in `fdir.c`'s LoRa block, needs
+  its own persisted retry count and re-arm rule.
 
 Until (1)–(5) land in `fdir.c`, a radio that fails every transmit for the
 whole flight will not be detected or acted on by FDIR.

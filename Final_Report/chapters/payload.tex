@@ -1,0 +1,206 @@
+\chapter{Machine-Learning Payload}
+
+\textit{Code, trained models, and training pipeline for this chapter live
+under \href{\repourl/tree/main/payload}{\texttt{payload/}} in the
+\href{\repourl}{scsd-lakitu-cubesat} repository.}
+
+\section{What the Payload Does}
+
+Lakitu carries a small camera and a dedicated AI chip pointed straight down
+at the ground. Each capture cycle it takes a picture, runs it through a
+small neural network on board, and reduces that picture to a single number:
+how cloudy the sky looks, from 0\% (clear) to 100\% (overcast). Only that
+number goes down the slow radio link -- the picture itself stays archived on
+the SD card. The camera and its AI chip (a Coral Dev Board Micro with a
+Google Edge TPU) form the ML payload; the STM32 OBC treats it as just
+another sensor polled over a serial link.
+
+The flight exists to prove exactly two things, and nothing more:
+
+\begin{enumerate}
+  \item \textbf{Shrink what has to be downlinked.} A raw frame is
+  $\sim$50~KB, far more than the LoRa budget can carry; reducing it to a
+  2-byte fraction on board is a $\sim$25{,}000:1 data reduction. Raw imagery
+  is never downlinked, only archived.
+  \item \textbf{Prove an Edge TPU survives and performs on a CubeSat-class
+  platform.} A commercial, off-the-shelf AI accelerator never designed for
+  spaceflight is asked to run continuous inference within a 1U CubeSat's
+  power, thermal, mass, and bandwidth budget -- the claim is about
+  integration, not about the cloud model being scientifically novel.
+\end{enumerate}
+
+\section{Proof-of-Concept Scope}
+
+The PoC draws a hard boundary: the payload runs inference, produces
+structured output, and hands it to the OBC over UART; packetization, LoRa
+transmission, and ground reception belong to the OBC and TT\&C subsystems.
+The engineering claim under test -- a commercial edge accelerator performing
+useful on-board visual inference within a 1U CubeSat's envelope, delivering
+structured output into the standard telemetry stream -- is treated as
+falsifiable: Table~\ref{tab:payload-failure} lists the conditions under
+which it fails.
+
+\subsection{Minimum Demonstration}
+
+The PoC counts as proven only if all four conditions below hold together.
+The payload owns 1, 3, and 4 directly; 2 depends jointly on the OBC and
+TT\&C link, so the OBC's SD archive (keyed by the same sequence number, SEQ,
+as the downlink) is the fallback verification path if the downlink fails.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lp{9cm}}
+\toprule
+\textbf{Criterion} & \textbf{What it means} \\
+\midrule
+Autonomous inference & Continuous output through the flight, no ground
+intervention, at the configured cadence. \\
+End-to-end downlink & Fraction records received and decoded correctly on the
+ground via the OBC and TT\&C chain. \\
+Within envelope & Power draw inside the EPS allocation; interior above
+0\textdegree{}C; no thermal shutdown or throttling. \\
+Verifiable against ground truth & Downlinked/archived cloud fraction agrees
+with the archived source frame at a documented accuracy, post-flight. \\
+\bottomrule
+\end{tabular}
+\caption{PoC minimum demonstration criteria}
+\end{table}
+
+\subsection{Failure Conditions}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{4.5cm}p{5cm}l}
+\toprule
+\textbf{Failure mode} & \textbf{Diagnosis} & \textbf{Attribution} \\
+\midrule
+No inference output produced & Coral, camera, or inference pipeline did not
+run end-to-end & ML payload \\
+Inference produced but not delivered to OBC & Coral output stage or UART
+interface failed & ML payload \\
+Inference delivered but not received on ground & OBC packetization, TT\&C
+transmission, or ground reception failed & OBC / TT\&C / ground \\
+Envelope exceeded (shutdown/throttle) & Power, thermal, or compute budget was
+misjudged & ML payload \\
+Output disagrees with ground truth & Incorrect inference, or data corrupted
+in transit & ML payload / downstream \\
+\bottomrule
+\end{tabular}
+\caption{PoC failure conditions and attribution}
+\label{tab:payload-failure}
+\end{table}
+
+\subsection{Why a TPU at All}
+
+The Edge TPU's value in this PoC is sustained inference throughput inside
+the platform's power envelope, not enabling a task that would otherwise be
+impossible on a CPU. Edge TPU inference latency for a MobileNet-class model
+is on the order of milliseconds, so the model runs well inside each capture
+cycle with margin to spare -- CPU-only inference at the same cadence would
+draw more power per inference and erode the EPS budget instead.
+
+\section{Implementation}
+
+\subsection{Model: Two Candidates, One Deployed}
+
+Two model formulations were trained on the same 95-Cloud / 38-Cloud
+satellite imagery dataset: a \textbf{3-class classifier}
+(\texttt{clear}/\texttt{overcast}/\texttt{partial}) and a
+\textbf{continuous regressor} producing a single sigmoid cloud-fraction
+output in $[0,1]$. The regressor was selected for flight -- strictly more
+informative at the same output cost, and it keeps the telemetry field
+(\texttt{fraction $\times$ 65535}) simple rather than needing a class enum.
+The classifier pipeline remains in the repository but is not built into the
+flight firmware.
+
+Both share a MobileNet-class CNN backbone. The regressor is trained with
+quantization-aware training (QAT) rather than plain post-training
+quantization, then compiled for the Edge TPU; the deployed artifact is
+committed directly under
+\href{\repourl/blob/main/payload/coral/models/cloud_regressor_qat_int8_edgetpu.tflite}{\texttt{payload/coral/models/cloud\_regressor\_qat\_int8\_edgetpu.tflite}}
+(an exception to the repo's usual \texttt{*.tflite} ignore rule) so the
+firmware builds without regenerating the model.
+
+\subsection{Training Pipeline}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Stage} & \textbf{Artifact / tool} \\
+\midrule
+Raw imagery & 95-Cloud / 38-Cloud dataset
+(\href{\repourl/tree/main/payload/data}{\texttt{payload/data/}}, not
+tracked) \\
+Class dataset build &
+\href{\repourl/blob/main/payload/training/build_cloud_classes.py}{\texttt{training/build\_cloud\_classes.py}}
+\\
+Training &
+\href{\repourl/blob/main/payload/training/notebooks/train_cloud_regressor.ipynb}{\texttt{training/notebooks/train\_cloud\_regressor.ipynb}}
+(Keras) \\
+Quantization & QAT $\rightarrow$ int8 TFLite \\
+Edge TPU compile & \texttt{edgetpu\_compiler} \\
+Flight artifact &
+\href{\repourl/tree/main/payload/coral/models}{\texttt{coral/models/*\_edgetpu.tflite}}
+(tracked) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Coral Firmware}
+
+The flight firmware
+(\href{\repourl/blob/main/payload/coral/src/cloud_regressor.cc}{\texttt{payload/coral/src/cloud\_regressor.cc}})
+is an
+out-of-tree \texttt{coralmicro} application (FreeRTOS on the M7 core). Per
+cycle it captures a 224$\times$224 grayscale frame, invokes the int8 model
+on the Edge TPU via an 8~MB tensor arena in SDRAM, and sends the result to
+the OBC. Two bring-up findings are worth noting:
+
+\begin{itemize}
+  \item \textbf{UART6 is polled, not interrupt-driven.} The
+  \texttt{coralmicro} fork moves the M7 debug console off LPUART6 onto
+  LPUART7 to free the UART6 header for the OBC link; since the vendor's
+  interrupt-driven driver still dispatches through per-instance state that
+  is null for LPUART6 once the console moves, an LPUART6 interrupt would
+  hard-fault, so the OBC link is polled I/O only.
+  \item \textbf{SEQ survives reboots}, persisted to \texttt{/cloud\_seq}
+  after every capture, so a mid-flight reset does not collide with
+  already-archived frames on the OBC's SD card.
+\end{itemize}
+
+An unrecoverable initialisation failure triggers a self-reboot after a fixed
+delay (\texttt{FatalRestart}) rather than hanging -- there is no one in orbit
+to press reset. Debug-only tooling (HTTP/RPC image preview, burst capture)
+is flagged in
+\href{\repourl/blob/main/payload/coral/docs/TODO.md}{\texttt{docs/TODO.md}}
+for removal before flight and does not
+ship on the UART data path.
+
+\subsection{Wire Interface}
+
+Every cycle the payload sends one image packet to the OBC over UART6 at
+115200~baud, 8N1: the full 224$\times$224 grayscale frame, the 2-byte cloud
+fraction, and the sequence number, CRC-16 protected. The OBC archives the
+frame to SD keyed by SEQ and forwards only the fraction record to the
+downlink. The byte-level framing is the authoritative UART Protocol
+Specification in
+\href{\repourl/blob/main/interface_docs/UART_PROTOCOL.md}{\texttt{interface\_docs/UART\_PROTOCOL.md}},
+not reproduced here.
+
+\section{Thermal Envelope}
+
+The payload carries its own requirement, distinct from the rest of the
+platform: the Coral's interior must stay above 0\textdegree{}C throughout
+the flight (MR-009 scopes this floor to the payload specifically). Passive
+insulation alone cannot hold that floor through the night-cruise cold case;
+a small thermostatic survival heater ($\sim$2--3~W) was evaluated as a
+mitigation. Its cost is quantified in the EPS chapter: at 2.5~W and 30\%
+duty the platform's power margin falls from $\sim$3.1$\times$ to
+$\sim$1.9$\times$ -- still clear of the 1.5$\times$ floor.
+
+Given the limited time before flight, the team chose passive-only thermal
+management for this iteration and mitigated the risk by placement instead:
+every high-internal-heat component (boost converter, batteries, Coral) sits
+close together so the platform's own dissipation stays concentrated. This is
+a managed risk -- the heater remains budgeted as a fallback, and the
+freezer/vacuum session validates whether passive-only holds in practice.

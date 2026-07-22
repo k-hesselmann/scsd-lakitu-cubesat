@@ -4,6 +4,7 @@
 #include "cdh/ms5607_equipment_handler.h"
 #include "cdh/gps_equipment_handler.h"
 #include "cdh/battery_adc.h"
+#include "cdh/datapool_nvm.h"
 #include "cdh/cdh_debug.h"
 #include "cdh/cdh_fdir.h"
 #include "cdh/coral.h"
@@ -37,6 +38,7 @@ void CDH_Init(void)
 
     Coral_Init();   /* UART5 already init by MX_UART5_Init() in main.c */
 
+    DatapoolNVM_Init();   /* internal-flash backup of the SD housekeeping log */
 }
 
 /* ------------------------------------------------------------------ */
@@ -112,6 +114,13 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
     dp->batt_valid = BatteryADC_Read(&hadc1, &dp->batt_voltage_mv);
 
     Coral_Update(dp);
+
+    /* Periodically mirror the finished datapool to on-chip flash: a
+     * redundant, SD-independent copy that survives an SD-card failure
+     * (rate-limited to DATAPOOL_NVM_PERIOD_MS for flash endurance). Runs
+     * unconditionally, so it captures the datapool -- validity flags and all
+     * -- regardless of sensor or SD health. */
+    DatapoolNVM_Update(dp);
 }
 
 /* ------------------------------------------------------------------ */

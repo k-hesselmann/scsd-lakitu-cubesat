@@ -1,5 +1,6 @@
 #include "ttc/ttc.h"
 #include "ttc/lora_driver.h"
+#include "fdir/fdir.h"
 
 #include "main.h"
 #include "usbd_cdc_if.h"
@@ -570,6 +571,16 @@ void TTC_Service(void)
 {
     LoRaStatus_t status;
     uint32_t now = HAL_GetTick();
+
+    /* Consume FDIR-requested LoRa recovery (FMECA T1). Fire-and-forget: the
+     * TTC_FDIR_Result_t is ignored, ack happens on acceptance, not on
+     * completion — TTC_FDIR_RequestRecovery() is idempotent while a recovery
+     * is already pending/in-progress. */
+    if (FDIR_GetReinitRequests() & EQUIPMENT_LORA)
+    {
+        (void)TTC_FDIR_RequestRecovery();
+        FDIR_AcknowledgeReinit(EQUIPMENT_LORA);
+    }
 
     LoRa_Service();
 

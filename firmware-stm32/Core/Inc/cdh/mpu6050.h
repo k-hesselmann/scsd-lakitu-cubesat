@@ -19,6 +19,9 @@ typedef struct {
   float gyro_x;
   float gyro_y;
   float gyro_z;
+  /* 1 only if this sample came from a successful I2C transaction. Callers must
+   * check it: a failed read returns a zeroed struct, never stale data. */
+  uint8_t valid;
 } MPU6050_Data;
 
 void MPU6050_Init(I2C_HandleTypeDef *hi2c);

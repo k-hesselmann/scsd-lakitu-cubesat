@@ -6,18 +6,24 @@
 #include <stdbool.h>
 
 #define MPU6050_DATA_READ_INTERVAL 100
-#define MPU6050_SENSOR_CHECK_INTERVAL_MS 2000
 #define MPU6050_FLATLINE_THRESHOLD 0.01f
 #define MPU6050_FLATLINE_COUNT_LIMIT 10
+/* Consecutive failed I2C reads before the IMU is declared invalid. At the
+ * 100 ms read interval this is a ~0.3 s outage, short enough to catch bus
+ * trouble but long enough to ride out a single collided transaction. */
+#define MPU6050_READ_FAULT_LIMIT 3
 
 typedef struct {
   MPU6050_Data data;
   MPU6050_Data last_data;
   uint8_t imu_valid;
   uint32_t last_good_data_ms;
-  uint32_t last_sensor_check_ms;
   uint32_t last_data_read_ms;
   uint32_t flatline_count;
+  /* Consecutive failed I2C reads (reset by any successful read). Distinct from
+   * flatline_count: this counts the bus refusing to talk, that one counts the
+   * sensor returning unchanging data. */
+  uint32_t read_fault_count;
 } MPU6050_EquipmentHandler;
 
 MPU6050_EquipmentHandler MPU6050_EquipmentHandler_Init(I2C_HandleTypeDef *hi2c);

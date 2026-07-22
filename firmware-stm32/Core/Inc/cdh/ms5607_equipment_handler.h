@@ -6,20 +6,21 @@
 #include <stdbool.h>
 
 #define MS5607_DATA_READ_INTERVAL 500
-#define MS5607_SENSOR_CHECK_INTERVAL_MS 2000
 #define MS5607_FLATLINE_THRESHOLD 0.1f
 #define MS5607_FLATLINE_COUNT_LIMIT 5
+/* Consecutive failed conversions before the barometer is declared invalid. At
+ * the 500 ms read interval this is a ~1.5 s outage. */
+#define MS5607_READ_FAULT_LIMIT 3
 
 typedef struct {
   MS5607_Data data;
   MS5607_Data last_data;
-  float baseline_altitude_m;  /* Known altitude at startup for relative height */
-  float baseline_pressure_pa; /* Pressure at startup in Pa for calculations */
   uint8_t baro_valid;
   uint32_t last_good_data_ms;
-  uint32_t last_sensor_check_ms;
   uint32_t last_data_read_ms;
   uint32_t flatline_count;
+  /* Consecutive failed conversions (reset by any successful read). */
+  uint32_t read_fault_count;
 } MS5607_EquipmentHandler;
 
 MS5607_EquipmentHandler MS5607_EquipmentHandler_Init(I2C_HandleTypeDef *hi2c);

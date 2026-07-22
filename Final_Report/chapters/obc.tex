@@ -1,0 +1,145 @@
+\chapter{On-Board Computer (OBC)}
+
+\section{Responsibilities}
+
+The OBC is the single flight computer of the platform: one microcontroller
+hosts all subsystem software -- CDH sensor acquisition, the FSW state
+machine, FDIR monitoring, TT\&C packetization, and SD-card logging -- with
+the Coral payload as the only other processor on board. Its
+responsibilities are:
+
+\begin{itemize}[nosep]
+  \item \textbf{Compute platform.} Execute all flight software in a fixed
+        1~Hz major cycle (\texttt{CDH\_Update} $\rightarrow$
+        \texttt{FSW\_Update} $\rightarrow$ \texttt{FDIR\_Update} $\rightarrow$
+        SD logging $\rightarrow$ TT\&C service).
+  \item \textbf{Timekeeping.} Provide the mission time base
+        (\texttt{HAL\_GetTick()}); the Coral has no RTC, so the OBC
+        timestamps every payload packet.
+  \item \textbf{Mass storage.} Archive housekeeping telemetry and payload
+        image frames to the SD card (FR-016/FR-017, Section~\ref{sec:obc-sd}).
+  \item \textbf{Platform health.} Run the independent watchdog (FR-011),
+        classify reset causes into the SCV, and digitize battery voltage
+        from the EPS divider (IF-008).
+\end{itemize}
+
+\section{Interfaces}
+
+Every peripheral of the spacecraft terminates at the OBC
+(Figure~\ref{fig:obc-architecture}). Table~\ref{tab:obc-buses} lists the
+bus allocation as configured in the final STM32CubeMX pinout.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{obc_architecture.png}
+  \caption{OBC bus architecture.}
+  \label{fig:obc-architecture}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lllll}
+\toprule
+\textbf{Bus} & \textbf{Pins} & \textbf{Peripheral} & \textbf{Configuration} & \textbf{Owner} \\
+\midrule
+USART3 & PB10/PB11 & GPS (u-blox)          & 9600 baud, NMEA 0183      & CDH \\
+I2C1   & PB8/PB9   & IMU MPU-6050, MS5607  & 400 kHz, shared bus       & CDH \\
+UART5  & PC12/PD2  & Coral payload         & 115200 8N1, binary + CRC-16 & OBC/CDH \\
+SPI1   & PA5--PA7  & LoRa RFM95W           & 10 MHz                    & TT\&C \\
+SPI2   & PB13--PB15 & SD card              & 312.5 kHz init, 10 MHz run & OBC \\
+ADC1   & PA0 (IN5) & Battery divider (IF-008) & 3.2$\times$ firmware scale & CDH \\
+USART2 & PA2/PA3   & ST-Link virtual COM   & 115200, debug console     & OBC \\
+\bottomrule
+\end{tabular}
+\caption{OBC bus and pin allocation}
+\label{tab:obc-buses}
+\end{table}
+
+Power comes from the EPS 5~V rail into the Nucleo's E5V input; the board's
+on-board regulator derives the 3.3~V rail that supplies the sensors, SD
+card, and LoRa module (see EPS chapter).
+
+\section{Design Decisions}
+
+\textbf{Hardware selection.} The OBC is a Nucleo-64 board with an
+STM32L476RG: Cortex-M4 at 80~MHz, 1~MB flash, 128~KB SRAM, from ST's
+ultra-low-power line. It was chosen over higher-performance parts because
+the 1~Hz control problem does not need more compute, and the low-power
+core keeps the OBC's share of the EPS budget small ($\sim$0.4~W including
+sensors and LoRa). The Nucleo format adds an on-board ST-Link
+debugger/programmer and breakout headers that suit the hand-wired
+integration. The choice imposes two constraints that shaped the software:
+a 50~KB payload frame occupies 39\% of SRAM, so images can never be
+buffered whole; and the Nucleo-64 has no SD slot or SDMMC wiring, so the
+SD card runs over SPI.
+
+\textbf{Superloop instead of an RTOS.} All software runs in a single
+bare-metal loop with a fixed call order and no preemption. With one
+1~Hz rate group and no hard concurrent deadlines, an RTOS would add
+stack-per-task RAM cost and priority/locking failure modes without buying
+anything; the superloop makes timing trivially auditable. The independent
+watchdog (IWDG) is refreshed exactly once per loop iteration with a
+timeout below the 10~s FR-011 limit, so any hang anywhere in the cycle
+ends in a clean reset rather than a silent loss of the mission.
+
+\textbf{Boot order and degraded boot.} FDIR initializes first, before any
+peripheral driver, so reset classification and the watchdog-reset counter
+run even if later initialization fails. Each subsystem init is gated on
+its SCV equipment flag: a peripheral that fails to start is flagged
+faulty and the boot continues -- the OBC always comes up, in a degraded
+mode if necessary, rather than hanging in an init retry loop. The
+boot-time battery-voltage guard (EPS chapter) is checked before normal
+operation resumes.
+
+\subsection{SD Card Storage}
+\label{sec:obc-sd}
+
+The SD card holds the two on-board data products: a 1~Hz housekeeping log
+(FR-016) and the payload image archive, keyed by the payload sequence
+number \texttt{SEQ} so each downlinked cloud fraction can be matched to
+its source frame post-flight. The stack is a bare-metal SD-SPI driver
+under FatFs (Figure~\ref{fig:obc-sd}): card initialization is clocked at
+312.5~kHz to respect the sub-400~kHz SD specification window, then raised
+to 10~MHz for operation.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{obc_sd_pipeline.png}
+  \caption{SD storage pipeline, file lifecycle, and fault ladder.}
+  \label{fig:obc-sd}
+\end{figure}
+
+\textbf{Housekeeping log.} Each 1~Hz cycle appends one 46-column CSV row:
+the full datapool snapshot (GPS, IMU, barometer, battery, the 16-byte
+Coral status block) plus the complete SCV, all scaled to integers on
+write so the log needs no floating-point formatting and parses
+unambiguously. Three choices bound the damage any single failure can do:
+
+\begin{itemize}[nosep]
+  \item \textbf{One file per minute.} The log rotates every 60~s, so a
+        corrupted file costs at most one minute of data.
+  \item \textbf{Sync every row.} \texttt{f\_sync} runs after each record;
+        power loss loses at most the row being written.
+  \item \textbf{Self-identifying files.} A file is created as
+        \texttt{LOG\_<session>\_START\_<t>\_OPEN.CSV} and renamed on clean
+        close to carry its end time and duration -- any file still named
+        \texttt{\_OPEN} after the flight is known to have died mid-write.
+        Session numbers are recovered by directory scan, so numbering
+        survives reboots without persistent state.
+\end{itemize}
+
+\textbf{Image archive.} Payload frames arrive on UART5 as 50\,196-byte
+CRC-16-protected packets and are streamed to one file per frame
+(\texttt{F<SEQ8>.RAW}) through a 512-byte chunk buffer -- at no point is
+a whole frame held in RAM, which the 128~KB SRAM budget rules out. A
+failed CRC or a write error drops that frame only; the next \texttt{SEQ}
+starts a fresh file.
+
+\textbf{Fault handling.} Any FatFs error closes the file, unmounts the
+volume, sets the SD bit in \texttt{equipment\_faults}, and schedules a
+retry 5~s later; after three consecutive faults the SPI driver is fully
+re-initialized from scratch. The card is declared healthy again only
+after a completed write-and-sync, not merely a successful mount. The
+entire SD path is deliberately fail-soft: telemetry reaches the ground
+over LoRa regardless of card state, so losing the SD card loses the image
+training archive, never the science result or the flight.

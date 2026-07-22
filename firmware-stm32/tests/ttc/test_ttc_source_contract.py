@@ -30,7 +30,10 @@ def test_driver_has_no_blocking_delay_or_tx_done_wait_loop() -> None:
 def test_ttc_has_no_scv_or_autonomous_recovery_policy() -> None:
     source = read("ttc.c")
     assert "g_scv" not in source
-    assert "EQUIPMENT_LORA" not in source
+    # TTC now consumes the FDIR-owned EQUIPMENT_LORA request bit (fire-and-forget
+    # poll + ack in TTC_Service()), but FDIR alone still decides thresholds and
+    # owns the fault bit -- TTC must never call FDIR_SetEquipmentFault itself.
+    assert "FDIR_SetEquipmentFault" not in source
     assert "RECOVERY_BACKOFF" not in source
     assert "TTC_FAILURE_LIMIT" not in source
     assert "TTC_FDIR_RequestRecovery" in source

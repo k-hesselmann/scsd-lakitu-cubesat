@@ -15,7 +15,16 @@
 #define FDIR_BARO_TIMEOUT_MS          3000U
 #define FDIR_CORAL_TIMEOUT_MS         5000U
 #define FDIR_BATT_TIMEOUT_MS          3000U
-#define FDIR_LORA_TX_FAILURE_LIMIT    3U      /* consecutive TX attempts, not time */
+#define FDIR_LORA_TX_FAILURE_LIMIT    5U      /* consecutive TX attempts, not time */
+/* LoRa TX failure-rate windows (FMECA T1): ring-buffered pass/fail over the
+ * last N TX attempts. Recovery trips on either the consecutive-failure limit
+ * above or a sustained failure rate; the SCV fault uses a tighter, shorter
+ * window so it lags recovery and reflects "still bad after trying." Plain
+ * integer counts (not percentages) to avoid floating point. */
+#define FDIR_LORA_RECOVERY_WINDOW        20U
+#define FDIR_LORA_RECOVERY_WINDOW_FAILS  12U   /* 60% of 20 */
+#define FDIR_LORA_FAULT_WINDOW           10U
+#define FDIR_LORA_FAULT_WINDOW_FAILS      9U   /* 90% of 10 */
 #define FDIR_FRESHNESS_MS             2000U
 #define FDIR_SD_FAULT_LIMIT           3U      /* consecutive failed writes, not time */
 #define FDIR_WATCHDOG_RESET_LIMIT     3U      /* consecutive boots, not time */
@@ -45,9 +54,19 @@ void FDIR_Update(SensorData_t *dp, SCV_t *scv);
 
 /* Recovery request transport: FDIR sets EQUIPMENT_x bits, the owning
  * subsystem executes its own recovery and acknowledges the bit. FDIR never
- * touches hardware (see docs/FMECA.md Section 2, L1/L2). */
+ * touches hardware (see docs/FMECA.md Section 2, L1/L2). LoRa recovery
+ * (EQUIPMENT_LORA) and I2C bus restart (FDIR_REQUEST_I2C_BUS_RESTART below)
+ * both go through this same mechanism, polled from TTC_Service()/CDH_Update()
+ * respectively. */
 uint16_t FDIR_GetReinitRequests(void);
 void FDIR_AcknowledgeReinit(uint16_t mask);
+
+/* Request-only pseudo bit in the FDIR_GetReinitRequests() bitmask: not an
+ * equipment identity, never part of EQUIPMENT_ALL_NOMINAL/equipment_faults
+ * (same idea as EQUIPMENT_CDH in datapool.h, one bit lower). Set by FDIR's
+ * I2C bus-wedge/freshness escalation, consumed by CDH_Update(), which calls
+ * CDH_FDIR_BusRestart_Start() and acknowledges. */
+#define FDIR_REQUEST_I2C_BUS_RESTART  (1U << 14)
 
 /* Single shared writer for g_scv.equipment_faults bits. Subsystems that
  * detect their own faults (TTC, SD logger) report through this instead of
