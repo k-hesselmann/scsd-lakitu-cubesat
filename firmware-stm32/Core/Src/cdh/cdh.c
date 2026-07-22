@@ -24,6 +24,10 @@ static MS5607_EquipmentHandler  s_baro;
 static GPS_EquipmentHandler     s_gps;
 static CDH_FDIR_Context         s_fdir;
 static float                    s_ground_baro_alt_m = 0.0f;
+/* Set only after a real Standby pressure-altitude sample was captured, or
+ * after a mid-flight reboot restored a persisted baseline. Until then,
+ * baro_alt_m is undefined and CDH must not mark baro data valid. */
+static uint8_t                  s_baro_baseline_valid = 0U;
 /* Set once the ground baseline stops moving (either restored from a
  * mid-flight reboot, or frozen the tick the FSM leaves Standby). While
  * locked, CDH_Update never touches s_ground_baro_alt_m again. */
@@ -53,11 +57,14 @@ void CDH_Init(void)
         g_scv.baro_ground_alt_cm != SCV_INVALID_I32)
     {
         s_ground_baro_alt_m = (float)g_scv.baro_ground_alt_cm / 100.0f;
+        s_baro_baseline_valid = 1U;
         s_baro_baseline_locked = 1U;
     }
-    else if (s_baro.baro_valid)
+    else if (g_scv.flight_phase == (uint8_t)PHASE_STANDBY && s_baro.baro_valid)
     {
         s_ground_baro_alt_m = s_baro.data.altitude;
+        s_baro_baseline_valid = 1U;
+        g_scv.baro_ground_alt_cm = (int32_t)(s_ground_baro_alt_m * 100.0f);
     }
 
     Coral_Init();   /* USART3 already init by MX_USART3_UART_Init() in main.c */
@@ -125,7 +132,24 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
     s_baro = MS5607_EquipmentHandler_Update(s_baro, &hi2c1);
     if (s_baro.baro_valid)
     {
-        if (!s_baro_baseline_locked)
+        if (!s_baro_baseline_valid)
+        {
+            if (FSW_GetPhase() == PHASE_STANDBY)
+            {
+                /* The first conversion in MS5607_EquipmentHandler_Init() can
+                 * legitimately fail while the device/bus is settling. Do not
+                 * start the slow Standby EMA from the C static zero default:
+                 * at Munich-like pressure altitude that creates an immediate
+                 * ~500 m relative-altitude spike and can drive false phase
+                 * transitions. The first later valid Standby sample becomes
+                 * the baseline immediately. */
+                s_ground_baro_alt_m = s_baro.data.altitude;
+                s_baro_baseline_valid = 1U;
+                scv->baro_ground_alt_cm = (int32_t)(s_ground_baro_alt_m * 100.0f);
+            }
+        }
+
+        if (s_baro_baseline_valid && !s_baro_baseline_locked)
         {
             if (FSW_GetPhase() == PHASE_STANDBY)
             {
@@ -138,24 +162,35 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
                  * rationale in fsm_thresholds.h). */
                 s_ground_baro_alt_m += FSM_STANDBY_BARO_BASELINE_ALPHA *
                                        (s_baro.data.altitude - s_ground_baro_alt_m);
+                scv->baro_ground_alt_cm = (int32_t)(s_ground_baro_alt_m * 100.0f);
             }
             else
             {
-                /* FSW left Standby this cycle (CDH_Update runs before
-                 * FSW_Update, so this fires one tick after the transition):
-                 * freeze the baseline and persist it so a later mid-flight
-                 * reboot restores it instead of recapturing at altitude.
-                 * SCV_Update() flushes to flash this same tick -- it treats
-                 * any flight_phase change as dirty and backs up immediately. */
+                /* FSW left Standby since the previous CDH tick: freeze the
+                 * already tracked baseline. SCV_Update() backs up the RAM
+                 * baseline immediately on the phase-change dirty write, so a
+                 * later mid-flight reboot restores it instead of recapturing
+                 * at altitude. */
                 scv->baro_ground_alt_cm = (int32_t)(s_ground_baro_alt_m * 100.0f);
                 s_baro_baseline_locked = 1U;
             }
         }
 
         dp->baro_pressure_pa = s_baro.data.pressure * 100.0f;
-        dp->baro_alt_m       = s_baro.data.altitude - s_ground_baro_alt_m;
         dp->baro_temp_c      = s_baro.data.temperature;
-        dp->baro_valid       = 1U;
+        if (s_baro_baseline_valid)
+        {
+            dp->baro_alt_m = s_baro.data.altitude - s_ground_baro_alt_m;
+            dp->baro_valid = 1U;
+        }
+        else
+        {
+            /* Past Standby without a restored baseline: pressure and
+             * temperature are logged for diagnostics, but relative altitude
+             * is not trustworthy and must not steer FSW. */
+            dp->baro_alt_m = 0.0f;
+            dp->baro_valid = 0U;
+        }
     }
     else { dp->baro_valid = 0U; }
 
