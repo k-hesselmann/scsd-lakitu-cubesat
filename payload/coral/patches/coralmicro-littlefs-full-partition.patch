@@ -1,0 +1,22 @@
+diff --git a/libs/base/filesystem.cc b/libs/base/filesystem.cc
+index fbbe0b3..59cd306 100644
+--- a/libs/base/filesystem.cc
++++ b/libs/base/filesystem.cc
+@@ -124,7 +124,16 @@ bool LfsInit(bool force_format) {
+   g_lfs_config.read_size = kPageSize;
+   g_lfs_config.prog_size = kPageSize;
+   g_lfs_config.block_size = 131072;
+-  g_lfs_config.block_count = 512;
++  // Dev Board Micro's NAND is 128 MiB (see board_hardware.c's flashSize =
++  // 0x20000 KB) = 1024 blocks of 131072 B. kFilesystemBaseBlock (12) is
++  // reserved below littlefs, so the remaining 1012 blocks (~126.5 MiB) all
++  // belong to this filesystem. Upstream shipped 512 here, leaving the top
++  // half of the chip (blocks 524-1023) permanently unaddressed; widened for
++  // cloud_payload's on-flash image backup (payload/coral). Changing this
++  // changes the on-flash geometry: a device already formatted at the old
++  // block_count fails lfs_mount below and falls through to lfs_format,
++  // i.e. existing contents are wiped on first boot after reflashing.
++  g_lfs_config.block_count = 1012;
+   g_lfs_config.block_cycles = 250;
+   g_lfs_config.cache_size = kPageSize;
+   g_lfs_config.lookahead_size = kPageSize;
