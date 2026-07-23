@@ -97,7 +97,7 @@ export function FlightPhasePage({ latest, history }: DashboardPageProps) {
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[2fr_1fr]">
         <Card className="min-h-0 overflow-hidden">
           <CardHeader className="px-4 py-3">
-            <CardTitle className="text-base">Altitude / Vertical Speed</CardTitle>
+            <CardTitle className="text-base">Altitude [m] / Vertical Speed [m/s]</CardTitle>
           </CardHeader>
           <CardContent className="h-[calc(100%-56px)] px-4 pb-4">
             <ResponsiveContainer width="100%" height="100%">

@@ -5,6 +5,7 @@
 #include "main.h"
 #include "usbd_cdc_if.h"
 
+#include <stdio.h>
 #include <string.h>
 
 _Static_assert(sizeof(TelemetryPacket_t) == TELEMETRY_PACKET_V8_SIZE,
@@ -12,6 +13,22 @@ _Static_assert(sizeof(TelemetryPacket_t) == TELEMETRY_PACKET_V8_SIZE,
 
 #ifndef TTC_CDC_BINARY_MIRROR
 #define TTC_CDC_BINARY_MIRROR 0
+#endif
+
+#ifndef TTC_CDC_DEBUG_LOGS
+#define TTC_CDC_DEBUG_LOGS 0
+#endif
+
+#ifndef TTC_UART_DEBUG_LOGS
+#define TTC_UART_DEBUG_LOGS 0
+#endif
+
+#ifndef TTC_DEBUG_INTERVAL_MS
+#define TTC_DEBUG_INTERVAL_MS 0U
+#endif
+
+#ifndef TTC_DEBUG_FIXED_PAYLOAD
+#define TTC_DEBUG_FIXED_PAYLOAD 0
 #endif
 
 #define TTC_TX_TIMEOUT_MS               5000U
@@ -48,6 +65,7 @@ static uint8_t s_cdc_mirror_pending;
 static TelemetryPacket_t s_pending_packet;
 static LoRaHealth_t s_health;
 static UplinkState_t s_uplink;
+static TTCDebugStatus_t s_debug;
 static TTC_FDIR_Health_t s_fdir_health;
 static TTC_FDIR_ActionStatus_t s_action_status;
 static TTC_FDIR_Action_t s_requested_action;
@@ -55,6 +73,17 @@ static uint16_t s_command_high_water;
 static uint16_t s_command_seen_mask;
 static uint8_t s_has_command_high_water;
 static TTC_State_t s_state;
+
+#if TTC_UART_DEBUG_LOGS
+extern UART_HandleTypeDef huart2;
+#endif
+
+#if TTC_DEBUG_FIXED_PAYLOAD
+static const uint8_t s_fixed_payload[] = {
+    'T', 'T', 'C', '_', 'T', 'E', 'S', 'T',
+    0x01U, 0x02U, 0x03U, 0x04U, 0xA5U, 0x5AU, 0xC3U, 0x3CU
+};
+#endif
 
 static void TTC_IncrementU8(uint8_t *value)
 {
@@ -102,10 +131,121 @@ static uint8_t TTC_AcceptCommandId(uint16_t command_id)
     return 1U;
 }
 
+static uint32_t TTC_TelemetryIntervalMs(void)
+{
+#if TTC_DEBUG_INTERVAL_MS > 0U
+    return TTC_DEBUG_INTERVAL_MS;
+#else
+    return TTC_TELEMETRY_INTERVAL_MS;
+#endif
+}
+
 static uint8_t TTC_IntervalElapsed(uint32_t now)
 {
     return (!s_has_transmitted ||
-            (uint32_t)(now - s_last_tx_ms) >= TTC_TELEMETRY_INTERVAL_MS) ? 1U : 0U;
+            (uint32_t)(now - s_last_tx_ms) >= TTC_TelemetryIntervalMs()) ? 1U : 0U;
+}
+
+#if TTC_CDC_DEBUG_LOGS || TTC_UART_DEBUG_LOGS
+static void TTC_DebugLog(const char *line)
+{
+    size_t len = 0U;
+
+    while (line[len] != '\0')
+        len++;
+
+#if TTC_CDC_DEBUG_LOGS
+    (void)CDC_Transmit_FS((uint8_t *)line, (uint16_t)len);
+#endif
+#if TTC_UART_DEBUG_LOGS
+    (void)HAL_UART_Transmit(&huart2, (uint8_t *)line, (uint16_t)len, 100U);
+#endif
+}
+
+static void TTC_LogInitStatus(void)
+{
+    char line[160];
+    LoRaDebugStatus_t lora = {0};
+    int len;
+
+    LoRa_GetDebugStatus(&lora);
+    len = snprintf(line, sizeof(line),
+                   "LORA_INIT status=%u ready=%u version=0x%02X op=0x%02X irq=0x%02X fail_reg=0x%02X fail_op=%u hal=%lu spierr=%lu\r\n",
+                   (unsigned int)s_debug.last_init_status,
+                   (unsigned int)s_debug.radio_ready,
+                   (unsigned int)lora.version,
+                   (unsigned int)lora.op_mode,
+                   (unsigned int)lora.irq_flags,
+                   (unsigned int)lora.last_failed_reg,
+                   (unsigned int)lora.last_failed_op,
+                   (unsigned long)lora.last_hal_status,
+                   (unsigned long)lora.spi_error_code);
+    if (len > 0)
+        TTC_DebugLog(line);
+}
+
+static void TTC_LogTxStatus(void)
+{
+    char line[224];
+    LoRaDebugStatus_t lora = {0};
+    int len;
+
+    LoRa_GetDebugStatus(&lora);
+    len = snprintf(line, sizeof(line),
+                   "TTC_TX seq=%u len=%u crc=0x%04X status=%u ready=%u version=0x%02X irq=0x%02X op=0x%02X tx_ok=%lu tx_timeout=%lu tx_error=%lu fail_reg=0x%02X fail_op=%u hal=%lu spierr=%lu\r\n",
+                   (unsigned int)s_debug.last_sequence_number,
+                   (unsigned int)s_debug.last_payload_length,
+                   (unsigned int)s_debug.last_crc16,
+                   (unsigned int)s_debug.last_send_status,
+                   (unsigned int)s_debug.radio_ready,
+                   (unsigned int)lora.version,
+                   (unsigned int)lora.irq_flags,
+                   (unsigned int)lora.op_mode,
+                   (unsigned long)s_debug.tx_success_count,
+                   (unsigned long)s_debug.tx_timeout_count,
+                   (unsigned long)s_debug.tx_error_count,
+                   (unsigned int)lora.last_failed_reg,
+                   (unsigned int)lora.last_failed_op,
+                   (unsigned long)lora.last_hal_status,
+                   (unsigned long)lora.spi_error_code);
+    if (len > 0)
+        TTC_DebugLog(line);
+}
+#else
+static void TTC_LogInitStatus(void) {}
+static void TTC_LogTxStatus(void) {}
+#endif
+
+static void TTC_RefreshDebugFromLora(void)
+{
+    LoRaDebugStatus_t lora = {0};
+
+    LoRa_GetDebugStatus(&lora);
+    s_debug.radio_ready = s_radio_ready;
+    s_debug.last_lora_version = lora.version;
+    s_debug.last_irq_flags = lora.irq_flags;
+}
+
+static void TTC_RecordDebugTxCompletion(LoRaStatus_t status)
+{
+    s_debug.last_send_status = status;
+    if (status == LORA_OK)
+    {
+        s_debug.tx_success_count++;
+    }
+    else if (status == LORA_TIMEOUT)
+    {
+        s_debug.tx_timeout_count++;
+    }
+    else
+    {
+        s_debug.tx_error_count++;
+    }
+
+    if (!LoRa_IsBusy())
+        (void)LoRa_ReadDebugRegisters();
+    TTC_RefreshDebugFromLora();
+    TTC_LogTxStatus();
 }
 
 static uint8_t TTC_ActionIsActive(void)
@@ -116,12 +256,17 @@ static uint8_t TTC_ActionIsActive(void)
 
 static void TTC_SyncFdirHealth(void)
 {
+    uint8_t action_is_recovery =
+        (s_action_status.action == TTC_FDIR_ACTION_RECOVERY ||
+         s_action_status.action == TTC_FDIR_ACTION_RETURN_TO_SERVICE) ? 1U : 0U;
+
     s_fdir_health.radio_ready = (s_radio_ready && LoRa_IsReady()) ? 1U : 0U;
     s_fdir_health.rx_active = LoRa_IsRxActive();
+    s_fdir_health.radio_busy = LoRa_IsBusy();
     s_fdir_health.recovery_in_progress =
-        (s_action_status.state == TTC_FDIR_ACTION_IN_PROGRESS &&
-         (s_action_status.action == TTC_FDIR_ACTION_RECOVERY ||
-          s_action_status.action == TTC_FDIR_ACTION_RETURN_TO_SERVICE)) ? 1U : 0U;
+        (action_is_recovery &&
+         (s_action_status.state == TTC_FDIR_ACTION_PENDING ||
+          s_action_status.state == TTC_FDIR_ACTION_IN_PROGRESS)) ? 1U : 0U;
     s_fdir_health.isolation_active = LoRa_IsIsolated();
 }
 
@@ -136,6 +281,7 @@ static void TTC_SetActionResult(TTC_FDIR_ActionState_t state, LoRaStatus_t statu
 static void TTC_RecordInitResult(LoRaStatus_t status)
 {
     s_radio_ready = (status == LORA_OK) ? 1U : 0U;
+    s_debug.last_init_status = status;
     if (s_radio_ready)
     {
         s_driver_fault_observed = 0U;
@@ -153,6 +299,10 @@ static void TTC_RecordInitResult(LoRaStatus_t status)
         TTC_IncrementU8(&s_health.consecutive_failures);
         s_radio_faulted = 1U;
     }
+    if (!LoRa_IsBusy())
+        (void)LoRa_ReadDebugRegisters();
+    TTC_RefreshDebugFromLora();
+    TTC_LogInitStatus();
     TTC_SyncFdirHealth();
 }
 
@@ -206,6 +356,7 @@ static void TTC_RecordTxSuccess(uint32_t now)
     s_fdir_health.last_tx_success_ms = now;
     s_radio_ready = 1U;
     TTC_SyncFdirHealth();
+    TTC_RecordDebugTxCompletion(LORA_OK);
 }
 
 static void TTC_RecordTxFailure(LoRaStatus_t status)
@@ -213,6 +364,7 @@ static void TTC_RecordTxFailure(LoRaStatus_t status)
     if (status == LORA_LENGTH_ERROR)
     {
         s_health.last_event = LORA_EVENT_TX_BAD_LENGTH;
+        TTC_RecordDebugTxCompletion(status);
         return;
     }
 
@@ -226,6 +378,7 @@ static void TTC_RecordTxFailure(LoRaStatus_t status)
     s_radio_ready = 0U;
     s_radio_faulted = 1U;
     TTC_SyncFdirHealth();
+    TTC_RecordDebugTxCompletion(status);
 }
 
 static void TTC_RecordRxPacket(uint32_t now)
@@ -411,13 +564,26 @@ static void TTC_PollUplink(uint32_t now)
 static void TTC_StartPendingTransmit(uint32_t now)
 {
     LoRaStatus_t status;
+#if TTC_DEBUG_FIXED_PAYLOAD
+    const uint8_t *tx_data = s_fixed_payload;
+    uint8_t tx_length = (uint8_t)sizeof(s_fixed_payload);
+#else
+    const uint8_t *tx_data = (const uint8_t *)&s_pending_packet;
+    uint8_t tx_length = (uint8_t)sizeof(s_pending_packet);
+#endif
 
     if (!s_pending_valid || s_radio_faulted || !s_radio_ready ||
         !LoRa_IsRxActive() || LoRa_IsBusy())
         return;
 
-    status = LoRa_Send((const uint8_t *)&s_pending_packet,
-                       (uint8_t)sizeof(s_pending_packet), TTC_TX_TIMEOUT_MS);
+    s_debug.tx_attempt_count++;
+    s_debug.last_sequence_number = s_pending_packet.sequence_number;
+    s_debug.last_crc16 = s_pending_packet.crc16;
+    s_debug.last_payload_length = tx_length;
+
+    status = LoRa_Send(tx_data, tx_length, TTC_TX_TIMEOUT_MS);
+    s_debug.last_send_status = status;
+    TTC_RefreshDebugFromLora();
     if (status != LORA_OK)
     {
         TTC_RecordTxFailure(status);
@@ -497,9 +663,14 @@ static void TTC_BeginRequestedAction(void)
             return;
         if (status != LORA_OK)
         {
+            s_debug.last_init_status = status;
+            TTC_RefreshDebugFromLora();
+            TTC_LogInitStatus();
             TTC_SetActionResult(TTC_FDIR_ACTION_FAILED, status);
             return;
         }
+        s_debug.last_init_status = status;
+        TTC_RefreshDebugFromLora();
         s_action_status.state = TTC_FDIR_ACTION_IN_PROGRESS;
         TTC_IncrementU8(&s_health.recovery_count);
         s_driver_fault_observed = 0U;
@@ -539,6 +710,7 @@ void TTC_Init(void)
     memset(&s_pending_packet, 0, sizeof(s_pending_packet));
     memset(&s_health, 0, sizeof(s_health));
     memset(&s_uplink, 0, sizeof(s_uplink));
+    memset(&s_debug, 0, sizeof(s_debug));
     memset(&s_fdir_health, 0, sizeof(s_fdir_health));
     memset(&s_action_status, 0, sizeof(s_action_status));
     s_last_tx_ms = 0U;
@@ -562,6 +734,9 @@ void TTC_Init(void)
     s_action_status.action = TTC_FDIR_ACTION_NONE;
     s_action_status.state = TTC_FDIR_ACTION_IDLE;
     s_action_status.last_lora_status = (uint8_t)LoRa_Init();
+    s_debug.last_init_status = (LoRaStatus_t)s_action_status.last_lora_status;
+    s_debug.last_send_status = LORA_NOT_READY;
+    TTC_RefreshDebugFromLora();
     if (s_action_status.last_lora_status != (uint8_t)LORA_OK)
     {
         TTC_RecordInitResult((LoRaStatus_t)s_action_status.last_lora_status);
@@ -575,14 +750,14 @@ void TTC_Service(void)
     LoRaStatus_t status;
     uint32_t now = HAL_GetTick();
 
-    /* Consume FDIR-requested LoRa recovery (FMECA T1). Fire-and-forget: the
-     * TTC_FDIR_Result_t is ignored, ack happens on acceptance, not on
-     * completion — TTC_FDIR_RequestRecovery() is idempotent while a recovery
-     * is already pending/in-progress. */
+    /* Consume FDIR-requested LoRa recovery (FMECA T1). Ack only once TTC has
+     * accepted it, found it already complete, or is already doing the same
+     * action. A different active action leaves the request bit set. */
     if (FDIR_GetReinitRequests() & EQUIPMENT_LORA)
     {
-        (void)TTC_FDIR_RequestRecovery();
-        FDIR_AcknowledgeReinit(EQUIPMENT_LORA);
+        TTC_FDIR_Result_t result = TTC_FDIR_RequestRecovery();
+        if (result != TTC_FDIR_RESULT_REJECTED)
+            FDIR_AcknowledgeReinit(EQUIPMENT_LORA);
     }
 
     LoRa_Service();
@@ -748,6 +923,15 @@ const LoRaHealth_t *TTC_GetHealth(void)
 const UplinkState_t *TTC_GetUplinkState(void)
 {
     return &s_uplink;
+}
+
+void TTC_GetDebugStatus(TTCDebugStatus_t *status)
+{
+    if (status == NULL)
+        return;
+
+    TTC_RefreshDebugFromLora();
+    *status = s_debug;
 }
 
 void TTC_Transmit(const TelemetryPacket_t *pkt)

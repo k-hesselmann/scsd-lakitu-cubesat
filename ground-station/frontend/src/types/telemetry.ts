@@ -164,6 +164,7 @@ export type BackendStatus = {
     spreading_factor: number
     sync_word: number
     tx_power_dbm: number
+    telemetry_ack_turnaround_s?: number
     telemetry_packet_size: number
     csv_enabled: boolean
     history: number

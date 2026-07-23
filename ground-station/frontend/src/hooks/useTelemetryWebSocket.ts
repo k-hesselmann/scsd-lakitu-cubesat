@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react"
 import { API_BASE_URL, WS_URL } from "@/lib/config"
+import {
+  appendTelemetryHistory,
+  mergeTelemetryHistory,
+  prependTimelineEvents,
+} from "@/lib/telemetrySeries"
 import type {
   BackendStatus,
   TelemetryRow,
@@ -21,28 +26,6 @@ function isTelemetryRow(row: TelemetryRow | null | undefined): row is TelemetryR
   return typeof row?.sequence_number === "number"
 }
 
-function historyRowId(row: TelemetryRow) {
-  return `${row.pc_receive_time_unix ?? "unknown"}-${row.sequence_number ?? "radio-error"}`
-}
-
-function mergeHistory(
-  existing: TelemetryRow[],
-  incoming: TelemetryRow[],
-  limit: number,
-) {
-  const unique = new Map<string, TelemetryRow>()
-
-  for (const row of [...existing, ...incoming]) {
-    unique.set(historyRowId(row), row)
-  }
-
-  return [...unique.values()]
-    .sort(
-      (a, b) =>
-        (a.pc_receive_time_unix ?? 0) - (b.pc_receive_time_unix ?? 0),
-    )
-    .slice(-limit)
-}
 
 function newestTelemetryRow(rows: Array<TelemetryRow | null | undefined>) {
   return rows
@@ -78,17 +61,6 @@ function telemetryEventsFromRow(row: TelemetryRow): TimelineEvent[] {
   return events
 }
 
-function sortAndLimitEvents(events: TimelineEvent[], limit: number) {
-  const unique = new Map<string, TimelineEvent>()
-
-  for (const event of events) {
-    unique.set(event.id, event)
-  }
-
-  return [...unique.values()]
-    .sort((a, b) => b.time_unix - a.time_unix)
-    .slice(0, limit)
-}
 
 export function useTelemetryWebSocket(historyLimit = 500, eventLimit = 300) {
   const [latest, setLatest] = useState<TelemetryRow | null>(null)
@@ -104,6 +76,59 @@ export function useTelemetryWebSocket(historyLimit = 500, eventLimit = 300) {
     let ws: WebSocket | null = null
     let reconnectTimer: number | undefined
     let pingTimer: number | undefined
+    let publishTimer: number | undefined
+    let pendingRows: TelemetryRow[] = []
+    let pendingEvents: TimelineEvent[] = []
+    let pendingLatest: TelemetryRow | null = null
+    let pendingStatus: BackendStatus | null = null
+    let pendingMessageType: string | null = null
+
+    function flushPendingUpdates() {
+      publishTimer = undefined
+      if (cancelled) return
+
+      const rows = pendingRows
+      const newEvents = pendingEvents
+      const latestRow = pendingLatest
+      const status = pendingStatus
+      const messageType = pendingMessageType
+
+      pendingRows = []
+      pendingEvents = []
+      pendingLatest = null
+      pendingStatus = null
+      pendingMessageType = null
+
+      if (rows.length > 0) {
+        setHistory((previous) =>
+          appendTelemetryHistory(previous, rows, historyLimit),
+        )
+      }
+      if (newEvents.length > 0) {
+        setEvents((previous) =>
+          prependTimelineEvents(previous, newEvents, eventLimit),
+        )
+      }
+      if (latestRow !== null) {
+        setLatest(latestRow)
+      }
+      if (status !== null) {
+        setBackendStatus(status)
+      }
+      if (messageType !== null) {
+        setLastMessageType(messageType)
+      }
+    }
+
+    function schedulePublish() {
+      if (publishTimer !== undefined) return
+      publishTimer = window.setTimeout(flushPendingUpdates, 100)
+    }
+
+    function appendEvents(newEvents: TimelineEvent[]) {
+      pendingEvents.push(...newEvents)
+      schedulePublish()
+    }
 
     async function loadInitialData() {
       try {
@@ -126,14 +151,17 @@ export function useTelemetryWebSocket(historyLimit = 500, eventLimit = 300) {
         const rows = historyJson.data ?? []
         const latestFromHistory = [...rows].reverse().find(isTelemetryRow) ?? null
 
-        setHistory((previous) => mergeHistory(previous, rows, historyLimit))
+        setHistory((previous) =>
+          mergeTelemetryHistory(previous, rows, historyLimit),
+        )
         setLatest((previous) =>
           newestTelemetryRow([previous, statusJson.latest, latestFromHistory]),
         )
         setBackendStatus(statusJson)
         setEvents((previous) =>
-          sortAndLimitEvents(
-            [...previous, ...rows.flatMap(telemetryEventsFromRow)],
+          prependTimelineEvents(
+            previous,
+            rows.flatMap(telemetryEventsFromRow),
             eventLimit,
           ),
         )
@@ -145,9 +173,6 @@ export function useTelemetryWebSocket(historyLimit = 500, eventLimit = 300) {
       }
     }
 
-    function appendEvents(newEvents: TimelineEvent[]) {
-      setEvents((previous) => sortAndLimitEvents([...previous, ...newEvents], eventLimit))
-    }
 
     function connectWebSocket() {
       if (cancelled) return
@@ -171,25 +196,26 @@ export function useTelemetryWebSocket(historyLimit = 500, eventLimit = 300) {
         try {
           const message = JSON.parse(event.data) as TelemetryWebSocketMessage
 
-          setLastMessageType(message.type)
+          pendingMessageType = message.type
 
           if (message.type === "hello") {
-            setBackendStatus(message.data as BackendStatus)
+            pendingStatus = message.data as BackendStatus
+            schedulePublish()
             return
           }
 
           if (message.status) {
-            setBackendStatus(message.status)
+            pendingStatus = message.status
           }
 
           if (message.type === "telemetry") {
             const row = message.data as TelemetryRow
 
-            setLatest(row)
-
-            setHistory((previous) => mergeHistory(previous, [row], historyLimit))
-
+            pendingLatest = row
+            pendingRows.push(row)
             appendEvents(telemetryEventsFromRow(row))
+          } else {
+            schedulePublish()
           }
 
           if (message.type === "command_tx") {
@@ -302,6 +328,10 @@ export function useTelemetryWebSocket(historyLimit = 500, eventLimit = 300) {
       if (pingTimer !== undefined) {
         window.clearInterval(pingTimer)
       }
+      if (publishTimer !== undefined) {
+        window.clearTimeout(publishTimer)
+      }
+
 
       if (ws !== null) {
         ws.close()

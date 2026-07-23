@@ -29,8 +29,29 @@ typedef enum
     LORA_STATE_FAULT
 } LoRaState_t;
 
-/* Queue SX1276/RFM95W configuration for 868 MHz, SF9, BW 125 kHz and CR 4/5.
- * Call LoRa_Service() until LoRa_IsBusy() becomes zero, then inspect
+typedef struct
+{
+    LoRaStatus_t last_status;
+    uint8_t last_failed_reg;
+    uint8_t last_failed_op;
+    uint32_t last_hal_status;
+    uint32_t spi_error_code;
+    uint8_t version;
+    uint8_t op_mode;
+    uint8_t irq_flags;
+    uint8_t frf_msb;
+    uint8_t frf_mid;
+    uint8_t frf_lsb;
+    uint8_t modem_config_1;
+    uint8_t modem_config_2;
+    uint8_t modem_config_3;
+    uint8_t sync_word;
+    uint8_t payload_length;
+} LoRaDebugStatus_t;
+
+/* Queue the normal SX1276/RFM95W profile: 869.525 MHz, SF8, BW 125 kHz,
+ * CR 4/5, 17 dBm PA_BOOST, explicit header and payload CRC. Call
+ * LoRa_Service() until LoRa_IsBusy() becomes zero, then inspect
  * LoRa_GetLastStatus(). */
 LoRaStatus_t LoRa_Init(void);
 
@@ -55,6 +76,8 @@ uint8_t LoRa_IsRxActive(void);
 uint8_t LoRa_IsIsolated(void);
 LoRaState_t LoRa_GetState(void);
 LoRaStatus_t LoRa_GetLastStatus(void);
+void LoRa_GetDebugStatus(LoRaDebugStatus_t *status);
+LoRaStatus_t LoRa_ReadDebugRegisters(void);
 
 /* Hold the modem in reset and cancel future driver activity. LORA_BUSY means
  * an in-flight SPI transfer is being cancelled asynchronously; call

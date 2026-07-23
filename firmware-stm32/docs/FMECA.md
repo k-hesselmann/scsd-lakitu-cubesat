@@ -63,14 +63,14 @@ Phases: Standby / Launch / Ascent / Cruise / Descent / Landing (fsm.h).
 
 Detection and recovery are both implemented: bounded 100 ms SPI timeouts,
 version-register (0x42) check at init, TxDone wait with timeout, and `fdir.c`
-thresholds TTC's raw TX-outcome counters (`TTC_FDIR_GetHealth()`) into
-`EQUIPMENT_LORA` set/clear and recovery requests — TTC itself sets neither.
-The radio also has a hardware RST line pulsed by `LoRa_Init()`, invoked via
-`TTC_FDIR_RequestRecovery()`.
+thresholds TTC's raw availability/TX-outcome observations
+(`TTC_FDIR_GetHealth()`) into `EQUIPMENT_LORA` set/clear and recovery requests —
+TTC itself sets neither. The radio also has a hardware RST line pulsed by
+`LoRa_Init()`, invoked via `TTC_FDIR_RequestRecovery()`.
 
 | # | Item | Failure mode | Possible cause | Local effect | System effect | Detection means | Isolation | Recovery | Worst phase | Sev | Lvl |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| T1 | LoRa | init fails at boot, or send fails / TxDone timeout | SPI fault, module hang | packet not sent, LORA fault set | ground blind | FDIR thresholds TTC_FDIR_GetHealth() → EQUIPMENT_LORA (≥90% of last 10 TX failed) | logging continues | recovery request (reinit bitmask) → `TTC_FDIR_RequestRecovery()` (pulses RST), on ≥5 consecutive failures or ≥60% of last 20, 10 s cooldown | any | 3 | L1 |
+| T1 | LoRa | init fails at boot, RX mode drops, or send fails / TxDone timeout | SPI fault, module hang | packet not sent, LORA fault set | ground blind | FDIR thresholds TTC_FDIR_GetHealth() → EQUIPMENT_LORA (idle unavailable modem/RX path, or ≥90% of last 10 TX failed) | logging continues | recovery request (reinit bitmask) → `TTC_FDIR_RequestRecovery()` (pulses RST), when idle unavailable, on ≥5 consecutive failures, or ≥60% of last 20, 10 s cooldown | any | 3 | L1 |
 | T2 | LoRa | TX reports OK but nothing radiated | antenna, RF stage | packets lost silently | ground blind | not software-detectable (downlink only, no ACK) | — | accepted risk; mitigate by pre-flight RF range test | any | 3 | — |
 | T3 | LoRa | driver blocks the superloop | SPI hang | loop stalls | whole FSW hung | already mitigated at L0: all SPI calls bounded (100 ms), TxDone wait bounded (5 s) | — | IWDG backstop (F1) | any | 4 | L0/L3 |
 
@@ -78,7 +78,7 @@ The radio also has a hardware RST line pulsed by `LoRa_Init()`, invoked via
 
 | # | Item | Failure mode | Possible cause | Local effect | System effect | Detection means | Isolation | Recovery | Worst phase | Sev | Lvl |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| F1 | MCU | superloop hangs | blocking call, logic bug | everything stops | mission loss if unrecovered | IWDG — armed in `main.c` (`IWDG_UserInit()`, ~30 s timeout); kick at end of loop, gated by `FDIR_SystemHealthyEnoughToKickWatchdog()` | — | watchdog reset; SCV restores phase/state | any | 4 | L3 |
+| F1 | MCU | superloop/init hangs | blocking call, logic bug | everything stops | mission loss if unrecovered | IWDG — armed in `main.c` (`IWDG_UserInit()`, nominal 10 s timeout); refresh between startup phases, then kick at end of loop gated by `FDIR_SystemHealthyEnoughToKickWatchdog()` | — | watchdog reset; SCV restores phase/state | any | 4 | L3 |
 | F2 | MCU | repeated watchdog resets (boot loop) | persistent fault re-triggered each boot | reset storm | mission loss | `watchdog_reset_count >= 3` (staged reduced mode implemented in `main()`, see `FDIR_INTEGRATION.md`) | staged: each further reset disables the next subsystem update (SD → CDH → TTC → FSW) | reduced mode; FDIR + watchdog kick stay alive at every stage | any | 4 | L4 |
 | F3 | SCV/flash | SCV corrupt or erased | reset during flash write, wear | state lost | phase/counters reset | magic + CRC16 check (exists) | — | reinit defaults; log the event | any | 2 | L1 |
 | F4 | FSW time | `mission_elapsed_ms` resets on reboot | boot-relative tick stored as mission time (fdir.c:183) | wrong mission time after any reset | phase logic errors if time-dependent | code review finding — fix, not monitor | — | boot-offset reconstruction from SCV | any | 2 | — |
@@ -103,7 +103,7 @@ restart, and LoRa recovery alike.
 | Battery ADC | C8 | `batt_valid` | 3 s (`FDIR_BATT_TIMEOUT_MS`) | EQUIPMENT_EPS_ADC | none (detection only — `reinit_period_ms=0`, cheap enough that FDIR doesn't bother rate-limiting a reinit path that doesn't exist yet) | CDH | none — low risk |
 | Coral timeout | P1 | `coral_valid` | 5 cycles | EQUIPMENT_CORAL | **none** (RX-only) — flag for telemetry/log | — | none |
 | SD failures | S1 | consecutive-failure count from sd_logger | 3 failures | EQUIPMENT_SD | remount request | SD logger | rotate file; never auto-format |
-| LoRa TX | T1 | TTC_FDIR_GetHealth() consecutive/lifetime fault counters | 5 consecutive, or ≥60%/last 20 (recovery); ≥90%/last 10 (fault bit) | EQUIPMENT_LORA | re-run LoRa_Init via TTC_FDIR_RequestRecovery() (RST pulse), 10 s cooldown | TTC | none |
+| LoRa TX/RX availability | T1 | TTC_FDIR_GetHealth() radio availability and consecutive/lifetime fault counters | idle unavailable modem/RX path, 5 consecutive TX failures, or ≥60%/last 20 (recovery); idle unavailable or ≥90%/last 10 (fault bit) | EQUIPMENT_LORA | re-run LoRa_Init via TTC_FDIR_RequestRecovery() (RST pulse), 10 s cooldown | TTC | none |
 | CDH freshness | C10 | datapool `timestamp_ms` stops advancing | 2 cycles | (new CDH bit) | bus restart | CDH | loop hung → IWDG |
 | Watchdog escalation | F2 | `watchdog_reset_count` | ≥ 3 at boot | — | — | FSW | enter reduced mode - stop updating particular subsystems |
 

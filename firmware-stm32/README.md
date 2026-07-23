@@ -90,19 +90,27 @@ remain unavailable because no onboard producer currently supplies them.
 The radio uses SPI1: PA5/D13 = SCK, PA6/D12 = MISO, and PA7/D11 = MOSI.
 Connect RFM95W NSS to PB6/D10 and RESET to PC7/D9. The SD card uses SPI2.
 
+The normal radio profile on flight and ground is **869.525 MHz, SF8,
+125 kHz bandwidth, coding rate 4/5, 17 dBm PA_BOOST, preamble 8, explicit
+header, payload CRC, and private sync word `0x12`**. A 92-byte frame occupies
+about 287 ms, so the nominal 20-second cadence uses about 1.44% duty cycle;
+three transmissions of the same frame use about 4.31% in the conservative
+retry case. Antenna gain and feeder loss must be included when checking ERP.
+
 
 ### LoRa FDIR
 
 The packet also carries `lora_last_event`, consecutive and lifetime TX-failure
 counts, recovery-attempt count, RX state, and telemetry-ACK timeout count.
-`EQUIPMENT_LORA` remains the high-level SCV fault bit.  TTC resets and
-reinitializes the RFM95W after three consecutive SPI/TX failures; further
-recovery attempts are rate-limited to one per minute.  These fields describe
-modem operation only; without an uplink acknowledgement the spacecraft cannot
-prove that a ground station received a transmitted frame.
+`EQUIPMENT_LORA` remains the high-level SCV fault bit. FDIR requests a TTC
+radio recovery when the modem is idle but unavailable/RX-inactive, after five
+consecutive failed TX attempts, or when at least 12 of the last 20 TX attempts
+failed. Recovery attempts are rate-limited to one every 10 seconds. These fields
+describe modem operation only; without an uplink acknowledgement the spacecraft
+cannot prove that a ground station received a transmitted frame.
 
 After each initialization, the driver reads back the essential frequency,
 modem, and sync-word registers. A read failure is reported as `INIT_FAIL`; a
 successful read with an unexpected value is reported as `CONFIG_FAIL`. In both
-cases TTC keeps the modem unavailable and uses the existing one-minute recovery
-backoff.
+cases TTC keeps the modem unavailable and uses the existing FDIR recovery
+cooldown.

@@ -27,6 +27,7 @@ extern SPI_HandleTypeDef hspi1;
 #define REG_SYNC_WORD            0x39U
 #define REG_DIO_MAPPING_1        0x40U
 #define REG_VERSION              0x42U
+#define REG_PA_DAC               0x4DU
 
 #define MODE_LONG_RANGE           0x80U
 #define MODE_SLEEP                0x00U
@@ -43,6 +44,24 @@ extern SPI_HandleTypeDef hspi1;
 #define LORA_RESET_SETTLE_MS      20U
 #define LORA_SLEEP_SETTLE_MS      10U
 #define LORA_MAX_PAYLOAD          255U
+
+/* Germany 869.4-869.65 MHz SRD profile: 869.525 MHz, SF8, BW 125 kHz,
+ * CR 4/5, explicit header, payload CRC, private sync word and 17 dBm on
+ * PA_BOOST. 0xD96199 tunes to 869,524,963 Hz (about 37 Hz low). */
+#define LORA_FRF_MSB              0xD9U
+#define LORA_FRF_MID              0x61U
+#define LORA_FRF_LSB              0x99U
+#define LORA_MODEM_CONFIG_1       0x72U
+#define LORA_MODEM_CONFIG_2       0x84U
+#define LORA_MODEM_CONFIG_3       0x04U
+#define LORA_SYNC_WORD            0x12U
+#define LORA_PA_CONFIG_17_DBM     0x8FU
+#define LORA_PA_DAC_NORMAL        0x84U
+
+#define LORA_OP_READ              1U
+#define LORA_OP_WRITE             2U
+#define LORA_OP_BURST_WRITE       3U
+#define LORA_OP_SPI_REINIT        4U
 
 typedef enum
 {
@@ -83,28 +102,31 @@ static const LoRaAction_t s_init_actions[] =
     { LORA_ACTION_READ_VERIFY, REG_VERSION, 0x12U },
     { LORA_ACTION_WRITE, REG_OP_MODE, (uint8_t)(MODE_LONG_RANGE | MODE_SLEEP) },
     { LORA_ACTION_DELAY, 0U, LORA_SLEEP_SETTLE_MS },
-    { LORA_ACTION_WRITE, REG_FRF_MSB, 0xD9U },
-    { LORA_ACTION_WRITE, REG_FRF_MID, 0x00U },
-    { LORA_ACTION_WRITE, REG_FRF_LSB, 0x00U },
+    { LORA_ACTION_WRITE, REG_FRF_MSB, LORA_FRF_MSB },
+    { LORA_ACTION_WRITE, REG_FRF_MID, LORA_FRF_MID },
+    { LORA_ACTION_WRITE, REG_FRF_LSB, LORA_FRF_LSB },
     { LORA_ACTION_WRITE, REG_FIFO_TX_BASE_ADDR, 0x00U },
     { LORA_ACTION_WRITE, REG_FIFO_RX_BASE_ADDR, 0x00U },
     { LORA_ACTION_WRITE, REG_FIFO_ADDR_PTR, 0x00U },
-    { LORA_ACTION_WRITE, REG_MODEM_CONFIG_1, 0x72U },
-    { LORA_ACTION_WRITE, REG_MODEM_CONFIG_2, 0x94U },
-    { LORA_ACTION_WRITE, REG_MODEM_CONFIG_3, 0x04U },
+    { LORA_ACTION_WRITE, REG_MODEM_CONFIG_1, LORA_MODEM_CONFIG_1 },
+    { LORA_ACTION_WRITE, REG_MODEM_CONFIG_2, LORA_MODEM_CONFIG_2 },
+    { LORA_ACTION_WRITE, REG_MODEM_CONFIG_3, LORA_MODEM_CONFIG_3 },
     { LORA_ACTION_WRITE, REG_PREAMBLE_MSB, 0x00U },
     { LORA_ACTION_WRITE, REG_PREAMBLE_LSB, 0x08U },
-    { LORA_ACTION_WRITE, REG_SYNC_WORD, 0x12U },
-    { LORA_ACTION_WRITE, REG_PA_CONFIG, 0x8CU },
+    { LORA_ACTION_WRITE, REG_SYNC_WORD, LORA_SYNC_WORD },
+    { LORA_ACTION_WRITE, REG_PA_DAC, LORA_PA_DAC_NORMAL },
+    { LORA_ACTION_WRITE, REG_PA_CONFIG, LORA_PA_CONFIG_17_DBM },
     { LORA_ACTION_WRITE, REG_IRQ_FLAGS, 0xFFU },
     { LORA_ACTION_WRITE, REG_OP_MODE, (uint8_t)(MODE_LONG_RANGE | MODE_STANDBY) },
-    { LORA_ACTION_READ_VERIFY, REG_FRF_MSB, 0xD9U },
-    { LORA_ACTION_READ_VERIFY, REG_FRF_MID, 0x00U },
-    { LORA_ACTION_READ_VERIFY, REG_FRF_LSB, 0x00U },
-    { LORA_ACTION_READ_VERIFY, REG_MODEM_CONFIG_1, 0x72U },
-    { LORA_ACTION_READ_VERIFY, REG_MODEM_CONFIG_2, 0x94U },
-    { LORA_ACTION_READ_VERIFY, REG_MODEM_CONFIG_3, 0x04U },
-    { LORA_ACTION_READ_VERIFY, REG_SYNC_WORD, 0x12U }
+    { LORA_ACTION_READ_VERIFY, REG_FRF_MSB, LORA_FRF_MSB },
+    { LORA_ACTION_READ_VERIFY, REG_FRF_MID, LORA_FRF_MID },
+    { LORA_ACTION_READ_VERIFY, REG_FRF_LSB, LORA_FRF_LSB },
+    { LORA_ACTION_READ_VERIFY, REG_MODEM_CONFIG_1, LORA_MODEM_CONFIG_1 },
+    { LORA_ACTION_READ_VERIFY, REG_MODEM_CONFIG_2, LORA_MODEM_CONFIG_2 },
+    { LORA_ACTION_READ_VERIFY, REG_MODEM_CONFIG_3, LORA_MODEM_CONFIG_3 },
+    { LORA_ACTION_READ_VERIFY, REG_SYNC_WORD, LORA_SYNC_WORD },
+    { LORA_ACTION_READ_VERIFY, REG_PA_DAC, LORA_PA_DAC_NORMAL },
+    { LORA_ACTION_READ_VERIFY, REG_PA_CONFIG, LORA_PA_CONFIG_17_DBM }
 };
 
 static const LoRaAction_t s_rx_start_actions[] =
@@ -169,12 +191,70 @@ static volatile uint8_t s_spi_abort_complete;
 static uint8_t s_spi_finished;
 static uint8_t s_spi_result_error;
 static uint8_t s_spi_reinit_required;
+static uint8_t s_spi_current_reg;
+static uint8_t s_spi_current_op;
 static uint32_t s_spi_start_ms;
 static uint32_t s_spi_abort_start_ms;
+static LoRaDebugStatus_t s_debug = {0};
 
 static uint8_t LoRa_Elapsed(uint32_t now, uint32_t start, uint32_t duration)
 {
     return ((uint32_t)(now - start) >= duration) ? 1U : 0U;
+}
+
+static void LoRa_RecordStatus(LoRaStatus_t status)
+{
+    s_debug.last_status = status;
+    if (status == LORA_OK)
+    {
+        s_debug.last_failed_reg = 0U;
+        s_debug.last_failed_op = 0U;
+        s_debug.last_hal_status = HAL_OK;
+        s_debug.spi_error_code = 0U;
+    }
+}
+
+static void LoRa_RecordSpiFailure(uint8_t address, uint8_t op,
+                                  uint32_t hal_status)
+{
+    s_debug.last_status = LORA_SPI_ERROR;
+    s_debug.last_failed_reg = address;
+    s_debug.last_failed_op = op;
+    s_debug.last_hal_status = hal_status;
+    s_debug.spi_error_code = HAL_SPI_GetError(&hspi1);
+}
+
+static void LoRa_RecordVerifyFailure(uint8_t address, LoRaStatus_t status)
+{
+    s_debug.last_status = status;
+    s_debug.last_failed_reg = address;
+    s_debug.last_failed_op = LORA_OP_READ;
+}
+
+static void LoRa_RecordRegisterValue(uint8_t address, uint8_t value)
+{
+    if (address == REG_VERSION)
+        s_debug.version = value;
+    else if (address == REG_OP_MODE)
+        s_debug.op_mode = value;
+    else if (address == REG_IRQ_FLAGS)
+        s_debug.irq_flags = value;
+    else if (address == REG_FRF_MSB)
+        s_debug.frf_msb = value;
+    else if (address == REG_FRF_MID)
+        s_debug.frf_mid = value;
+    else if (address == REG_FRF_LSB)
+        s_debug.frf_lsb = value;
+    else if (address == REG_MODEM_CONFIG_1)
+        s_debug.modem_config_1 = value;
+    else if (address == REG_MODEM_CONFIG_2)
+        s_debug.modem_config_2 = value;
+    else if (address == REG_MODEM_CONFIG_3)
+        s_debug.modem_config_3 = value;
+    else if (address == REG_SYNC_WORD)
+        s_debug.sync_word = value;
+    else if (address == REG_PAYLOAD_LENGTH)
+        s_debug.payload_length = value;
 }
 
 static void LoRa_Select(void)
@@ -187,6 +267,30 @@ static void LoRa_Deselect(void)
     HAL_GPIO_WritePin(LORA_CS_GPIO_Port, LORA_CS_Pin, GPIO_PIN_SET);
 }
 
+static uint8_t LoRa_ReadRegisterBlocking(uint8_t address, LoRaStatus_t *status)
+{
+    uint8_t tx[2] = { (uint8_t)(address & 0x7FU), 0U };
+    uint8_t rx[2] = { 0U, 0U };
+    HAL_StatusTypeDef hal_status;
+
+    LoRa_Select();
+    hal_status = HAL_SPI_TransmitReceive(&hspi1, tx, rx, sizeof(tx),
+                                         LORA_SPI_TIMEOUT_MS);
+    if (hal_status != HAL_OK)
+    {
+        LoRa_Deselect();
+        if (status != NULL)
+            *status = LORA_SPI_ERROR;
+        LoRa_RecordSpiFailure(address, LORA_OP_READ, (uint32_t)hal_status);
+        return 0U;
+    }
+    LoRa_Deselect();
+    LoRa_RecordRegisterValue(address, rx[1]);
+    if (status != NULL)
+        *status = LORA_OK;
+    return rx[1];
+}
+
 static void LoRa_SetFault(LoRaStatus_t status)
 {
     LoRa_Deselect();
@@ -197,15 +301,22 @@ static void LoRa_SetFault(LoRaStatus_t status)
     s_driver_state = DRIVER_IDLE;
     s_state = LORA_STATE_FAULT;
     s_last_status = status;
+    LoRa_RecordStatus(status);
 }
 
 static uint8_t LoRa_StartTransfer(uint16_t length)
 {
     HAL_StatusTypeDef hal_status;
+    uint8_t address = (uint8_t)(s_spi_tx[0] & 0x7FU);
+    uint8_t op = ((s_spi_tx[0] & 0x80U) != 0U) ? LORA_OP_WRITE : LORA_OP_READ;
 
     if (length == 0U || s_spi_active || s_spi_abort_pending)
         return 0U;
 
+    if (address == REG_FIFO && length > 2U && op == LORA_OP_WRITE)
+        op = LORA_OP_BURST_WRITE;
+    s_spi_current_reg = address;
+    s_spi_current_op = op;
     s_spi_complete = 0U;
     s_spi_error = 0U;
     s_spi_finished = 0U;
@@ -219,6 +330,7 @@ static uint8_t LoRa_StartTransfer(uint16_t length)
         s_spi_active = 0U;
         s_spi_finished = 1U;
         s_spi_result_error = 1U;
+        LoRa_RecordSpiFailure(address, op, (uint32_t)hal_status);
         return 0U;
     }
 
@@ -283,6 +395,7 @@ static void LoRa_CompleteIsolation(LoRaStatus_t status)
     s_driver_state = DRIVER_IDLE;
     s_state = LORA_STATE_ISOLATED;
     s_last_status = status;
+    LoRa_RecordStatus(status);
 }
 
 static void LoRa_ServiceIsolation(uint32_t now)
@@ -317,6 +430,8 @@ static uint8_t LoRa_ConsumeSpi(uint8_t *error)
 
     s_spi_finished = 0U;
     *error = s_spi_result_error;
+    if (*error)
+        LoRa_RecordSpiFailure(s_spi_current_reg, s_spi_current_op, HAL_ERROR);
     return 1U;
 }
 
@@ -327,6 +442,7 @@ static void LoRa_CompleteOperation(LoRaStatus_t status)
     s_last_status = status;
     s_state = (status == LORA_OK) ? LORA_STATE_IDLE : LORA_STATE_FAULT;
     s_driver_state = DRIVER_IDLE;
+    LoRa_RecordStatus(status);
     if (status != LORA_OK)
     {
         s_ready = 0U;
@@ -351,10 +467,14 @@ static uint8_t LoRa_RunActions(const LoRaAction_t *actions, uint8_t count)
             return 0U;
         }
         action = &actions[s_action_index];
+        if (action->type == LORA_ACTION_READ_VERIFY)
+            LoRa_RecordRegisterValue(action->address, s_spi_rx[1]);
         if (action->type == LORA_ACTION_READ_VERIFY && s_spi_rx[1] != action->value)
         {
-            LoRa_SetFault((action->address == REG_VERSION) ? LORA_VERSION_MISMATCH :
-                                                            LORA_CONFIG_ERROR);
+            LoRaStatus_t status = (action->address == REG_VERSION) ?
+                                  LORA_VERSION_MISMATCH : LORA_CONFIG_ERROR;
+            LoRa_RecordVerifyFailure(action->address, status);
+            LoRa_SetFault(status);
             return 0U;
         }
         s_action_index++;
@@ -463,6 +583,7 @@ static void LoRa_ServiceTx(void)
                 return;
             }
             irq = s_spi_rx[1];
+            LoRa_RecordRegisterValue(REG_IRQ_FLAGS, irq);
             if ((irq & IRQ_TX_DONE) != 0U)
             {
                 s_tx_completion_status = LORA_OK;
@@ -657,7 +778,10 @@ void HAL_SPI_AbortCpltCallback(SPI_HandleTypeDef *hspi)
 LoRaStatus_t LoRa_Init(void)
 {
     if (s_spi_active || s_spi_abort_pending || LoRa_IsBusy())
+    {
+        LoRa_RecordStatus(LORA_BUSY);
         return LORA_BUSY;
+    }
 
     if (s_spi_reinit_required)
     {
@@ -665,6 +789,7 @@ LoRaStatus_t LoRa_Init(void)
         {
             s_state = LORA_STATE_FAULT;
             s_last_status = LORA_SPI_ERROR;
+            LoRa_RecordSpiFailure(0U, LORA_OP_SPI_REINIT, HAL_ERROR);
             return LORA_SPI_ERROR;
         }
         s_spi_reinit_required = 0U;
@@ -679,6 +804,7 @@ LoRaStatus_t LoRa_Init(void)
     s_action_waiting = 0U;
     s_delay_active = 0U;
     s_last_status = LORA_BUSY;
+    LoRa_RecordStatus(LORA_BUSY);
     s_state = LORA_STATE_INITIALISING;
     s_driver_state = DRIVER_INIT_RESET_LOW;
     return LORA_OK;
@@ -687,21 +813,35 @@ LoRaStatus_t LoRa_Init(void)
 LoRaStatus_t LoRa_Send(const uint8_t *data, uint8_t length, uint32_t timeout_ms)
 {
     if (data == NULL || length == 0U)
+    {
+        LoRa_RecordStatus(LORA_LENGTH_ERROR);
         return LORA_LENGTH_ERROR;
+    }
     if (LoRa_IsIsolated())
+    {
+        LoRa_RecordStatus(LORA_ISOLATED);
         return LORA_ISOLATED;
+    }
     if (!s_ready)
+    {
+        LoRa_RecordStatus(LORA_NOT_READY);
         return LORA_NOT_READY;
+    }
     if (LoRa_IsBusy())
+    {
+        LoRa_RecordStatus(LORA_BUSY);
         return LORA_BUSY;
+    }
 
     memcpy(s_tx_data, data, length);
     s_tx_length = length;
+    s_debug.payload_length = length;
     s_deadline_ms = timeout_ms;
     s_action_index = 0U;
     s_action_waiting = 0U;
     s_rx_active = 0U;
     s_last_status = LORA_BUSY;
+    LoRa_RecordStatus(LORA_BUSY);
     s_state = LORA_STATE_TRANSMITTING;
     s_driver_state = DRIVER_TX_ACTIONS;
     return LORA_OK;
@@ -710,16 +850,26 @@ LoRaStatus_t LoRa_Send(const uint8_t *data, uint8_t length, uint32_t timeout_ms)
 LoRaStatus_t LoRa_StartReceive(void)
 {
     if (LoRa_IsIsolated())
+    {
+        LoRa_RecordStatus(LORA_ISOLATED);
         return LORA_ISOLATED;
+    }
     if (!s_ready)
+    {
+        LoRa_RecordStatus(LORA_NOT_READY);
         return LORA_NOT_READY;
+    }
     if (LoRa_IsBusy())
+    {
+        LoRa_RecordStatus(LORA_BUSY);
         return LORA_BUSY;
+    }
 
     s_action_index = 0U;
     s_action_waiting = 0U;
     s_rx_active = 0U;
     s_last_status = LORA_BUSY;
+    LoRa_RecordStatus(LORA_BUSY);
     s_state = LORA_STATE_STARTING_RX;
     s_driver_state = DRIVER_RX_START_ACTIONS;
     return LORA_OK;
@@ -833,6 +983,55 @@ LoRaStatus_t LoRa_Receive(uint8_t *data, uint8_t *length, uint8_t capacity)
     *length = s_rx_pending_length;
     s_rx_pending_status = LORA_NO_PACKET;
     return LORA_OK;
+}
+
+LoRaStatus_t LoRa_ReadDebugRegisters(void)
+{
+    LoRaStatus_t status = LORA_OK;
+
+    if (s_spi_active || s_spi_abort_pending || LoRa_IsBusy())
+        return LORA_BUSY;
+
+    (void)LoRa_ReadRegisterBlocking(REG_VERSION, &status);
+    if (status != LORA_OK)
+        return status;
+    (void)LoRa_ReadRegisterBlocking(REG_OP_MODE, &status);
+    if (status != LORA_OK)
+        return status;
+    (void)LoRa_ReadRegisterBlocking(REG_IRQ_FLAGS, &status);
+    if (status != LORA_OK)
+        return status;
+    (void)LoRa_ReadRegisterBlocking(REG_FRF_MSB, &status);
+    if (status != LORA_OK)
+        return status;
+    (void)LoRa_ReadRegisterBlocking(REG_FRF_MID, &status);
+    if (status != LORA_OK)
+        return status;
+    (void)LoRa_ReadRegisterBlocking(REG_FRF_LSB, &status);
+    if (status != LORA_OK)
+        return status;
+    (void)LoRa_ReadRegisterBlocking(REG_MODEM_CONFIG_1, &status);
+    if (status != LORA_OK)
+        return status;
+    (void)LoRa_ReadRegisterBlocking(REG_MODEM_CONFIG_2, &status);
+    if (status != LORA_OK)
+        return status;
+    (void)LoRa_ReadRegisterBlocking(REG_MODEM_CONFIG_3, &status);
+    if (status != LORA_OK)
+        return status;
+    (void)LoRa_ReadRegisterBlocking(REG_SYNC_WORD, &status);
+    if (status != LORA_OK)
+        return status;
+    (void)LoRa_ReadRegisterBlocking(REG_PAYLOAD_LENGTH, &status);
+    return status;
+}
+
+void LoRa_GetDebugStatus(LoRaDebugStatus_t *status)
+{
+    if (status == NULL)
+        return;
+
+    *status = s_debug;
 }
 
 uint8_t LoRa_IsBusy(void)
