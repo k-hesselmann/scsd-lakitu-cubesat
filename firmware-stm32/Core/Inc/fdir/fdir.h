@@ -26,7 +26,7 @@
 #define FDIR_LORA_FAULT_WINDOW           10U
 #define FDIR_LORA_FAULT_WINDOW_FAILS      9U   /* 90% of 10 */
 #define FDIR_FRESHNESS_MS             2000U
-#define FDIR_SD_REINIT_PERIOD_MS      5000U
+#define FDIR_SD_REINIT_PERIOD_MS      20000U
 #define FDIR_WATCHDOG_RESET_LIMIT     3U      /* consecutive boots, not time */
 
 /* Cooldowns between recovery requests for the same equipment. GPS gets a
