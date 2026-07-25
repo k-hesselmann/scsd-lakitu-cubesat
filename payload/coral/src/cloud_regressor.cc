@@ -128,28 +128,40 @@ static void SaveSeq(uint32_t seq) {
 // Images are the same headerless 224x224 Y8 format the OBC's SD card gets, so
 // tools/raw_to_png.py converts them too.
 //
-// The littlefs partition is the stock 64 MiB (512 blocks, ~57 MiB free after
-// the ~2.8 MiB model). It can optionally be widened to the chip's full 128 MiB
-// with patches/coralmicro-littlefs-full-partition.patch (block_count 512->1012),
-// but archiving every SECOND frame (kBackupImageEveryN below) already keeps a
-// full flight in 64 MiB, so the patch is not required. Once the partition fills
-// (or kBackupMaxImages is reached) further images are just skipped -- NOT
-// wrapped/overwritten -- so a long flight stops rather than erasing the early
-// (most interesting: ascent) frames.
+// The littlefs partition is the stock 64 MiB (512 blocks of 131072 B each).
+// patches/coralmicro-littlefs-full-partition.patch can widen this to the
+// chip's full 128 MiB (block_count 512->1012), but that patch left a board
+// unable to flash during bring-up, so this flight stays on the stock,
+// unpatched 64 MiB partition.
+//
+// Capacity is BLOCK-limited, not byte-summed: littlefs allocates a whole
+// 131072 B block per file and never shares a block between files, and each
+// 50176 B image is smaller than one block, so every archived image actually
+// costs a full block (~62% of it wasted) regardless of the image's real
+// size. The ~2.8 MiB model takes 23 blocks, leaving ~475 free (log.csv stays
+// well under 1 block in practice -- see its own cap note below). That means
+// this partition holds ~475 images, not "free bytes / 50176".
 //
 // Sized against the mission profile: flights run at most 6 h at the 10 s
 // inference cadence the OBC configures (coral.c's SET_INTERVAL 10000), i.e.
-// <= 2160 inferences/flight. Archiving every SECOND frame (kBackupImageEveryN=2)
-// keeps a whole flight in the stock 64 MiB partition:
-//   1080 images * 50176 B = ~54.2 MB, vs. ~57 MiB free -- fits with ~5% margin.
-// log.csv still logs EVERY inference's seq,fraction, so the cloud-cover series
-// stays complete even though only every other frame is archived as an image.
+// <= 2160 inferences/flight. Archiving every 6th frame (kBackupImageEveryN=6)
+// needs 360 images for a whole flight, comfortably inside the ~475-block
+// budget (~115 blocks / ~24% spare). Every 3rd (kBackupImageEveryN=3, 720
+// images needed) does NOT fit -- it would exhaust the partition around the
+// ~4 h mark and silently stop archiving images for the rest of the flight.
+// Once the partition fills (or kBackupMaxImages is reached) further images
+// are just skipped -- NOT wrapped/overwritten -- so a long flight stops
+// rather than erasing the early (most interesting: ascent) frames.
+// log.csv still logs EVERY inference's seq,fraction regardless of the image
+// cap, so the cloud-cover series stays complete even if image archiving
+// stops early.
 // kBackupMaxImages (2200) is a backstop against a shorter-than-10 s interval;
-// on 64 MiB the partition itself fills (~1150 images) before that cap binds.
+// on the stock 64 MiB partition the block budget above (~475 images) binds
+// well before that cap does.
 // ---------------------------------------------------------------------------
 const char kBackupDir[]     = "/backup";
 const char kBackupLogPath[] = "/backup/log.csv";
-constexpr int kBackupImageEveryN  = 2;   // archive every 2nd frame (fits 64 MiB)
+constexpr int kBackupImageEveryN  = 6;   // archive every 6th frame (fits 64 MiB for a full flight)
 constexpr int kBackupMaxImages    = 2200;
 // Backstop only (not sized against a real budget): stop growing the CSV log
 // past this size. At one ~12-byte line per inference this is many years of
@@ -565,10 +577,12 @@ void CloudConsole(tflite::MicroInterpreter* interpreter, uint32_t seq) {
 }
 
 // ---------------------------------------------------------------------------
-// Backup retrieval RPCs -- always exported (flight build included). This is
-// the "connect over USB after landing" read-out path for the /backup files
-// written by BackupAppendLog / BackupSaveImage above; there is no OBC/UART
-// equivalent. See tools/fetch_backup.py for the host-side puller.
+// Backup RPCs -- always exported (flight build included). list_backup_files /
+// get_backup_file are the "connect over USB after landing" read-out path for
+// the /backup files written by BackupAppendLog / BackupSaveImage above (see
+// tools/fetch_backup.py); clear_backup is the pre-flight wipe (see
+// tools/clear_backup.py) so bench-test frames don't eat into the flight's
+// block budget. None of this has an OBC/UART equivalent.
 // ---------------------------------------------------------------------------
 
 // Lists /backup contents as JSON: [{"name":..., "size":...}, ...].
@@ -618,6 +632,36 @@ void GetBackupFileRpc(struct jsonrpc_request* r) {
         return;
     }
     jsonrpc_return_success(r, "{%Q:%V}", "data", data.size(), data.data());
+}
+
+// Deletes every file under /backup (img_*.raw + log.csv) and resets the
+// in-memory counters, so the archive starts flight fresh with the whole
+// block budget available again. Pre-flight step: run this, then confirm
+// list_backup_files comes back empty. See tools/clear_backup.py.
+// Call: POST http://10.10.10.1/jsonrpc {"method":"clear_backup"}
+void ClearBackupRpc(struct jsonrpc_request* r) {
+    lfs_dir_t dir;
+    if (lfs_dir_open(Lfs(), &dir, kBackupDir) < 0) {
+        jsonrpc_return_success(r, "{%Q:%d}", "deleted", 0);
+        return;
+    }
+    // Collect names first: removing entries while lfs_dir_read is iterating
+    // the same directory is not safe.
+    std::vector<std::string> names;
+    lfs_info info;
+    while (lfs_dir_read(Lfs(), &dir, &info) > 0) {
+        if (info.type == LFS_TYPE_REG) names.emplace_back(info.name);
+    }
+    lfs_dir_close(Lfs(), &dir);
+
+    int deleted = 0;
+    for (const auto& name : names) {
+        std::string path = std::string(kBackupDir) + "/" + name;
+        if (lfs_remove(Lfs(), path.c_str()) == 0) ++deleted;
+    }
+    g_backup_img_count = 0;
+    g_backup_img_cap_logged = false;
+    jsonrpc_return_success(r, "{%Q:%d}", "deleted", deleted);
 }
 
 #if CLOUD_DEBUG
@@ -750,12 +794,13 @@ static bool UartInit() {
 
     // The JSON-RPC/HTTP server is brought up unconditionally: it also enumerates
     // the USB CDC console that printf logging relies on. Flight builds export
-    // only the backup read-out endpoints (list_backup_files/get_backup_file);
+    // only the backup endpoints (list_backup_files/get_backup_file/clear_backup);
     // bench builds (CLOUD_DEBUG) additionally export the image/burst
     // inspection endpoints.
     jsonrpc_init(nullptr, nullptr);
     jsonrpc_export("list_backup_files", ListBackupFilesRpc);
     jsonrpc_export("get_backup_file", GetBackupFileRpc);
+    jsonrpc_export("clear_backup", ClearBackupRpc);
 #if CLOUD_DEBUG
     jsonrpc_export("get_last_image", GetLastImageRpc);
     jsonrpc_export("get_burst_count", GetBurstCountRpc);
