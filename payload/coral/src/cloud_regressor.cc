@@ -595,9 +595,17 @@ void ListBackupFilesRpc(struct jsonrpc_request* r) {
 // Returns one /backup file's raw bytes, base64-encoded.
 // Call with params {"name": "img_00003360.raw"} (or "log.csv").
 void GetBackupFileRpc(struct jsonrpc_request* r) {
-    std::string name;
-    if (!JsonRpcGetStringParam(r, "name", &name) || name.empty() ||
-        name.find('/') != std::string::npos) {
+    // Read "name" directly as $.name — matches fetch_backup.py's {"name": ...}
+    // object params (and the $.index style used by the burst RPC below).
+    // Do NOT use coralmicro's JsonRpcGetStringParam here: it expects $[0].name
+    // (array-wrapped params) so it never matched, AND it emits its own error
+    // before returning false — combined with the second error this handler used
+    // to send, that produced a malformed two-object JSON reply that wedged the
+    // RPC server (hung the board). One param read, one error path, one reply.
+    char name[64] = {0};
+    int name_len = mjson_get_string(r->params, r->params_len, "$.name",
+                                    name, sizeof(name));
+    if (name_len <= 0 || strchr(name, '/') != nullptr) {
         jsonrpc_return_error(r, -1, "missing/invalid 'name' param", nullptr);
         return;
     }
