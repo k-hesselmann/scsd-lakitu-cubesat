@@ -6,6 +6,8 @@ import threading
 from collections import deque
 from datetime import datetime, timezone
 
+from telemetry_decoder import format_equipment_mask
+
 
 class TelemetryStore:
     """
@@ -38,10 +40,8 @@ class TelemetryStore:
         self.total_crc_errors = 0
         self.total_packet_type_errors = 0
         self.total_protocol_errors = 0
-        self.total_length_errors = 0
         self.total_lost_packets = 0
         self.total_duplicate_packets = 0
-        self.total_out_of_order_packets = 0
         self.consecutive_duplicate_packets = 0
         self.sequence_session_resets = 0
 
@@ -102,8 +102,6 @@ class TelemetryStore:
             "crc_ok",
             "received_crc16",
             "calculated_crc16",
-            "rejection_reason",
-            "raw_payload_hex",
 
             # Counters
             "sequence_number",
@@ -113,8 +111,6 @@ class TelemetryStore:
             "is_duplicate_packet",
             "consecutive_duplicate_packets",
             "total_duplicate_packets",
-            "is_out_of_order_packet",
-            "total_out_of_order_packets",
 
             # Time and state
             "utc_timestamp",
@@ -217,7 +213,9 @@ class TelemetryStore:
             "coral_valid_raw",
             "scv_mission_elapsed_ms",
             "scv_equipment_enabled",
+            "scv_equipment_enabled_decoded",
             "scv_equipment_faults",
+            "scv_equipment_faults_decoded",
             "scv_sd_fault_count",
             "scv_watchdog_reset_count",
             "reset_reason_name",
@@ -250,13 +248,7 @@ class TelemetryStore:
             "coral_payload_hex",
         ]
 
-    def add_packet(
-        self,
-        telemetry_packet,
-        lora_rssi_dbm=None,
-        lora_snr_db=None,
-        raw_payload=None,
-    ):
+    def add_packet(self, telemetry_packet, lora_rssi_dbm=None, lora_snr_db=None):
         """Store every decoded frame, but advance mission state only for trusted telemetry."""
 
         now = datetime.now(timezone.utc)
@@ -285,17 +277,6 @@ class TelemetryStore:
                 lora_snr_db=lora_snr_db,
                 update_sequence=telemetry_valid,
             )
-            if not telemetry_valid:
-                rejection_reasons = []
-                if not telemetry_packet.packet_type_ok:
-                    rejection_reasons.append("unsupported_packet_type")
-                if not telemetry_packet.protocol_version_ok:
-                    rejection_reasons.append("unsupported_protocol_version")
-                if not telemetry_packet.crc_ok:
-                    rejection_reasons.append("crc_mismatch")
-                row["rejection_reason"] = ",".join(rejection_reasons)
-                if raw_payload is not None:
-                    row["raw_payload_hex"] = bytes(raw_payload).hex(" ")
             self.history.append(row)
 
             if self.csv_writer is not None:
@@ -305,45 +286,6 @@ class TelemetryStore:
 
         return row
 
-    def add_rejected_frame(
-        self,
-        payload,
-        *,
-        lora_rssi_dbm=None,
-        lora_snr_db=None,
-        reason="invalid_length",
-    ):
-        """Retain an undecodable RF observation without trusting its contents."""
-        now = datetime.now(timezone.utc)
-        row = {
-            "pc_receive_time_iso": now.isoformat(),
-            "pc_receive_time_unix": now.timestamp(),
-            "lora_downlink_rssi_dbm": lora_rssi_dbm,
-            "lora_downlink_snr_db": lora_snr_db,
-            "lora_crc_error": False,
-            "telemetry_valid": False,
-            "packet_type": payload[0] if len(payload) >= 1 else None,
-            "protocol_version": payload[1] if len(payload) >= 2 else None,
-            "packet_type_ok": False,
-            "protocol_version_ok": False,
-            "length_ok": False,
-            "crc_ok": False,
-            "received_crc16": None,
-            "calculated_crc16": None,
-            "rejection_reason": reason,
-            "raw_payload_hex": bytes(payload).hex(" "),
-        }
-        with self.lock:
-            self.total_packets_received += 1
-            self.total_invalid_packets += 1
-            self.total_length_errors += 1
-            self.history.append(row)
-            if self.csv_writer is not None:
-                self.csv_writer.writerow(row)
-                self.csv_file.flush()
-                self.total_packets_logged += 1
-        return dict(row)
-
     def _calculate_sequence_health(self, sequence_number, boot_count, uptime_ms):
         """Estimate loss within one spacecraft boot/session, including uint16 wrap."""
 
@@ -352,7 +294,7 @@ class TelemetryStore:
             self.previous_boot_count = boot_count
             self.previous_uptime_ms = uptime_ms
             self.consecutive_duplicate_packets = 0
-            return 0, False, False, False
+            return 0, False, False
 
         boot_changed = boot_count != self.previous_boot_count
         uptime_regressed = (
@@ -366,19 +308,18 @@ class TelemetryStore:
             self.previous_uptime_ms = uptime_ms
             self.consecutive_duplicate_packets = 0
             self.sequence_session_resets += 1
-            return 0, False, True, False
+            return 0, False, True
 
         previous = self.previous_sequence_number
         if sequence_number == previous:
             self.total_duplicate_packets += 1
             self.consecutive_duplicate_packets += 1
-            return 0, True, False, False
+            return 0, True, False
 
-        difference = (sequence_number - previous) & 0xFFFF
-        if difference >= 0x8000:
-            self.total_out_of_order_packets += 1
-            self.consecutive_duplicate_packets = 0
-            return 0, False, False, True
+        if sequence_number >= previous:
+            difference = sequence_number - previous
+        else:
+            difference = (65536 - previous) + sequence_number
 
         self.previous_sequence_number = sequence_number
         self.previous_boot_count = boot_count
@@ -386,11 +327,11 @@ class TelemetryStore:
         self.consecutive_duplicate_packets = 0
 
         if difference <= 1:
-            return 0, False, False, False
+            return 0, False, False
 
         lost = difference - 1
         self.total_lost_packets += lost
-        return lost, False, False, False
+        return lost, False, False
 
     def _packet_to_row(
         self,
@@ -401,7 +342,7 @@ class TelemetryStore:
         update_sequence=False,
     ):
         if update_sequence:
-            lost_packets, is_duplicate, sequence_session_reset, is_out_of_order = (
+            lost_packets, is_duplicate, sequence_session_reset = (
                 self._calculate_sequence_health(
                     telemetry_packet.sequence_number,
                     telemetry_packet.boot_count,
@@ -409,9 +350,7 @@ class TelemetryStore:
                 )
             )
         else:
-            lost_packets, is_duplicate, sequence_session_reset, is_out_of_order = (
-                0, False, False, False
-            )
+            lost_packets, is_duplicate, sequence_session_reset = 0, False, False
 
         status = telemetry_packet.status_flags
         reset = telemetry_packet.reset_cause
@@ -443,8 +382,6 @@ class TelemetryStore:
             "is_duplicate_packet": is_duplicate,
             "consecutive_duplicate_packets": self.consecutive_duplicate_packets,
             "total_duplicate_packets": self.total_duplicate_packets,
-            "is_out_of_order_packet": is_out_of_order,
-            "total_out_of_order_packets": self.total_out_of_order_packets,
 
             # Time and state
             "utc_timestamp": telemetry_packet.utc_timestamp,
@@ -555,7 +492,9 @@ class TelemetryStore:
             "coral_valid_raw": telemetry_packet.coral_valid_raw,
             "scv_mission_elapsed_ms": telemetry_packet.scv_mission_elapsed_ms,
             "scv_equipment_enabled": f"0x{telemetry_packet.scv_equipment_enabled:04X}",
+            "scv_equipment_enabled_decoded": format_equipment_mask(telemetry_packet.scv_equipment_enabled),
             "scv_equipment_faults": f"0x{telemetry_packet.scv_equipment_faults:04X}",
+            "scv_equipment_faults_decoded": format_equipment_mask(telemetry_packet.scv_equipment_faults),
             "scv_sd_fault_count": telemetry_packet.scv_sd_fault_count,
             "scv_watchdog_reset_count": telemetry_packet.scv_watchdog_reset_count,
             "reset_reason_name": telemetry_packet.reset_reason_name,
@@ -660,10 +599,8 @@ class TelemetryStore:
                 "total_crc_errors": self.total_crc_errors,
                 "total_packet_type_errors": self.total_packet_type_errors,
                 "total_protocol_errors": self.total_protocol_errors,
-                "total_length_errors": self.total_length_errors,
                 "total_lost_packets": self.total_lost_packets,
                 "total_duplicate_packets": self.total_duplicate_packets,
-                "total_out_of_order_packets": self.total_out_of_order_packets,
                 "consecutive_duplicate_packets": self.consecutive_duplicate_packets,
                 "sequence_session_resets": self.sequence_session_resets,
                 "history_length": len(self.history),

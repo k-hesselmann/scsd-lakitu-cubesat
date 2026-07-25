@@ -5,9 +5,6 @@ export type TelemetryRow = {
   lora_downlink_rssi_dbm?: number | null
   lora_downlink_snr_db?: number | null
   lora_crc_error?: boolean
-  telemetry_valid?: boolean
-  rejection_reason?: string
-  raw_payload_hex?: string
 
   // V8 packet envelope and ground-side validation.
   packet_type?: number
@@ -24,8 +21,6 @@ export type TelemetryRow = {
   is_duplicate_packet?: boolean
   consecutive_duplicate_packets?: number
   total_duplicate_packets?: number
-  is_out_of_order_packet?: boolean
-  total_out_of_order_packets?: number
 
   // Engineering values normalized from the active wire revision.
   obc_uptime_ms?: number
@@ -34,25 +29,25 @@ export type TelemetryRow = {
   gnss_utc_sod?: number | null
   flight_state?: number
   flight_state_name?: string
-  battery_mv?: number | null
-  battery_v?: number | null
+  battery_mv?: number
+  battery_v?: number
   gnss_fix_type?: number | null
   gnss_satellites_used?: number | null
-  latitude_deg?: number | null
-  longitude_deg?: number | null
-  gnss_altitude_m?: number | null
-  ground_speed_ms?: number | null
-  vertical_speed_ms?: number | null
+  latitude_deg?: number
+  longitude_deg?: number
+  gnss_altitude_m?: number
+  ground_speed_ms?: number
+  vertical_speed_ms?: number
   course_deg?: number | null
-  baro_pressure_pa?: number | null
-  baro_temperature_c?: number | null
-  baro_altitude_m?: number | null
-  accel_x_ms2?: number | null
-  accel_y_ms2?: number | null
-  accel_z_ms2?: number | null
-  gyro_x_rads?: number | null
-  gyro_y_rads?: number | null
-  gyro_z_rads?: number | null
+  baro_pressure_pa?: number
+  baro_temperature_c?: number
+  baro_altitude_m?: number
+  accel_x_ms2?: number
+  accel_y_ms2?: number
+  accel_z_ms2?: number
+  gyro_x_rads?: number
+  gyro_y_rads?: number
+  gyro_z_rads?: number
 
   // Raw v8 fixed-point and derived engineering values.
   latitude_e7?: number | null
@@ -93,7 +88,9 @@ export type TelemetryRow = {
   reset_cause_raw?: number
   reset_reason_name?: string
   scv_equipment_enabled?: string
+  scv_equipment_enabled_decoded?: string
   scv_equipment_faults?: string
+  scv_equipment_faults_decoded?: string
   scv_sd_fault_count?: number
   scv_watchdog_reset_count?: number
 
@@ -130,10 +127,6 @@ export type ReceiverSnapshot = {
   lora_crc_errors: number
   command_tx_count: number
   command_tx_failures: number
-  radio_io_failures?: number
-  radio_reconnect_attempts?: number
-  radio_reconnect_successes?: number
-  consecutive_radio_failures?: number
   telemetry_ack_tx_count?: number
   telemetry_ack_tx_failures?: number
   last_telemetry_ack_sequence?: number | null
@@ -147,19 +140,13 @@ export type ReceiverSnapshot = {
 
 export type StoreStats = {
   total_packets_received: number
-  total_valid_packets: number
-  total_invalid_packets: number
-  total_unique_valid_packets: number
   total_packets_logged: number
   total_crc_errors: number
   total_packet_type_errors: number
   total_protocol_errors: number
-  total_length_errors: number
   total_lost_packets: number
   total_duplicate_packets?: number
-  total_out_of_order_packets?: number
   consecutive_duplicate_packets?: number
-  sequence_session_resets?: number
   history_length: number
   csv_path: string | null
 }
@@ -174,20 +161,12 @@ export type BackendStatus = {
   stats: StoreStats | null
   ground_event_stats?: GroundEventStats | null
   latest: TelemetryRow | null
-  command_safety?: CommandSafety
   config?: {
     frequency_hz: number
     spreading_factor: number
     sync_word: number
     tx_power_dbm: number
     telemetry_ack_turnaround_s?: number
-    radio_reconnect_max_attempts?: number
-    radio_reconnect_initial_backoff_s?: number
-    radio_reconnect_max_backoff_s?: number
-    command_auth_required?: boolean
-    rf_uplink_auth_configured?: boolean
-    command_arm_duration_s?: number
-    command_min_interval_s?: number
     telemetry_packet_size: number
     csv_enabled: boolean
     history: number
@@ -205,7 +184,6 @@ export type TelemetryWebSocketMessage = {
     | "decode_error"
     | "receiver_error"
     | "command_tx"
-    | "invalid_telemetry"
   data?: TelemetryRow | BackendStatus | unknown
   status?: BackendStatus
   error?: string
@@ -218,17 +196,6 @@ export type TimelineEventType =
   | "decode_error"
   | "receiver_error"
   | "non_telemetry_packet"
-  | "invalid_telemetry"
-
-export type CommandSafety = {
-  auth_required: boolean
-  rf_auth_configured: boolean
-  command_ids_remaining: number
-  armed: boolean
-  armed_remaining_s: number
-  arm_duration_s: number
-  minimum_interval_s: number
-}
 
 export type TimelineEvent = {
   id: string

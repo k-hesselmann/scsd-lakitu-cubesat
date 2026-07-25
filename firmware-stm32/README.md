@@ -74,29 +74,13 @@ validity bits, operational FDIR masks, compact Coral results, and CRC-16/CCITT.
 The ground station accepts only this 92-byte v8 frame and converts its wire
 values back to engineering units.
 
-TTC normally transmits every 20 seconds and may queue an immediate packet after
-a flight-state transition. Ground-command status is reported without allowing
-uplink traffic to increase that nominal cadence. TTC accepts reliable
-`CMD,<id>,REQ_TELEMETRY` commands and packet-bound telemetry
+TTC normally transmits every 20 seconds, but queues an immediate packet after a
+flight-state transition or valid ground command. It accepts reliable
+`CMD,<id>,REQ_TELEMETRY` commands and `ACK,<sequence>` telemetry
 acknowledgements. Flight retries an unacknowledged packet up to three times
 using the exact same bytes and sequence. Command confirmation and telemetry-ACK
 status are independently latched, so ACK processing cannot hide a command
-response before ground receives it. Command IDs are persisted by the ground
-backend. Flight distinguishes an executed duplicate from an old `STALE` ID,
-rate-limits new commands to one per nominal telemetry interval, and never lets
-uplink traffic increase the configured downlink cadence. Ground never wraps the
-16-bit ID under one RF key; exhausting the space requires coordinated rekeying,
-which prevents captured commands from becoming valid again after wraparound.
-
-Every uplink is authenticated as
-`ACK,<boot>,<sequence>,<tx_uptime_s>,<tag>` or
-`CMD,<id>,<verb>,<tag>` with a 64-bit SipHash-2-4
-tag and a provisioned 128-bit key. Production builds fail unless
-`TTC_AUTH_KEY_0` and `TTC_AUTH_KEY_1` are injected by the build environment;
-the corresponding ground key is supplied through `TTC_RF_AUTH_KEY_HEX`. No
-flight secret is stored in the repository.
-The boot/sequence/uptime tuple binds an ACK to one outstanding telemetry frame
-and prevents reuse of a previously captured acknowledgement.
+response before ground receives it.
 
 V8 includes GNSS UTC, fix type, satellites, and course; all IMU axes; barometer
 pressure/altitude/temperature; battery voltage; Coral cloud fraction/status;
@@ -107,7 +91,7 @@ The radio uses SPI1: PA5/D13 = SCK, PA6/D12 = MISO, and PA7/D11 = MOSI.
 Connect RFM95W NSS to PB6/D10 and RESET to PC7/D9. The SD card uses SPI2.
 
 The normal radio profile on flight and ground is **869.525 MHz, SF8,
-125 kHz bandwidth, coding rate 4/5, 17 dBm PA_BOOST, HF LNA boost, preamble 8, explicit
+125 kHz bandwidth, coding rate 4/5, 17 dBm PA_BOOST, preamble 8, explicit
 header, payload CRC, and private sync word `0x12`**. A 92-byte frame occupies
 about 287 ms, so the nominal 20-second cadence uses about 1.44% duty cycle;
 three transmissions of the same frame use about 4.31% in the conservative
@@ -118,14 +102,15 @@ retry case. Antenna gain and feeder loss must be included when checking ERP.
 
 The packet also carries `lora_last_event`, consecutive and lifetime TX-failure
 counts, recovery-attempt count, RX state, and telemetry-ACK timeout count.
-`EQUIPMENT_LORA` remains the high-level SCV fault bit. TTC requests RFM95W
-recovery after five consecutive SPI/TX failures or at least 12 failures in the
-last 20 attempts. Further recovery requests use a 10-second cooldown. These fields describe
-modem operation only; without an uplink acknowledgement the spacecraft cannot
-prove that a ground station received a transmitted frame.
+`EQUIPMENT_LORA` remains the high-level SCV fault bit. FDIR requests a TTC
+radio recovery when the modem is idle but unavailable/RX-inactive, after five
+consecutive failed TX attempts, or when at least 12 of the last 20 TX attempts
+failed. Recovery attempts are rate-limited to one every 10 seconds. These fields
+describe modem operation only; without an uplink acknowledgement the spacecraft
+cannot prove that a ground station received a transmitted frame.
 
 After each initialization, the driver reads back the essential frequency,
 modem, and sync-word registers. A read failure is reported as `INIT_FAIL`; a
 successful read with an unexpected value is reported as `CONFIG_FAIL`. In both
-cases TTC keeps the modem unavailable and uses the FDIR-owned 10-second recovery
+cases TTC keeps the modem unavailable and uses the existing FDIR recovery
 cooldown.

@@ -188,8 +188,7 @@ timeout limit, calls the relevant CDH recovery wrapper no more often than once
 per `FDIR_REINIT_PERIOD_MS`, and starts a nonblocking I2C bus restart when both
 I2C sensors are faulted. GPS, Coral, SD, and EPS recovery ownership remains reserved for their
 subsystem handlers. LoRa recovery is owned by TTC: it resets/reinitializes the
-modem after five consecutive SPI/TX failures or at least 12 failures in the
-last 20 attempts, with a 10-second recovery cooldown.
+modem after three consecutive SPI/TX failures, with a one-minute retry backoff.
 
 ---
 
@@ -207,24 +206,6 @@ Retries send the exact original packet bytes. Signed invalid sentinels are
 Validity bits are authoritative, and temporarily invalid sensors retain their
 last valid encoded measurement.
 
-### 3.1 Authenticated uplink envelopes
-
-Ground-to-flight ASCII traffic is fail-closed and uses:
-
-- `ACK,<boot_count>,<sequence>,<tx_uptime_s>,<tag>`
-- `CMD,<id>,<verb>,<tag>`
-
-`tag` is 16 lowercase hexadecimal characters encoding SipHash-2-4 over the
-ASCII bytes before the final comma. Flight and ground share a provisioned
-128-bit key that is never stored in this repository. An invalid or missing tag
-is ignored without changing trusted command/ACK latches and never executes a
-command or releases a pending telemetry frame. An authenticated but malformed
-payload is classified as invalid format. The complete envelope remains limited
-to 64 bytes.
-Binding an ACK to the packet's saturated boot count, sequence, and transmit
-uptime prevents a captured ACK from releasing a later frame after a sequence
-wrap or spacecraft reboot.
-
 | Bytes | Contents |
 |---|---|
 | 0-11 | type `0x01`, version `0x08`, sequence, TX uptime s, mission elapsed s |
@@ -240,10 +221,6 @@ Validity bits: bit 0 GNSS, bit 1 IMU, bit 2 barometer, bit 3 battery,
 bit 4 Coral. `lora_rx_state` uses bits 0-2 for `LoRaRxHealthStatus_t` and
 bit 3 for RX-continuous active. `uplink_state` uses bits 0-2 for the last CMD
 status and bits 3-5 for the last telemetry-ACK status.
-
-`UplinkStatus_t` wire values are `0 NONE`, `1 ACCEPTED`, `2 INVALID_FORMAT`,
-`3 UNSUPPORTED`, `4 DUPLICATE`, `5 UNEXPECTED_ACK`, `6 STALE`, and
-`7 RATE_LIMITED`.
 
 Ground conversion rules:
 

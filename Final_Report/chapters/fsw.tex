@@ -279,9 +279,10 @@ decided.
 \label{sec:fsw-reduced-mode}
 
 Below the per-equipment monitors sits a processor-level backstop for the
-failure mode none of them can see: the superloop itself hanging (FMECA
-F1). An independent hardware watchdog (IWDG, $\sim$30\,s timeout, FR-011)
-is armed once at boot and kicked once per superloop iteration -- but that
+failure mode none of them can see: initialization or the superloop itself
+hanging (FMECA F1). An independent hardware watchdog (IWDG, nominal
+10\,s timeout, FR-011) is armed immediately after HAL initialization and
+refreshed during startup and once per superloop iteration -- but that
 kick is conditional, not unconditional. Kicking the watchdog
 unconditionally would defeat its own purpose for exactly the failure mode
 it exists to catch: a logic hang that keeps looping without doing useful

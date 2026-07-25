@@ -198,6 +198,12 @@ export function useTelemetryWebSocket(historyLimit = 500, eventLimit = 300) {
 
           pendingMessageType = message.type
 
+          if (message.type === "hello") {
+            pendingStatus = message.data as BackendStatus
+            schedulePublish()
+            return
+          }
+
           if (message.status) {
             pendingStatus = message.status
           }
@@ -264,25 +270,6 @@ export function useTelemetryWebSocket(historyLimit = 500, eventLimit = 300) {
                 title: "Non-telemetry packet",
                 description: "Ground radio received a packet that does not match the 92-byte protocol-v8 telemetry length.",
                 severity: "warning",
-              },
-            ])
-          }
-
-          if (message.type === "invalid_telemetry") {
-            const row = message.data as TelemetryRow
-            const timeUnix = row.pc_receive_time_unix ?? Date.now() / 1000
-            appendEvents([
-              {
-                id: eventId("invalid-telemetry"),
-                type: "invalid_telemetry",
-                time_iso: row.pc_receive_time_iso ?? new Date(timeUnix * 1000).toISOString(),
-                time_unix: timeUnix,
-                title: "Invalid telemetry rejected",
-                description: row.rejection_reason
-                  ? "Frame rejected: " + row.rejection_reason
-                  : "Frame failed packet-type, protocol-version, or CRC validation.",
-                sequence_number: row.sequence_number,
-                severity: "critical",
               },
             ])
           }

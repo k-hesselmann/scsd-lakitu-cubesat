@@ -147,12 +147,13 @@ FDIR intentionally does not consume it.
 
 ## Watchdog (FYI, no action)
 
-The IWDG is armed in `main()` after init (~30 s timeout). It is configured in
-the `.ioc` (prescaler 256, reload 3750) **and** mirrored by the idempotent
-`IWDG_UserInit()` in a main.c USER CODE block, same pattern as the SPIs — if
-you change one, change both. After pulling, CubeIDE users should regenerate
-from the `.ioc` so `stm32l4xx_hal_iwdg.c` is compiled. It is kicked at the
-**end** of the superloop, gated by
-`FDIR_SystemHealthyEnoughToKickWatchdog()`. Any single call that blocks longer
-than ~30 s now resets the MCU. All your HAL calls must use bounded timeouts
-(LoRa driver already verified; please check your own paths).
+The IWDG is armed in `main()` immediately after `HAL_Init()` (nominal 10 s
+timeout). It is configured in the `.ioc` (prescaler 256, reload 1249) **and**
+mirrored by the idempotent `IWDG_UserInit()` in a main.c USER CODE block, same
+pattern as the SPIs — if you change one, change both. After pulling, CubeIDE
+users should regenerate from the `.ioc` so `stm32l4xx_hal_iwdg.c` is compiled.
+It is refreshed between startup phases and then kicked at the **end** of the
+superloop, gated by `FDIR_SystemHealthyEnoughToKickWatchdog()`. Any single call
+that blocks longer than the watchdog window now resets the MCU. All your HAL
+calls must use bounded timeouts (LoRa driver already verified; please check
+your own paths).

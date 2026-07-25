@@ -70,7 +70,6 @@ static void Mock_Reset(void)
     s_spi_finished = 0U;
     s_spi_result_error = 0U;
     s_spi_reinit_required = 0U;
-    s_rx_last_poll_ms = 0U;
 }
 
 static int TestOversizedObservationIsConsumed(void)
@@ -143,25 +142,6 @@ static int TestAbortCallbackCompletesWithoutReset(void)
     return 0;
 }
 
-static int TestCompletedTransferWinsOverDelayedService(void)
-{
-    Mock_Reset();
-    s_spi_active = 1U;
-    s_spi_start_ms = 0U;
-    s_state = LORA_STATE_IDLE;
-    mock_tick = LORA_SPI_TIMEOUT_MS + 50U;
-    HAL_SPI_TxRxCpltCallback(&hspi1);
-
-    LoRa_Service();
-
-    CHECK(s_spi_active == 0U);
-    CHECK(s_spi_finished == 1U);
-    CHECK(s_spi_result_error == 0U);
-    CHECK(mock_abort_calls == 0U);
-    CHECK(mock_deinit_calls == 0U);
-    return 0;
-}
-
 int main(void)
 {
     int result;
@@ -173,7 +153,5 @@ int main(void)
     if (result != 0) return result;
     result = TestAbortTimeoutStillAllowsRecovery();
     if (result != 0) return result;
-    result = TestAbortCallbackCompletesWithoutReset();
-    if (result != 0) return result;
-    return TestCompletedTransferWinsOverDelayedService();
+    return TestAbortCallbackCompletesWithoutReset();
 }

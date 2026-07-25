@@ -121,6 +121,9 @@ static uint8_t s_chunk[512];
 #define HDR_TIMEOUT_MS    500U   /* 16-byte header                             */
 #define CHUNK_TIMEOUT_MS  200U   /* 512-byte chunk (44 ms + 4.5x margin)       */
 #define CRC_TIMEOUT_MS    100U   /* 2-byte CRC trailer                         */
+/* Clear coral_valid at the expected frame cadence; FDIR adds its 5 s invalid
+ * debounce before setting the Coral equipment fault. */
+#define FRAME_STALE_TIMEOUT_MS CORAL_DEFAULT_INTERVAL_MS
 
 static void coral_rx_ring_reset(void)
 {
@@ -250,6 +253,9 @@ static uint8_t  s_status;   /* accumulated CORAL_STATUS_* flags for this frame *
 static uint8_t  s_sd_ok;
 static FIL      s_fframe;
 static char     s_fname[32];
+static uint8_t  s_seen_good_frame;
+static uint8_t  s_frame_stale_reported;
+static uint32_t s_last_good_frame_ms;
 
 /* Abort the in-progress frame: close/delete any partial SD file, publish
  * the given status, log why, and return the state machine to IDLE so the
@@ -457,6 +463,9 @@ static void coral_frame_complete(void)
             s_frame_count++;
             coral_good_frames++;
             dp->coral_valid = 1U;
+            s_seen_good_frame = 1U;
+            s_frame_stale_reported = 0U;
+            s_last_good_frame_ms = now;
             dbg("[CORAL] ===== Frame GOOD =====\r\n");
         }
         else
@@ -481,6 +490,9 @@ void Coral_Init(void)
     /* huart3 must already be initialised by MX_USART3_UART_Init() in main.c. */
     s_uart_ready  = 1U;
     s_frame_count = 0U;
+    s_seen_good_frame = 0U;
+    s_frame_stale_reported = 0U;
+    s_last_good_frame_ms = HAL_GetTick();
     coral_rx_ring_reset();
 
     dbg("\r\n[CORAL] ===== Init start =====\r\n");
@@ -517,6 +529,19 @@ void Coral_Update(SensorData_t *dp)
     }
 
     uint32_t now = HAL_GetTick();
+
+    if (dp->coral_valid &&
+        s_seen_good_frame &&
+        !s_frame_stale_reported &&
+        ((uint32_t)(now - s_last_good_frame_ms) >= FRAME_STALE_TIMEOUT_MS))
+    {
+        dp->coral_valid = 0U;
+        dp->coral_block[7] = CORAL_STATUS_TIMEOUT;
+        coral_last_status = CORAL_STATUS_TIMEOUT;
+        coral_timeout_count++;
+        s_frame_stale_reported = 1U;
+        dbg("[CORAL] !!! Frame freshness timeout\r\n");
+    }
 
     switch (s_rx_state)
     {

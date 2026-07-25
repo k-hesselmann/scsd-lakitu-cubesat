@@ -2,6 +2,7 @@
 // Derived from the coralmicro classify_images example (Apache 2.0, Google LLC).
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -14,6 +15,7 @@
 #include "libs/camera/camera.h"
 #include "libs/nxp/rt1176-sdk/clock_config.h"
 #include "libs/rpc/rpc_http_server.h"
+#include "libs/rpc/rpc_utils.h"
 #include "libs/tensorflow/utils.h"
 #include "libs/tpu/edgetpu_manager.h"
 #include "libs/tpu/edgetpu_op.h"
@@ -112,6 +114,117 @@ static uint32_t LoadSeq() {
 
 static void SaveSeq(uint32_t seq) {
     LfsWriteFile(kSeqPath, reinterpret_cast<const uint8_t*>(&seq), sizeof(seq));
+}
+
+// ---------------------------------------------------------------------------
+// On-board flash backup
+//
+// Independent of the UART link to the OBC: every successful inference gets a
+// one-line CSV record (seq,fraction), and every kBackupImageEveryN-th also
+// gets its full 224x224 image saved under /backup. This is a dumb backup, not
+// a downlink path -- there is no OBC command for it. Retrieval is manual:
+// after the flight, connect the board over USB and pull files via the
+// list_backup_files / get_backup_file RPCs (see tools/fetch_backup.py).
+// Images are the same headerless 224x224 Y8 format the OBC's SD card gets, so
+// tools/raw_to_png.py converts them too.
+//
+// The littlefs partition needs the coralmicro fork patch
+// patches/coralmicro-littlefs-full-partition.patch, which widens it from the
+// upstream 64 MiB to the chip's full 128 MiB (see that patch's comment in
+// filesystem.cc for why upstream only used half). After the model (~2.8 MiB)
+// that leaves ~123.7 MiB free. Once kBackupMaxImages is reached, further
+// images are just skipped -- NOT wrapped/overwritten -- so a long flight
+// fills up and stops rather than erasing the early (most interesting:
+// ascent) frames.
+//
+// Sized against the mission profile: flights run at most 6 h at the 10 s
+// inference cadence the OBC actually configures (coral.c's SET_INTERVAL
+// 10000), i.e. <= 2160 inferences/flight. Saving every frame (no
+// downsampling) needs:
+//   2160 images * 50176 B = ~103.4 MB, vs. ~123.7 MB free (~16% margin) --
+// only fits because of the full-partition patch above; on the stock 64 MiB
+// partition this same setting would run out after ~3.5 h. kBackupMaxImages
+// is 2200, a little above the 2160 a full 6 h flight actually produces, so
+// the cap is a backstop (e.g. against a shorter SET_INTERVAL) rather than
+// the thing that ends up truncating a nominal flight.
+// ---------------------------------------------------------------------------
+const char kBackupDir[]     = "/backup";
+const char kBackupLogPath[] = "/backup/log.csv";
+constexpr int kBackupImageEveryN  = 1;
+constexpr int kBackupMaxImages    = 2200;
+// Backstop only (not sized against a real budget): stop growing the CSV log
+// past this size. At one ~12-byte line per inference this is many years of
+// continuous 10 s-cadence logging, so it should never actually bind.
+constexpr size_t kBackupLogMaxBytes = 2 * 1024 * 1024;
+
+static int g_backup_img_count = 0;
+static bool g_backup_img_cap_logged = false;
+
+// Counts existing backup images at boot (rather than a separate persisted
+// counter) so a mid-flight reboot resumes the cap correctly without adding
+// another small file that gets rewritten -- and worn -- every capture.
+static int CountBackupImages() {
+    lfs_dir_t dir;
+    if (lfs_dir_open(Lfs(), &dir, kBackupDir) < 0) return 0;
+    int count = 0;
+    lfs_info info;
+    while (lfs_dir_read(Lfs(), &dir, &info) > 0) {
+        if (info.type == LFS_TYPE_REG) ++count;
+    }
+    lfs_dir_close(Lfs(), &dir);
+    return count;
+}
+
+static void BackupInit() {
+    LfsMakeDirs(kBackupDir);
+    g_backup_img_count = CountBackupImages();
+    printf("Backup: %d image(s) already on flash (cap %d).\r\n",
+           g_backup_img_count, kBackupMaxImages);
+}
+
+// Appends one "seq,fraction\n" line. Cheap enough (~12 bytes) to do on every
+// inference regardless of the image cap below.
+static void BackupAppendLog(uint32_t seq, float fraction) {
+    auto size = LfsSize(kBackupLogPath);
+    if (size < 0) size = 0;
+    if (static_cast<size_t>(size) >= kBackupLogMaxBytes) return;
+
+    char line[32];
+    int n = snprintf(line, sizeof(line), "%lu,%.4f\n",
+                     (unsigned long)seq, fraction);
+    if (n <= 0) return;
+
+    lfs_file_t file;
+    if (lfs_file_open(Lfs(), &file, kBackupLogPath,
+                      LFS_O_RDWR | LFS_O_CREAT) < 0) {
+        return;
+    }
+    lfs_file_seek(Lfs(), &file, size, LFS_SEEK_SET);
+    lfs_file_write(Lfs(), &file, line, static_cast<lfs_size_t>(n));
+    lfs_file_close(Lfs(), &file);
+}
+
+// Saves one full image, unless the cap has already been reached -- in which
+// case this is a no-op (see banner comment: stop, don't overwrite).
+static void BackupSaveImage(uint32_t seq, const std::vector<uint8_t>& pixels) {
+    if (g_backup_img_count >= kBackupMaxImages) {
+        if (!g_backup_img_cap_logged) {
+            printf("Backup: image cap (%d) reached, no further images saved "
+                   "to flash.\r\n", kBackupMaxImages);
+            g_backup_img_cap_logged = true;
+        }
+        return;
+    }
+    char path[48];
+    snprintf(path, sizeof(path), "%s/img_%08lu.raw", kBackupDir,
+             (unsigned long)seq);
+    if (LfsWriteFile(path, pixels.data(), pixels.size())) {
+        ++g_backup_img_count;
+    } else {
+        printf("Backup: write to %s failed (flash full?) -- stopping image "
+               "backups.\r\n", path);
+        g_backup_img_count = kBackupMaxImages;  // don't keep retrying
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -440,9 +553,61 @@ void CloudConsole(tflite::MicroInterpreter* interpreter, uint32_t seq) {
 #endif
         SendImagePacket(seq, fraction, gray_image,
                         (uint16_t)model_width, (uint16_t)model_height);
+        BackupAppendLog(seq, fraction);
+        if (seq % kBackupImageEveryN == 0) {
+            BackupSaveImage(seq, gray_image);
+        }
     } else {
         printf("Failed to read cloud cover from camera.\r\n");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Backup retrieval RPCs -- always exported (flight build included). This is
+// the "connect over USB after landing" read-out path for the /backup files
+// written by BackupAppendLog / BackupSaveImage above; there is no OBC/UART
+// equivalent. See tools/fetch_backup.py for the host-side puller.
+// ---------------------------------------------------------------------------
+
+// Lists /backup contents as JSON: [{"name":..., "size":...}, ...].
+// Call: POST http://10.10.10.1/jsonrpc {"method":"list_backup_files"}
+void ListBackupFilesRpc(struct jsonrpc_request* r) {
+    lfs_dir_t dir;
+    if (lfs_dir_open(Lfs(), &dir, kBackupDir) < 0) {
+        jsonrpc_return_success(r, "[]");  // no backups written yet
+        return;
+    }
+    std::string json = "[";
+    lfs_info info;
+    bool first = true;
+    while (lfs_dir_read(Lfs(), &dir, &info) > 0) {
+        if (info.type != LFS_TYPE_REG) continue;
+        if (!first) json += ",";
+        first = false;
+        json += "{\"name\":\"" + std::string(info.name) +
+                "\",\"size\":" + std::to_string(info.size) + "}";
+    }
+    lfs_dir_close(Lfs(), &dir);
+    json += "]";
+    jsonrpc_return_success(r, "%s", json.c_str());
+}
+
+// Returns one /backup file's raw bytes, base64-encoded.
+// Call with params {"name": "img_00003360.raw"} (or "log.csv").
+void GetBackupFileRpc(struct jsonrpc_request* r) {
+    std::string name;
+    if (!JsonRpcGetStringParam(r, "name", &name) || name.empty() ||
+        name.find('/') != std::string::npos) {
+        jsonrpc_return_error(r, -1, "missing/invalid 'name' param", nullptr);
+        return;
+    }
+    std::vector<uint8_t> data;
+    std::string path = std::string(kBackupDir) + "/" + name;
+    if (!LfsReadFile(path.c_str(), &data)) {
+        jsonrpc_return_error(r, -1, "not found", nullptr);
+        return;
+    }
+    jsonrpc_return_success(r, "{%Q:%V}", "data", data.size(), data.data());
 }
 
 #if CLOUD_DEBUG
@@ -574,10 +739,13 @@ static bool UartInit() {
     printf("Cloud Cover Estimator!\r\n");
 
     // The JSON-RPC/HTTP server is brought up unconditionally: it also enumerates
-    // the USB CDC console that printf logging relies on. Flight builds export no
-    // RPC methods, so it answers nothing; bench builds (CLOUD_DEBUG) export the
-    // image/burst inspection endpoints.
+    // the USB CDC console that printf logging relies on. Flight builds export
+    // only the backup read-out endpoints (list_backup_files/get_backup_file);
+    // bench builds (CLOUD_DEBUG) additionally export the image/burst
+    // inspection endpoints.
     jsonrpc_init(nullptr, nullptr);
+    jsonrpc_export("list_backup_files", ListBackupFilesRpc);
+    jsonrpc_export("get_backup_file", GetBackupFileRpc);
 #if CLOUD_DEBUG
     jsonrpc_export("get_last_image", GetLastImageRpc);
     jsonrpc_export("get_burst_count", GetBurstCountRpc);
@@ -590,6 +758,7 @@ static bool UartInit() {
         FatalRestart("failed to load model");
     }
     printf("Model loaded (%u bytes)\r\n", (unsigned)model.size());
+    BackupInit();
 
     auto tpu_context = EdgeTpuManager::GetSingleton()->OpenDevice();
     if (!tpu_context) {

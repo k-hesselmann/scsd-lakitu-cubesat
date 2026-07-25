@@ -46,11 +46,7 @@ export function CommandsPage({ latest }: CommandsPageProps) {
           <CardTitle className="text-base">Ground-to-Flight Uplink</CardTitle>
         </CardHeader>
         <CardContent className="h-[calc(100%-56px)] overflow-auto px-4 pb-4">
-          <CommandPanel
-            latestBootCount={latest?.boot_count}
-            latestSequence={latest?.sequence_number}
-            latestUptimeMs={latest?.obc_uptime_ms}
-          />
+          <CommandPanel latestSequence={latest?.sequence_number} />
         </CardContent>
       </Card>
     </div>

@@ -23,18 +23,15 @@ function formatTime(value: unknown) {
 }
 
 function packetRatePerMinute(history: DashboardPageProps["history"]) {
-  const uniqueHistory = history.filter(
-    (row) => !row.is_duplicate_packet && !row.is_out_of_order_packet,
-  )
-  if (uniqueHistory.length < 2) return null
+  if (history.length < 2) return null
 
-  const first = uniqueHistory[0].pc_receive_time_unix
-  const last = uniqueHistory[uniqueHistory.length - 1].pc_receive_time_unix
+  const first = history[0].pc_receive_time_unix
+  const last = history[history.length - 1].pc_receive_time_unix
 
   if (!first || !last || last <= first) return null
 
   const minutes = (last - first) / 60
-  return (uniqueHistory.length - 1) / minutes
+  return history.length / minutes
 }
 
 export function LinkAnalyticsPage({
@@ -43,7 +40,7 @@ export function LinkAnalyticsPage({
   backendStatus,
 }: DashboardPageProps) {
   const stats = backendStatus?.stats
-  const packets = stats?.total_unique_valid_packets ?? history.length
+  const packets = stats?.total_packets_received ?? history.length
   const lost = stats?.total_lost_packets ?? latest?.total_lost_packets ?? 0
   const totalExpected = packets + lost
   const lossPercent = totalExpected > 0 ? (lost / totalExpected) * 100 : null
@@ -60,7 +57,7 @@ export function LinkAnalyticsPage({
         <MetricCard
           title="Packets RX"
           value={fmt(packets)}
-          subtitle={"Unique valid · " + (stats?.total_invalid_packets ?? 0) + " invalid · " + (stats?.total_duplicate_packets ?? 0) + " duplicate"}
+          subtitle="Decoded telemetry"
         />
 
         <MetricCard

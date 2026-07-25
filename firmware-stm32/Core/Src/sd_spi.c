@@ -60,24 +60,92 @@ static void dbg_hex(const char *label, uint8_t val)
 #define CT_SD2   0x04
 #define CT_BLOCK 0x08
 
+#define SD_SPI_BSY_TIMEOUT_MS 10U
+
 static uint8_t card_type = 0;
 static void sd_cs_high(void);
 
-static void sd_spi_set_prescaler(uint32_t prescaler)
+volatile uint32_t spi_error_count = 0;
+volatile uint32_t spi_hal_error_last = 0;
+volatile uint32_t spi_hal_state_last = 0;
+volatile uint8_t  spi_rx_last = 0;
+
+static uint8_t sd_spi_wait_not_busy(uint32_t timeout_ms)
+{
+  uint32_t start = HAL_GetTick();
+
+  while (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_BSY))
+  {
+    if ((uint32_t)(HAL_GetTick() - start) >= timeout_ms)
+    {
+      spi_error_count++;
+      spi_hal_error_last = HAL_SPI_GetError(&hspi2);
+      spi_hal_state_last = hspi2.State;
+      return 0U;
+    }
+  }
+
+  return 1U;
+}
+
+static void sd_spi_configure_cs(void)
+{
+  GPIO_InitTypeDef cs = {0};
+
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  HAL_GPIO_WritePin(SD_CS_GPIO_Port, SD_CS_Pin, GPIO_PIN_SET);
+
+  cs.Pin   = SD_CS_Pin;
+  cs.Mode  = GPIO_MODE_OUTPUT_PP;
+  cs.Pull  = GPIO_NOPULL;
+  cs.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(SD_CS_GPIO_Port, &cs);
+}
+
+static void sd_spi_configure_handle(uint32_t prescaler)
+{
+  hspi2.Instance = SPI2;
+  hspi2.Init.Mode = SPI_MODE_MASTER;
+  hspi2.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi2.Init.NSS = SPI_NSS_SOFT;
+  hspi2.Init.BaudRatePrescaler = prescaler;
+  hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi2.Init.CRCPolynomial = 7;
+  hspi2.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
+  hspi2.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
+}
+
+static uint8_t sd_spi_set_prescaler(uint32_t prescaler)
 {
   sd_cs_high();
-  while (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_BSY)) { }
+
+  if (!sd_spi_wait_not_busy(SD_SPI_BSY_TIMEOUT_MS))
+  {
+    (void)HAL_SPI_Abort(&hspi2);
+    return 0U;
+  }
+
   __HAL_SPI_DISABLE(&hspi2);
   MODIFY_REG(hspi2.Instance->CR1, SPI_CR1_BR, prescaler);
   hspi2.Init.BaudRatePrescaler = prescaler;
   __HAL_SPI_ENABLE(&hspi2);
+
+  return 1U;
 }
 
 static void sd_spi_set_high_speed(void)
 {
   /* Initialization must stay below 400 kHz. After the card leaves idle,
-   * raise SPI2 from /256 (312.5 kHz) to /8 (10 MHz at 80 MHz PCLK1). */
-  sd_spi_set_prescaler(SPI_BAUDRATEPRESCALER_8);
+   * raise SPI2 from /256 (312.5 kHz) to /64 (1.25 MHz at 80 MHz PCLK1).
+   * Telemetry logging is a handful of rows/sec, so this keeps plenty of
+   * headroom while cutting SPI clock harmonics by 8x vs. the previous
+   * /8 (10 MHz) setting to reduce radiated EMI near the radio front end. */
+  (void)sd_spi_set_prescaler(SPI_BAUDRATEPRESCALER_64);
 }
 
 static void sd_cs_high(void)
@@ -90,10 +158,42 @@ static void sd_cs_low(void)
   HAL_GPIO_WritePin(SD_CS_GPIO_Port, SD_CS_Pin, GPIO_PIN_RESET);
 }
 
-volatile uint32_t spi_error_count = 0;
-volatile uint32_t spi_hal_error_last = 0;
-volatile uint32_t spi_hal_state_last = 0;
-volatile uint8_t  spi_rx_last = 0;
+static uint8_t sd_spi_recover_bus(void)
+{
+  card_type = 0U;
+  spi_rx_last = 0xFFU;
+
+  sd_spi_configure_cs();
+  sd_cs_high();
+
+  hspi2.Instance = SPI2;
+  if (__HAL_RCC_SPI2_IS_CLK_ENABLED())
+  {
+    (void)HAL_SPI_Abort(&hspi2);
+    __HAL_SPI_DISABLE(&hspi2);
+    __HAL_SPI_CLEAR_OVRFLAG(&hspi2);
+    (void)HAL_SPI_DeInit(&hspi2);
+  }
+
+  __HAL_RCC_SPI2_FORCE_RESET();
+  __NOP();
+  __HAL_RCC_SPI2_RELEASE_RESET();
+
+  sd_spi_configure_handle(SPI_BAUDRATEPRESCALER_256);
+  hspi2.State = HAL_SPI_STATE_RESET;
+  hspi2.ErrorCode = HAL_SPI_ERROR_NONE;
+
+  if (HAL_SPI_Init(&hspi2) != HAL_OK)
+  {
+    spi_error_count++;
+    spi_hal_error_last = HAL_SPI_GetError(&hspi2);
+    spi_hal_state_last = hspi2.State;
+    return 1U;
+  }
+
+  sd_cs_high();
+  return 0U;
+}
 
 static uint8_t spi_xchg(uint8_t data)
 {
@@ -226,26 +326,20 @@ uint8_t SD_SPI_Init(void)
   uint8_t  n, ty = 0, ocr[4], r;
   uint32_t start;
 
-  /* ---- Ensure CS pin (PB1) is configured as push-pull output. ---- */
-  {
-    GPIO_InitTypeDef _cs = {0};
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-    HAL_GPIO_WritePin(SD_CS_GPIO_Port, SD_CS_Pin, GPIO_PIN_SET);
-    _cs.Pin   = SD_CS_Pin;
-    _cs.Mode  = GPIO_MODE_OUTPUT_PP;
-    _cs.Pull  = GPIO_NOPULL;
-    _cs.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(SD_CS_GPIO_Port, &_cs);
-  }
-
-  /* Recovery can call this after normal I/O switched SPI2 to /8. Every
-   * initialization must return below 400 kHz before idle clocks and CMD0. */
-  sd_spi_set_prescaler(SPI_BAUDRATEPRESCALER_256);
-
   dbg("\r\n[SD] ===== Init start =====\r\n");
 
-  /* --- reset SPI error counter so a fresh run is visible --- */
+  /* Reset SPI error counter so a fresh init/recovery run is visible. */
   spi_error_count = 0;
+
+  /* FDIR only requests SD recovery; the SD subsystem owns the hardware action.
+   * Every mount retry gets one deterministic SPI2/card restart: CS high,
+   * peripheral reset, GPIO/MSP re-init, and <=400 kHz clock before CMD0. */
+  if (sd_spi_recover_bus() != 0U)
+  {
+    dbg("[SD] SPI2 recovery failed\r\n");
+    card_type = 0U;
+    return 1U;
+  }
 
   sd_cs_high();
 

@@ -1,12 +1,16 @@
 import math
 import unittest
+from datetime import datetime, timezone
 
 from telemetry_decoder import (
     TELEMETRY_PACKET_SIZE,
     TELEMETRY_STRUCT,
     crc16_ccitt,
+    decode_equipment_mask,
     decode_telemetry_packet,
+    format_equipment_mask,
 )
+from telemetry_store import TelemetryStore
 
 
 def build_v8_packet(**overrides):
@@ -80,6 +84,38 @@ def build_v8_packet(**overrides):
 
 
 class TelemetryV8DecoderTests(unittest.TestCase):
+    def test_equipment_masks_decode_known_and_reserved_bits(self):
+        self.assertEqual(
+            decode_equipment_mask(0x8091),
+            ["GPS", "SD", "CDH", "UNKNOWN_BIT_7"],
+        )
+
+    def test_empty_equipment_mask_is_explicit(self):
+        self.assertEqual(decode_equipment_mask(0), [])
+        self.assertEqual(format_equipment_mask(0), "NONE")
+
+    def test_csv_row_includes_decoded_equipment_columns(self):
+        packet = decode_telemetry_packet(
+            build_v8_packet(
+                equipment_enabled=0x007F,
+                equipment_faults=0x8010,
+            )
+        )
+        store = TelemetryStore(enable_csv=False)
+
+        row = store._packet_to_row(
+            telemetry_packet=packet,
+            pc_receive_time=datetime.now(timezone.utc),
+        )
+
+        self.assertEqual(row["scv_equipment_enabled"], "0x007F")
+        self.assertEqual(
+            row["scv_equipment_enabled_decoded"],
+            "GPS, IMU, BARO, CORAL, SD, LORA, EPS_ADC",
+        )
+        self.assertEqual(row["scv_equipment_faults"], "0x8010")
+        self.assertEqual(row["scv_equipment_faults_decoded"], "SD, CDH")
+
     def test_golden_v8_vector(self):
         raw = build_v8_packet()
         self.assertEqual(len(raw), TELEMETRY_PACKET_SIZE)
@@ -107,17 +143,9 @@ class TelemetryV8DecoderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "expected 92"):
             decode_telemetry_packet(bytes(155))
 
-    def test_previous_protocol_version_is_retained_as_invalid_observation(self):
-        packet = decode_telemetry_packet(build_v8_packet(protocol_version=7))
-
-        self.assertFalse(packet.validation_ok)
-        self.assertFalse(packet.protocol_version_ok)
-        self.assertTrue(packet.packet_type_ok)
-
-    def test_stale_uplink_status_is_named(self):
-        packet = decode_telemetry_packet(build_v8_packet(uplink_state=6))
-
-        self.assertEqual(packet.uplink_last_status_name, "STALE")
+    def test_previous_protocol_version_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "protocol version: 7"):
+            decode_telemetry_packet(build_v8_packet(protocol_version=7))
 
     def test_v8_invalid_sentinels_decode_to_none(self):
         raw = build_v8_packet(

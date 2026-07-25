@@ -18,6 +18,18 @@ EQUIPMENT_CORAL = 1 << 3
 EQUIPMENT_SD = 1 << 4
 EQUIPMENT_LORA = 1 << 5
 EQUIPMENT_EPS_ADC = 1 << 6
+EQUIPMENT_CDH = 1 << 15
+
+EQUIPMENT_BITS = (
+    (EQUIPMENT_GPS, "GPS"),
+    (EQUIPMENT_IMU, "IMU"),
+    (EQUIPMENT_BARO, "BARO"),
+    (EQUIPMENT_CORAL, "CORAL"),
+    (EQUIPMENT_SD, "SD"),
+    (EQUIPMENT_LORA, "LORA"),
+    (EQUIPMENT_EPS_ADC, "EPS_ADC"),
+    (EQUIPMENT_CDH, "CDH"),
+)
 
 VALID_GPS = 1 << 0
 VALID_IMU = 1 << 1
@@ -43,8 +55,6 @@ LORA_EVENTS = {
 UPLINK_STATUSES = {
     0: "NONE", 1: "ACCEPTED", 2: "INVALID_FORMAT",
     3: "UNSUPPORTED", 4: "DUPLICATE", 5: "UNEXPECTED_ACK",
-    6: "STALE",
-    7: "RATE_LIMITED",
 }
 LORA_RX_HEALTH = {
     0: "NONE", 1: "ACTIVE", 2: "PACKET_OK", 3: "CRC_ERROR",
@@ -189,6 +199,23 @@ def decode_reset_cause(reset_reason: int) -> dict:
         "OPTION_BYTE_RESET": False,
         "FIREWALL_RESET": False,
     }
+
+
+def decode_equipment_mask(mask: int) -> list[str]:
+    """Return all set equipment names, preserving any reserved set bits."""
+    names = [name for bit_mask, name in EQUIPMENT_BITS if mask & bit_mask]
+    known_mask = sum(bit_mask for bit_mask, _ in EQUIPMENT_BITS)
+    names.extend(
+        f"UNKNOWN_BIT_{bit}"
+        for bit in range(16)
+        if mask & (1 << bit) and not known_mask & (1 << bit)
+    )
+    return names
+
+
+def format_equipment_mask(mask: int) -> str:
+    names = decode_equipment_mask(mask)
+    return ", ".join(names) if names else "NONE"
 
 
 def decode_status_flags(gps_valid: int, imu_valid: int, baro_valid: int,
@@ -397,9 +424,10 @@ def decode_telemetry_packet(raw: bytes) -> TelemetryPacket:
             f"Invalid telemetry packet length: {len(raw)} bytes; "
             f"expected {TELEMETRY_PACKET_SIZE}"
         )
-    # A structurally compatible 92-byte frame is decoded even when its
-    # envelope is unsupported. Callers can log the observation while
-    # validation_ok prevents it from advancing trusted mission state.
+    if raw[0] != TELEMETRY_PACKET_TYPE:
+        raise ValueError(f"Unsupported telemetry packet type: {raw[0]}")
+    if raw[1] != TELEMETRY_PROTOCOL_VERSION:
+        raise ValueError(f"Unsupported telemetry protocol version: {raw[1]}; expected 8")
     return _decode_v8(raw)
 
 

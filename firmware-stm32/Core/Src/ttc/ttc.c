@@ -1,11 +1,11 @@
 #include "ttc/ttc.h"
-#include "ttc/ttc_auth.h"
 #include "ttc/lora_driver.h"
 #include "fdir/fdir.h"
 
 #include "main.h"
 #include "usbd_cdc_if.h"
 
+#include <stdio.h>
 #include <string.h>
 
 _Static_assert(sizeof(TelemetryPacket_t) == TELEMETRY_PACKET_V8_SIZE,
@@ -15,12 +15,27 @@ _Static_assert(sizeof(TelemetryPacket_t) == TELEMETRY_PACKET_V8_SIZE,
 #define TTC_CDC_BINARY_MIRROR 0
 #endif
 
+#ifndef TTC_CDC_DEBUG_LOGS
+#define TTC_CDC_DEBUG_LOGS 0
+#endif
+
+#ifndef TTC_UART_DEBUG_LOGS
+#define TTC_UART_DEBUG_LOGS 0
+#endif
+
+#ifndef TTC_DEBUG_INTERVAL_MS
+#define TTC_DEBUG_INTERVAL_MS 0U
+#endif
+
+#ifndef TTC_DEBUG_FIXED_PAYLOAD
+#define TTC_DEBUG_FIXED_PAYLOAD 0
+#endif
+
 #define TTC_TX_TIMEOUT_MS               5000U
 #define TTC_ACK_TIMEOUT_MS              5000U
 #define TTC_MAX_TX_ATTEMPTS                3U
 #define TTC_UPLINK_MAX_LENGTH              64U
 #define TTC_COMMAND_REPLAY_WINDOW_SIZE     16U
-#define TTC_COMMAND_MIN_INTERVAL_MS        TTC_TELEMETRY_INTERVAL_MS
 
 typedef enum
 {
@@ -50,22 +65,25 @@ static uint8_t s_cdc_mirror_pending;
 static TelemetryPacket_t s_pending_packet;
 static LoRaHealth_t s_health;
 static UplinkState_t s_uplink;
+static TTCDebugStatus_t s_debug;
 static TTC_FDIR_Health_t s_fdir_health;
 static TTC_FDIR_ActionStatus_t s_action_status;
 static TTC_FDIR_Action_t s_requested_action;
 static uint16_t s_command_high_water;
 static uint16_t s_command_seen_mask;
 static uint8_t s_has_command_high_water;
-static uint8_t s_has_accepted_command;
-static uint32_t s_last_accepted_command_ms;
 static TTC_State_t s_state;
 
-typedef enum
-{
-    TTC_COMMAND_ID_ACCEPTED = 0,
-    TTC_COMMAND_ID_DUPLICATE,
-    TTC_COMMAND_ID_STALE
-} TTC_CommandIdResult_t;
+#if TTC_UART_DEBUG_LOGS
+extern UART_HandleTypeDef huart2;
+#endif
+
+#if TTC_DEBUG_FIXED_PAYLOAD
+static const uint8_t s_fixed_payload[] = {
+    'T', 'T', 'C', '_', 'T', 'E', 'S', 'T',
+    0x01U, 0x02U, 0x03U, 0x04U, 0xA5U, 0x5AU, 0xC3U, 0x3CU
+};
+#endif
 
 static void TTC_IncrementU8(uint8_t *value)
 {
@@ -78,41 +96,18 @@ static uint16_t TTC_IncrementU16(uint16_t value)
     return (value < UINT16_MAX) ? (uint16_t)(value + 1U) : value;
 }
 
-static TTC_CommandIdResult_t TTC_ClassifyCommandId(uint16_t command_id)
+static uint8_t TTC_AcceptCommandId(uint16_t command_id)
 {
     uint16_t forward;
     uint16_t age;
     uint16_t bit;
 
     if (!s_has_command_high_water)
-        return TTC_COMMAND_ID_ACCEPTED;
-
-    forward = (uint16_t)(command_id - s_command_high_water);
-    if (forward != 0U && forward < 0x8000U)
-        return TTC_COMMAND_ID_ACCEPTED;
-
-    age = (uint16_t)(s_command_high_water - command_id);
-    if (age >= TTC_COMMAND_REPLAY_WINDOW_SIZE)
-        return TTC_COMMAND_ID_STALE;
-
-    bit = (uint16_t)(1U << age);
-    if ((s_command_seen_mask & bit) != 0U)
-        return TTC_COMMAND_ID_DUPLICATE;
-
-    return TTC_COMMAND_ID_ACCEPTED;
-}
-
-static void TTC_RecordCommandId(uint16_t command_id)
-{
-    uint16_t forward;
-    uint16_t age;
-
-    if (!s_has_command_high_water)
     {
         s_command_high_water = command_id;
         s_command_seen_mask = 1U;
         s_has_command_high_water = 1U;
-        return;
+        return 1U;
     }
 
     forward = (uint16_t)(command_id - s_command_high_water);
@@ -121,26 +116,136 @@ static void TTC_RecordCommandId(uint16_t command_id)
         s_command_seen_mask = (forward >= TTC_COMMAND_REPLAY_WINDOW_SIZE) ? 1U :
                               (uint16_t)((s_command_seen_mask << forward) | 1U);
         s_command_high_water = command_id;
-        return;
+        return 1U;
     }
 
     age = (uint16_t)(s_command_high_water - command_id);
-    if (age < TTC_COMMAND_REPLAY_WINDOW_SIZE)
-        s_command_seen_mask |= (uint16_t)(1U << age);
+    if (age >= TTC_COMMAND_REPLAY_WINDOW_SIZE)
+        return 0U;
+
+    bit = (uint16_t)(1U << age);
+    if ((s_command_seen_mask & bit) != 0U)
+        return 0U;
+
+    s_command_seen_mask |= bit;
+    return 1U;
+}
+
+static uint32_t TTC_TelemetryIntervalMs(void)
+{
+#if TTC_DEBUG_INTERVAL_MS > 0U
+    return TTC_DEBUG_INTERVAL_MS;
+#else
+    return TTC_TELEMETRY_INTERVAL_MS;
+#endif
 }
 
 static uint8_t TTC_IntervalElapsed(uint32_t now)
 {
     return (!s_has_transmitted ||
-            (uint32_t)(now - s_last_tx_ms) >= TTC_TELEMETRY_INTERVAL_MS) ? 1U : 0U;
+            (uint32_t)(now - s_last_tx_ms) >= TTC_TelemetryIntervalMs()) ? 1U : 0U;
 }
 
-static void TTC_RequestCommandResponse(void)
+#if TTC_CDC_DEBUG_LOGS || TTC_UART_DEBUG_LOGS
+static void TTC_DebugLog(const char *line)
 {
-    /* Uplink traffic must not drive the downlink above its nominal duty-cycle
-     * budget. A response is queued only when the ordinary 20 s slot is due. */
-    if (TTC_IntervalElapsed(HAL_GetTick()))
-        TTC_RequestTelemetry();
+    size_t len = 0U;
+
+    while (line[len] != '\0')
+        len++;
+
+#if TTC_CDC_DEBUG_LOGS
+    (void)CDC_Transmit_FS((uint8_t *)line, (uint16_t)len);
+#endif
+#if TTC_UART_DEBUG_LOGS
+    (void)HAL_UART_Transmit(&huart2, (uint8_t *)line, (uint16_t)len, 100U);
+#endif
+}
+
+static void TTC_LogInitStatus(void)
+{
+    char line[160];
+    LoRaDebugStatus_t lora = {0};
+    int len;
+
+    LoRa_GetDebugStatus(&lora);
+    len = snprintf(line, sizeof(line),
+                   "LORA_INIT status=%u ready=%u version=0x%02X op=0x%02X irq=0x%02X fail_reg=0x%02X fail_op=%u hal=%lu spierr=%lu\r\n",
+                   (unsigned int)s_debug.last_init_status,
+                   (unsigned int)s_debug.radio_ready,
+                   (unsigned int)lora.version,
+                   (unsigned int)lora.op_mode,
+                   (unsigned int)lora.irq_flags,
+                   (unsigned int)lora.last_failed_reg,
+                   (unsigned int)lora.last_failed_op,
+                   (unsigned long)lora.last_hal_status,
+                   (unsigned long)lora.spi_error_code);
+    if (len > 0)
+        TTC_DebugLog(line);
+}
+
+static void TTC_LogTxStatus(void)
+{
+    char line[224];
+    LoRaDebugStatus_t lora = {0};
+    int len;
+
+    LoRa_GetDebugStatus(&lora);
+    len = snprintf(line, sizeof(line),
+                   "TTC_TX seq=%u len=%u crc=0x%04X status=%u ready=%u version=0x%02X irq=0x%02X op=0x%02X tx_ok=%lu tx_timeout=%lu tx_error=%lu fail_reg=0x%02X fail_op=%u hal=%lu spierr=%lu\r\n",
+                   (unsigned int)s_debug.last_sequence_number,
+                   (unsigned int)s_debug.last_payload_length,
+                   (unsigned int)s_debug.last_crc16,
+                   (unsigned int)s_debug.last_send_status,
+                   (unsigned int)s_debug.radio_ready,
+                   (unsigned int)lora.version,
+                   (unsigned int)lora.irq_flags,
+                   (unsigned int)lora.op_mode,
+                   (unsigned long)s_debug.tx_success_count,
+                   (unsigned long)s_debug.tx_timeout_count,
+                   (unsigned long)s_debug.tx_error_count,
+                   (unsigned int)lora.last_failed_reg,
+                   (unsigned int)lora.last_failed_op,
+                   (unsigned long)lora.last_hal_status,
+                   (unsigned long)lora.spi_error_code);
+    if (len > 0)
+        TTC_DebugLog(line);
+}
+#else
+static void TTC_LogInitStatus(void) {}
+static void TTC_LogTxStatus(void) {}
+#endif
+
+static void TTC_RefreshDebugFromLora(void)
+{
+    LoRaDebugStatus_t lora = {0};
+
+    LoRa_GetDebugStatus(&lora);
+    s_debug.radio_ready = s_radio_ready;
+    s_debug.last_lora_version = lora.version;
+    s_debug.last_irq_flags = lora.irq_flags;
+}
+
+static void TTC_RecordDebugTxCompletion(LoRaStatus_t status)
+{
+    s_debug.last_send_status = status;
+    if (status == LORA_OK)
+    {
+        s_debug.tx_success_count++;
+    }
+    else if (status == LORA_TIMEOUT)
+    {
+        s_debug.tx_timeout_count++;
+    }
+    else
+    {
+        s_debug.tx_error_count++;
+    }
+
+    if (!LoRa_IsBusy())
+        (void)LoRa_ReadDebugRegisters();
+    TTC_RefreshDebugFromLora();
+    TTC_LogTxStatus();
 }
 
 static uint8_t TTC_ActionIsActive(void)
@@ -151,12 +256,17 @@ static uint8_t TTC_ActionIsActive(void)
 
 static void TTC_SyncFdirHealth(void)
 {
+    uint8_t action_is_recovery =
+        (s_action_status.action == TTC_FDIR_ACTION_RECOVERY ||
+         s_action_status.action == TTC_FDIR_ACTION_RETURN_TO_SERVICE) ? 1U : 0U;
+
     s_fdir_health.radio_ready = (s_radio_ready && LoRa_IsReady()) ? 1U : 0U;
     s_fdir_health.rx_active = LoRa_IsRxActive();
+    s_fdir_health.radio_busy = LoRa_IsBusy();
     s_fdir_health.recovery_in_progress =
-        (s_action_status.state == TTC_FDIR_ACTION_IN_PROGRESS &&
-         (s_action_status.action == TTC_FDIR_ACTION_RECOVERY ||
-          s_action_status.action == TTC_FDIR_ACTION_RETURN_TO_SERVICE)) ? 1U : 0U;
+        (action_is_recovery &&
+         (s_action_status.state == TTC_FDIR_ACTION_PENDING ||
+          s_action_status.state == TTC_FDIR_ACTION_IN_PROGRESS)) ? 1U : 0U;
     s_fdir_health.isolation_active = LoRa_IsIsolated();
 }
 
@@ -171,6 +281,7 @@ static void TTC_SetActionResult(TTC_FDIR_ActionState_t state, LoRaStatus_t statu
 static void TTC_RecordInitResult(LoRaStatus_t status)
 {
     s_radio_ready = (status == LORA_OK) ? 1U : 0U;
+    s_debug.last_init_status = status;
     if (s_radio_ready)
     {
         s_driver_fault_observed = 0U;
@@ -188,6 +299,10 @@ static void TTC_RecordInitResult(LoRaStatus_t status)
         TTC_IncrementU8(&s_health.consecutive_failures);
         s_radio_faulted = 1U;
     }
+    if (!LoRa_IsBusy())
+        (void)LoRa_ReadDebugRegisters();
+    TTC_RefreshDebugFromLora();
+    TTC_LogInitStatus();
     TTC_SyncFdirHealth();
 }
 
@@ -241,6 +356,7 @@ static void TTC_RecordTxSuccess(uint32_t now)
     s_fdir_health.last_tx_success_ms = now;
     s_radio_ready = 1U;
     TTC_SyncFdirHealth();
+    TTC_RecordDebugTxCompletion(LORA_OK);
 }
 
 static void TTC_RecordTxFailure(LoRaStatus_t status)
@@ -248,6 +364,7 @@ static void TTC_RecordTxFailure(LoRaStatus_t status)
     if (status == LORA_LENGTH_ERROR)
     {
         s_health.last_event = LORA_EVENT_TX_BAD_LENGTH;
+        TTC_RecordDebugTxCompletion(status);
         return;
     }
 
@@ -261,6 +378,7 @@ static void TTC_RecordTxFailure(LoRaStatus_t status)
     s_radio_ready = 0U;
     s_radio_faulted = 1U;
     TTC_SyncFdirHealth();
+    TTC_RecordDebugTxCompletion(status);
 }
 
 static void TTC_RecordRxPacket(uint32_t now)
@@ -296,85 +414,25 @@ static void TTC_RecordRxError(LoRaStatus_t status)
     TTC_RecordRxModeResult(status);
 }
 
-static uint8_t TTC_ParseDecimalField(const uint8_t *data, uint8_t length,
-                                     uint8_t *index, uint8_t has_separator,
-                                     uint32_t maximum, uint32_t *value)
+static uint8_t TTC_ParseAcknowledgement(const uint8_t *data, uint8_t length,
+                                        uint16_t *sequence)
 {
-    uint32_t parsed = 0U;
-    uint8_t digits = 0U;
-    uint8_t digit;
-    uint8_t i = *index;
+    uint32_t value = 0U;
+    uint8_t i;
 
-    while (i < length && data[i] != (uint8_t)',')
+    if (length < 5U || length > 9U || memcmp(data, "ACK,", 4U) != 0)
+        return 0U;
+
+    for (i = 4U; i < length; i++)
     {
         if (data[i] < (uint8_t)'0' || data[i] > (uint8_t)'9')
             return 0U;
-        digit = (uint8_t)(data[i] - (uint8_t)'0');
-        if (parsed > (maximum - digit) / 10U)
+        value = (value * 10U) + (uint32_t)(data[i] - (uint8_t)'0');
+        if (value > UINT16_MAX)
             return 0U;
-        parsed = (parsed * 10U) + digit;
-        digits++;
-        i++;
     }
 
-    if (digits == 0U)
-        return 0U;
-    if (has_separator)
-    {
-        if (i >= length || data[i] != (uint8_t)',')
-            return 0U;
-        i++;
-    }
-    else if (i != length)
-    {
-        return 0U;
-    }
-
-    *index = i;
-    *value = parsed;
-    return 1U;
-}
-
-static uint8_t TTC_ParseAcknowledgement(const uint8_t *data, uint8_t length,
-                                        uint16_t *boot_count,
-                                        uint16_t *sequence,
-                                        uint32_t *tx_uptime_s)
-{
-    uint32_t parsed_boot;
-    uint32_t parsed_sequence;
-    uint32_t parsed_uptime;
-    uint8_t index = 4U;
-
-    if (length < 9U || length > 26U || memcmp(data, "ACK,", 4U) != 0)
-        return 0U;
-    if (!TTC_ParseDecimalField(data, length, &index, 1U,
-                               UINT16_MAX, &parsed_boot) ||
-        !TTC_ParseDecimalField(data, length, &index, 1U,
-                               UINT16_MAX, &parsed_sequence) ||
-        !TTC_ParseDecimalField(data, length, &index, 0U,
-                               UINT32_MAX, &parsed_uptime))
-        return 0U;
-
-    *boot_count = (uint16_t)parsed_boot;
-    *sequence = (uint16_t)parsed_sequence;
-    *tx_uptime_s = parsed_uptime;
-    return 1U;
-}
-
-static uint8_t TTC_VerifyAuthenticatedEnvelope(const uint8_t *data,
-                                                uint8_t length,
-                                                uint8_t *payload_length)
-{
-    uint8_t separator;
-
-    if (length <= (TTC_AUTH_TAG_HEX_LENGTH + 1U))
-        return 0U;
-    separator = (uint8_t)(length - TTC_AUTH_TAG_HEX_LENGTH - 1U);
-    if (data[separator] != (uint8_t)',')
-        return 0U;
-    if (!TTC_AuthVerifyHex(data, separator, &data[separator + 1U]))
-        return 0U;
-    *payload_length = separator;
+    *sequence = (uint16_t)value;
     return 1U;
 }
 
@@ -409,14 +467,9 @@ static uint8_t TTC_ParseCommandEnvelope(const uint8_t *data, uint8_t length,
     return 1U;
 }
 
-static void TTC_ProcessAcknowledgement(uint16_t acknowledged_boot_count,
-                                       uint16_t acknowledged_sequence,
-                                       uint32_t acknowledged_uptime_s)
+static void TTC_ProcessAcknowledgement(uint16_t acknowledged_sequence)
 {
-    if (s_pending_valid &&
-        acknowledged_boot_count == s_pending_packet.boot_count_sat &&
-        acknowledged_sequence == s_pending_packet.sequence_number &&
-        acknowledged_uptime_s == s_pending_packet.tx_uptime_s)
+    if (s_pending_valid && acknowledged_sequence == s_pending_packet.sequence_number)
     {
         s_uplink.last_ack_status = UPLINK_STATUS_ACCEPTED;
         s_uplink.last_ack_sequence = acknowledged_sequence;
@@ -439,24 +492,10 @@ static void TTC_ProcessUplink(const uint8_t *data, uint8_t length)
     uint16_t value;
     const uint8_t *verb;
     uint8_t verb_length;
-    uint8_t authenticated_length;
-    uint16_t acknowledged_boot_count;
-    uint32_t acknowledged_uptime_s;
-    TTC_CommandIdResult_t command_id_result;
 
-    if (!TTC_VerifyAuthenticatedEnvelope(data, length, &authenticated_length))
+    if (TTC_ParseAcknowledgement(data, length, &value))
     {
-        /* Unauthenticated RF input must not mutate trusted command/ACK state.
-         * Authenticated but malformed envelopes are classified below. */
-        return;
-    }
-    length = authenticated_length;
-
-    if (TTC_ParseAcknowledgement(data, length, &acknowledged_boot_count,
-                                 &value, &acknowledged_uptime_s))
-    {
-        TTC_ProcessAcknowledgement(acknowledged_boot_count, value,
-                                   acknowledged_uptime_s);
+        TTC_ProcessAcknowledgement(value);
         return;
     }
 
@@ -466,39 +505,23 @@ static void TTC_ProcessUplink(const uint8_t *data, uint8_t length)
         {
             s_uplink.last_command = UPLINK_COMMAND_REQUEST_TELEMETRY;
             s_uplink.last_command_id = value;
-            command_id_result = TTC_ClassifyCommandId(value);
-            if (command_id_result == TTC_COMMAND_ID_DUPLICATE)
+            if (!TTC_AcceptCommandId(value))
             {
                 s_uplink.last_command_status = UPLINK_STATUS_DUPLICATE;
             }
-            else if (command_id_result == TTC_COMMAND_ID_STALE)
-            {
-                s_uplink.last_command_status = UPLINK_STATUS_STALE;
-            }
             else
             {
-                uint32_t now = HAL_GetTick();
-                if (s_has_accepted_command &&
-                    (uint32_t)(now - s_last_accepted_command_ms) <
-                    TTC_COMMAND_MIN_INTERVAL_MS)
-                {
-                    s_uplink.last_command_status = UPLINK_STATUS_RATE_LIMITED;
-                    return;
-                }
-                TTC_RecordCommandId(value);
                 s_uplink.last_command_status = UPLINK_STATUS_ACCEPTED;
                 s_uplink.command_count = TTC_IncrementU16(s_uplink.command_count);
-                s_has_accepted_command = 1U;
-                s_last_accepted_command_ms = now;
             }
-            TTC_RequestCommandResponse();
+            TTC_RequestTelemetry();
             return;
         }
 
         s_uplink.last_command = UPLINK_COMMAND_NONE;
         s_uplink.last_command_id = value;
         s_uplink.last_command_status = UPLINK_STATUS_UNSUPPORTED;
-        TTC_RequestCommandResponse();
+        TTC_RequestTelemetry();
         return;
     }
 
@@ -514,7 +537,7 @@ static void TTC_ProcessUplink(const uint8_t *data, uint8_t length)
             (length >= 4U && memcmp(data, "CMD,", 4U) == 0) ?
             UPLINK_STATUS_INVALID_FORMAT : UPLINK_STATUS_UNSUPPORTED;
     }
-    TTC_RequestCommandResponse();
+    TTC_RequestTelemetry();
 }
 
 static void TTC_PollUplink(uint32_t now)
@@ -541,13 +564,26 @@ static void TTC_PollUplink(uint32_t now)
 static void TTC_StartPendingTransmit(uint32_t now)
 {
     LoRaStatus_t status;
+#if TTC_DEBUG_FIXED_PAYLOAD
+    const uint8_t *tx_data = s_fixed_payload;
+    uint8_t tx_length = (uint8_t)sizeof(s_fixed_payload);
+#else
+    const uint8_t *tx_data = (const uint8_t *)&s_pending_packet;
+    uint8_t tx_length = (uint8_t)sizeof(s_pending_packet);
+#endif
 
     if (!s_pending_valid || s_radio_faulted || !s_radio_ready ||
         !LoRa_IsRxActive() || LoRa_IsBusy())
         return;
 
-    status = LoRa_Send((const uint8_t *)&s_pending_packet,
-                       (uint8_t)sizeof(s_pending_packet), TTC_TX_TIMEOUT_MS);
+    s_debug.tx_attempt_count++;
+    s_debug.last_sequence_number = s_pending_packet.sequence_number;
+    s_debug.last_crc16 = s_pending_packet.crc16;
+    s_debug.last_payload_length = tx_length;
+
+    status = LoRa_Send(tx_data, tx_length, TTC_TX_TIMEOUT_MS);
+    s_debug.last_send_status = status;
+    TTC_RefreshDebugFromLora();
     if (status != LORA_OK)
     {
         TTC_RecordTxFailure(status);
@@ -627,9 +663,14 @@ static void TTC_BeginRequestedAction(void)
             return;
         if (status != LORA_OK)
         {
+            s_debug.last_init_status = status;
+            TTC_RefreshDebugFromLora();
+            TTC_LogInitStatus();
             TTC_SetActionResult(TTC_FDIR_ACTION_FAILED, status);
             return;
         }
+        s_debug.last_init_status = status;
+        TTC_RefreshDebugFromLora();
         s_action_status.state = TTC_FDIR_ACTION_IN_PROGRESS;
         TTC_IncrementU8(&s_health.recovery_count);
         s_driver_fault_observed = 0U;
@@ -669,6 +710,7 @@ void TTC_Init(void)
     memset(&s_pending_packet, 0, sizeof(s_pending_packet));
     memset(&s_health, 0, sizeof(s_health));
     memset(&s_uplink, 0, sizeof(s_uplink));
+    memset(&s_debug, 0, sizeof(s_debug));
     memset(&s_fdir_health, 0, sizeof(s_fdir_health));
     memset(&s_action_status, 0, sizeof(s_action_status));
     s_last_tx_ms = 0U;
@@ -688,12 +730,13 @@ void TTC_Init(void)
     s_command_high_water = 0U;
     s_command_seen_mask = 0U;
     s_has_command_high_water = 0U;
-    s_has_accepted_command = 0U;
-    s_last_accepted_command_ms = 0U;
     s_state = TTC_STATE_STARTUP_INIT;
     s_action_status.action = TTC_FDIR_ACTION_NONE;
     s_action_status.state = TTC_FDIR_ACTION_IDLE;
     s_action_status.last_lora_status = (uint8_t)LoRa_Init();
+    s_debug.last_init_status = (LoRaStatus_t)s_action_status.last_lora_status;
+    s_debug.last_send_status = LORA_NOT_READY;
+    TTC_RefreshDebugFromLora();
     if (s_action_status.last_lora_status != (uint8_t)LORA_OK)
     {
         TTC_RecordInitResult((LoRaStatus_t)s_action_status.last_lora_status);
@@ -707,14 +750,14 @@ void TTC_Service(void)
     LoRaStatus_t status;
     uint32_t now = HAL_GetTick();
 
-    /* Consume FDIR-requested LoRa recovery (FMECA T1). Fire-and-forget: the
-     * TTC_FDIR_Result_t is ignored, ack happens on acceptance, not on
-     * completion — TTC_FDIR_RequestRecovery() is idempotent while a recovery
-     * is already pending/in-progress. */
+    /* Consume FDIR-requested LoRa recovery (FMECA T1). Ack only once TTC has
+     * accepted it, found it already complete, or is already doing the same
+     * action. A different active action leaves the request bit set. */
     if (FDIR_GetReinitRequests() & EQUIPMENT_LORA)
     {
-        (void)TTC_FDIR_RequestRecovery();
-        FDIR_AcknowledgeReinit(EQUIPMENT_LORA);
+        TTC_FDIR_Result_t result = TTC_FDIR_RequestRecovery();
+        if (result != TTC_FDIR_RESULT_REJECTED)
+            FDIR_AcknowledgeReinit(EQUIPMENT_LORA);
     }
 
     LoRa_Service();
@@ -880,6 +923,15 @@ const LoRaHealth_t *TTC_GetHealth(void)
 const UplinkState_t *TTC_GetUplinkState(void)
 {
     return &s_uplink;
+}
+
+void TTC_GetDebugStatus(TTCDebugStatus_t *status)
+{
+    if (status == NULL)
+        return;
+
+    TTC_RefreshDebugFromLora();
+    *status = s_debug;
 }
 
 void TTC_Transmit(const TelemetryPacket_t *pkt)

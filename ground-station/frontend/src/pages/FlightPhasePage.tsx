@@ -7,12 +7,10 @@ import {
   XAxis,
   YAxis,
 } from "recharts"
-import { useMemo } from "react"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { MetricCard } from "@/components/MetricCard"
 import { fmt } from "@/lib/format"
-import { rawFlagIsValid } from "@/lib/telemetryHealth"
 import type { DashboardPageProps } from "@/pages/pageTypes"
 import type { TelemetryRow } from "@/types/telemetry"
 
@@ -23,11 +21,7 @@ function formatTime(value: unknown) {
 }
 
 function maxAltitude(history: TelemetryRow[]) {
-  const valid = history.filter(
-    (row) =>
-      rawFlagIsValid(row.gps_valid_raw) &&
-      typeof row.gnss_altitude_m === "number",
-  )
+  const valid = history.filter((row) => typeof row.gnss_altitude_m === "number")
   if (valid.length === 0) return null
 
   return valid.reduce((best, row) =>
@@ -57,23 +51,6 @@ function timeInCurrentPhase(history: TelemetryRow[], latest: TelemetryRow | null
 export function FlightPhasePage({ latest, history }: DashboardPageProps) {
   const peak = maxAltitude(history)
   const phaseTime = timeInCurrentPhase(history, latest)
-  const gpsValid = rawFlagIsValid(latest?.gps_valid_raw)
-  const chartData = useMemo(
-    () =>
-      history.map((row) => ({
-        ...row,
-        gnss_altitude_m: rawFlagIsValid(row.gps_valid_raw)
-          ? row.gnss_altitude_m
-          : null,
-        vertical_speed_ms: rawFlagIsValid(row.gps_valid_raw)
-          ? row.vertical_speed_ms
-          : null,
-        baro_altitude_m: rawFlagIsValid(row.baro_valid_raw)
-          ? row.baro_altitude_m
-          : null,
-      })),
-    [history],
-  )
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden p-4">
@@ -100,14 +77,14 @@ export function FlightPhasePage({ latest, history }: DashboardPageProps) {
 
         <MetricCard
           title="GNSS Altitude"
-          value={fmt(gpsValid ? latest?.gnss_altitude_m : null, " m", 1)}
-          subtitle={gpsValid ? "Current" : "GNSS sample invalid"}
+          value={fmt(latest?.gnss_altitude_m, " m", 1)}
+          subtitle="Current"
         />
 
         <MetricCard
           title="Vertical Speed"
-          value={fmt(gpsValid ? latest?.vertical_speed_ms : null, " m/s", 2)}
-          subtitle={gpsValid ? "Positive = ascent" : "GNSS sample invalid"}
+          value={fmt(latest?.vertical_speed_ms, " m/s", 2)}
+          subtitle="Positive = ascent"
         />
 
         <MetricCard
@@ -124,7 +101,7 @@ export function FlightPhasePage({ latest, history }: DashboardPageProps) {
           </CardHeader>
           <CardContent className="h-[calc(100%-56px)] px-4 pb-4">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
+              <LineChart data={history}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="pc_receive_time_iso" tickFormatter={formatTime} />
                 <YAxis />

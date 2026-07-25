@@ -37,4 +37,5 @@ endif()
 target_link_libraries(cloud_payload
     libs_base-m7_freertos
     libs_rpc_http_server
+    libs_rpc_utils
 )

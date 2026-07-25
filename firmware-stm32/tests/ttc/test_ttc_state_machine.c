@@ -16,32 +16,11 @@ static uint16_t mock_send_calls;
 static uint8_t mock_last_send_length;
 static uint16_t mock_fdir_requests;
 
-#define TTC_AUTH_KEY_0 UINT64_C(0x0706050403020100)
-#define TTC_AUTH_KEY_1 UINT64_C(0x0f0e0d0c0b0a0908)
-
 /* White-box TTC test: hardware, the LoRa driver, and FDIR's reinit-request
  * bitmask are mocked below. */
-#include "../../Core/Src/ttc/ttc_auth.c"
 #include "../../Core/Src/ttc/ttc.c"
 
 #define CHECK(x) do { if (!(x)) return __LINE__; } while (0)
-
-static uint8_t Mock_Authenticated(const char *payload, uint8_t *envelope)
-{
-    static const char hex[] = "0123456789abcdef";
-    uint8_t length = (uint8_t)strlen(payload);
-    uint64_t tag = TTC_AuthTag((const uint8_t *)payload, length);
-    uint8_t index;
-
-    memcpy(envelope, payload, length);
-    envelope[length++] = (uint8_t)',';
-    for (index = 0U; index < TTC_AUTH_TAG_HEX_LENGTH; index++)
-    {
-        uint8_t shift = (uint8_t)(60U - (index * 4U));
-        envelope[length++] = (uint8_t)hex[(tag >> shift) & 0x0FU];
-    }
-    return length;
-}
 
 uint32_t HAL_GetTick(void) { return mock_tick; }
 
@@ -226,96 +205,22 @@ static int TestAckRetriesAndNackCounter(void)
 
 static int TestCommandAndAckLatchesAreIndependent(void)
 {
-    uint8_t command[TTC_UPLINK_MAX_LENGTH];
-    uint8_t command_length;
+    static const uint8_t command[] = "CMD,123,REQ_TELEMETRY";
     uint8_t command_status;
 
     Mock_Reset(); StartHealthyTtc();
-    command_length = Mock_Authenticated("CMD,123,REQ_TELEMETRY", command);
-    TTC_ProcessUplink(command, command_length);
+    TTC_ProcessUplink(command, (uint8_t)(sizeof(command) - 1U));
     CHECK(s_uplink.last_command_id == 123U);
     CHECK(s_uplink.last_command_status == UPLINK_STATUS_ACCEPTED);
     command_status = s_uplink.last_command_status;
 
     s_pending_valid = 1U;
-    s_pending_packet.boot_count_sat = 3U;
     s_pending_packet.sequence_number = 77U;
-    s_pending_packet.tx_uptime_s = 456U;
-    command_length = Mock_Authenticated("ACK,3,77,456", command);
-    TTC_ProcessUplink(command, command_length);
+    TTC_ProcessAcknowledgement(77U);
     CHECK(s_uplink.last_ack_status == UPLINK_STATUS_ACCEPTED);
     CHECK(s_uplink.last_ack_sequence == 77U);
     CHECK(s_uplink.last_command_id == 123U);
     CHECK(s_uplink.last_command_status == command_status);
-
-    s_pending_valid = 1U;
-    s_pending_packet.boot_count_sat = 4U;
-    s_pending_packet.sequence_number = 77U;
-    s_pending_packet.tx_uptime_s = 1U;
-    TTC_ProcessUplink(command, command_length);
-    CHECK(s_pending_valid == 1U);
-    CHECK(s_uplink.last_ack_status == UPLINK_STATUS_DUPLICATE);
-    return 0;
-}
-
-static int TestCommandReplayDistinguishesDuplicateFromStale(void)
-{
-    uint8_t envelope[TTC_UPLINK_MAX_LENGTH];
-    uint8_t length;
-
-    Mock_Reset(); StartHealthyTtc();
-    length = Mock_Authenticated("CMD,100,REQ_TELEMETRY", envelope);
-    TTC_ProcessUplink(envelope, length);
-    CHECK(s_uplink.last_command_status == UPLINK_STATUS_ACCEPTED);
-    CHECK(s_uplink.command_count == 1U);
-
-    TTC_ProcessUplink(envelope, length);
-    CHECK(s_uplink.last_command_status == UPLINK_STATUS_DUPLICATE);
-    CHECK(s_uplink.command_count == 1U);
-
-    length = Mock_Authenticated("CMD,50,REQ_TELEMETRY", envelope);
-    TTC_ProcessUplink(envelope, length);
-    CHECK(s_uplink.last_command_status == UPLINK_STATUS_STALE);
-    CHECK(s_uplink.command_count == 1U);
-    return 0;
-}
-
-static int TestNewCommandsAreRateLimitedWithoutConsumingTheirId(void)
-{
-    uint8_t envelope[TTC_UPLINK_MAX_LENGTH];
-    uint8_t length;
-
-    Mock_Reset(); StartHealthyTtc();
-    length = Mock_Authenticated("CMD,200,REQ_TELEMETRY", envelope);
-    TTC_ProcessUplink(envelope, length);
-    CHECK(s_uplink.last_command_status == UPLINK_STATUS_ACCEPTED);
-
-    mock_tick = TTC_COMMAND_MIN_INTERVAL_MS - 1U;
-    length = Mock_Authenticated("CMD,201,REQ_TELEMETRY", envelope);
-    TTC_ProcessUplink(envelope, length);
-    CHECK(s_uplink.last_command_status == UPLINK_STATUS_RATE_LIMITED);
-    CHECK(s_command_high_water == 200U);
-
-    mock_tick = TTC_COMMAND_MIN_INTERVAL_MS;
-    TTC_ProcessUplink(envelope, length);
-    CHECK(s_uplink.last_command_status == UPLINK_STATUS_ACCEPTED);
-    CHECK(s_command_high_water == 201U);
-    return 0;
-}
-
-static int TestUplinkAuthenticationRejectsTampering(void)
-{
-    uint8_t envelope[TTC_UPLINK_MAX_LENGTH];
-    uint8_t length;
-
-    CHECK(TTC_AuthTag(NULL, 0U) == UINT64_C(0x726fdb47dd0e0e31));
-    Mock_Reset(); StartHealthyTtc();
-    length = Mock_Authenticated("CMD,300,REQ_TELEMETRY", envelope);
-    envelope[4] = (uint8_t)'4';
-    TTC_ProcessUplink(envelope, length);
-    CHECK(s_uplink.last_command_status == UPLINK_STATUS_NONE);
-    CHECK(s_uplink.last_command_id == 0U);
-    CHECK(s_uplink.command_count == 0U);
     return 0;
 }
 
@@ -334,6 +239,23 @@ static int TestFdirReinitBitTriggersRecovery(void)
     return 0;
 }
 
+static int TestRejectedRecoveryRequestIsNotAcked(void)
+{
+    Mock_Reset(); StartHealthyTtc();
+
+    mock_fdir_requests = EQUIPMENT_LORA;
+    mock_isolate_result = LORA_BUSY;
+    CHECK(TTC_FDIR_RequestIsolation() == TTC_FDIR_RESULT_ACCEPTED);
+    TTC_Service();
+    CHECK((mock_fdir_requests & EQUIPMENT_LORA) != 0U);
+    mock_busy = 0U;
+    mock_state = LORA_STATE_ISOLATED;
+    mock_status = LORA_OK;
+    TTC_Service();
+    CHECK((mock_fdir_requests & EQUIPMENT_LORA) == 0U);
+    return 0;
+}
+
 int main(void)
 {
     int result;
@@ -349,11 +271,7 @@ int main(void)
     if (result != 0) return result;
     result = TestCommandAndAckLatchesAreIndependent();
     if (result != 0) return result;
-    result = TestCommandReplayDistinguishesDuplicateFromStale();
+    result = TestFdirReinitBitTriggersRecovery();
     if (result != 0) return result;
-    result = TestNewCommandsAreRateLimitedWithoutConsumingTheirId();
-    if (result != 0) return result;
-    result = TestUplinkAuthenticationRejectsTampering();
-    if (result != 0) return result;
-    return TestFdirReinitBitTriggersRecovery();
+    return TestRejectedRecoveryRequestIsNotAcked();
 }

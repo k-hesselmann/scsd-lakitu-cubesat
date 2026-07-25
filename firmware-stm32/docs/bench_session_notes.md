@@ -4,6 +4,80 @@ Observations from Phase 1 (bring-up/smoke test) and Phase 3 (fault injection)
 on `nucleo_l476rg_testhooks`, flagged for developer follow-up. Not blocking
 further campaign work, but should be looked at before flight.
 
+## 2026-07-21 Phase 3 continuation
+
+Test-hooks image was flashed successfully with PlatformIO
+`nucleo_l476rg_testhooks`; OpenOCD verified the image. The runtime banner
+`FDIR_TEST_HOOKS build - bench-only` appeared on the ST-Link VCP.
+
+USART2 TX remains healthy, but host-to-board RX still did not reach the hook
+console: repeated `HOOK STATUS` and intentionally malformed commands over both
+`/dev/cu.usbmodem14303` and `/dev/tty.usbmodem14303` produced no hook response
+or parse-error response. Synthetic hook rows were therefore driven over SWD by
+writing the hook state variables in RAM:
+
+- C4 IMU garbage: armed `s_imu_freeze_active` with accel pinned at 15 g.
+  Evidence seen on console: `[VALIDATION] IMU magnitude implausible`,
+  `IMU_POOL: AX=15.000 ... VALID=0`. Because GPS had no indoor fix at the same
+  time, validation also escalated to `2 sensors broken - I2C restart`.
+- C6 baro offset: armed `s_baro_offset_active` with +1000 m. The datapool field
+  `g_datapool.baro_alt_m` read back over SWD as about 999.7 m, confirming the
+  injection path and SD/telemetry data source. The actual BARO/GPS cross-check
+  did not fire because GPS was invalid indoors; this row still needs a valid GPS
+  fix or a GPS simulator/further hook to exercise the expected 5 s disagreement
+  debounce.
+- C8 ADC fault: armed `s_adc_fault_active`; after debounce, `batt_valid` read
+  back as 0 and `equipment_faults` as `0x0041` (GPS + EPS_ADC). After clearing
+  the hook, `batt_valid` returned to 1 and `equipment_faults` returned to
+  `0x0001` (GPS-only, expected indoors).
+- F3 SCV erase: erased only the reserved SCV flash page
+  `0x080FF800..0x080FFFFF` over OpenOCD and reset the MCU. Boot continued
+  normally; `g_scv` read back with `magic=0xCAFE`, `boot_count=1`,
+  `mission_elapsed_ms=0`, and `flight_phase=STANDBY`, confirming default
+  reinitialisation after blank SCV.
+
+SD card logging was observed working during this continuation session
+(`CORAL] SD file opened OK`, frame files closed with CRC OK), so SD evidence is
+usable again for follow-up campaign steps.
+
+Physical fault actions continued on the same flashed image, with a timestamped
+serial capture in `output/test_campaign/phase3_20260721/serial.log`:
+
+- SD removal while the Coral stream was active produced
+  `[CORAL] !!! SD f_open FAILED -- draining UART without saving`. Live SCV
+  readback showed `equipment_faults=0x0011` (GPS + SD) and `sd_fault_count`
+  incrementing. Reinsertion alone did not immediately clear the fault, but a
+  reset with the SD inserted remounted cleanly: later console output showed
+  `SD file opened OK`, `Pixel stream done, SD file closed`, CRC OK, and SCV
+  returned to `equipment_faults=0x0001` (GPS-only indoors). This should recover
+  at runtime after hot reinsertion without requiring an MCU reset; current
+  behavior points to an incomplete FatFS/SPI/logger remount or reinitialisation
+  path after removal.
+- GPS/I2C physical disturbance produced a useful C7-style bus fault: IMU went
+  invalid, baro went invalid, and SWD readback showed
+  `equipment_faults=0x0007` (GPS + IMU + BARO) while the main loop and SD/Coral
+  logging continued. After reseating the sensor wiring, I2C scan again found
+  `0x42`, `0x68`, and `0x76`, IMU/BARO samples returned valid, and SCV cleared
+  back to `0x0001`.
+- GPS disconnect was later unambiguous: GPS recovery printed
+  `[M10S] ERROR: Device not found at I2C 0x42`; after reconnect, GPS
+  reinitialised and NAV-PVT streaming resumed.
+- Coral stream disconnect exposed a gap in the current FDIR observable. After
+  the line was disconnected, no new `[CORAL] SOF/Header/SD file opened` lines
+  appeared, but `g_datapool.coral_valid` remained `1`, `coral_timeout_count`
+  stayed 0, and `equipment_faults` stayed `0x0001`. Code inspection matched the
+  bench result: `Coral_Update()` clears `coral_valid` only after a new SOF is
+  seen, then sets it on a clean frame. A completely silent Coral link after the
+  last good frame therefore leaves the last sample sticky-valid forever and the
+  FDIR Coral timeout monitor cannot trip. Recommend adding an age/last-rx
+  timeout for `coral_valid` or a Coral heartbeat/expected-frame deadline before
+  closing the Coral-loss row.
+- LoRa/TTC physical fault detection was observed after disturbing the radio SPI
+  path or holding the radio in reset: SWD readback showed
+  `equipment_faults=0x0021` (GPS + LORA). After the radio path was restored and
+  the attempt window had time to refresh, SWD readback returned to
+  `equipment_faults=0x0001` (GPS-only indoors), confirming LoRa recovery.
+
 ## 1. IMU: intermittent bit-exact repeated readings (possible stuck-sensor glitch)
 
 `sensor_validation.c`'s C4 stuck-value check (`IMU_STUCK_CYCLES = 3`) is

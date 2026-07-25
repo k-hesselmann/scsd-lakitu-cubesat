@@ -257,7 +257,7 @@ application layer. Figure~\ref{fig:ttc-reliability} summarizes a transaction.
   \node[gstep, right=3.2cm of tx] (validate)
     {Ground: verify length, v8 and CRC};
   \node[gstep, below=0.85cm of validate] (ack)
-    {Ground: validate/log, send packet-bound ACK};
+    {Ground: log/display, send \texttt{ACK,N}};
   \node[decision, below=1.60cm of tx] (got) {Matching ACK\\within 5 s?};
   \node[decision, below=1.25cm of got] (tries) {Three attempts\\used?};
   \node[flowbox, below right=0.45cm and 1.8cm of got] (done)
@@ -281,23 +281,17 @@ application layer. Figure~\ref{fig:ttc-reliability} summarizes a transaction.
 \label{fig:ttc-reliability}
 \end{figure}
 
-After \textit{TxDone}, flight returns to continuous RX and waits 5~s for an
-authenticated ACK containing the packet's boot count, sequence number and
-transmit uptime. All three identifiers must match the outstanding frame before
-it is released, preventing replay of a
-captured ACK after a reboot or sequence wrap. The last accepted ACK is
-classified as duplicate; another valid tuple is unexpected. ACKs require no
+After \textit{TxDone}, flight returns to continuous RX and waits 5~s for
+\texttt{ACK,<sequence>}. A match releases the frame; the last accepted ACK is
+classified as duplicate; another valid sequence is unexpected. ACKs require no
 ACK-of-ACK. Ground sends the ACK only after full application validation, waits
-3.0~s so flight can process \textit{TxDone} and restore continuous RX, and
+0.75~s so flight can process \textit{TxDone} and restore continuous RX, and
 then restores its own continuous RX after the ACK attempt. It acknowledges a
 duplicated sequence again. A duplicate normally means downlink succeeded but
 the earlier ground ACK did not reach flight in time.
 \subsection{Commands and Replay Protection}
 
-Flight accepts ASCII uplinks up to 64 bytes. The implemented classes are shown
-in Table~\ref{tab:ttc-uplink}.
-All uplinks carry a 64-bit SipHash-2-4 authentication tag calculated with a
-provisioned 128-bit key; the flight build fails closed when no key is supplied.
+Flight accepts ASCII uplinks up to 64 bytes. The implemented classes are:
 
 \begin{table}[H]
 \centering
@@ -305,39 +299,22 @@ provisioned 128-bit key; the flight build fails closed when no key is supplied.
 \toprule
 \textbf{Wire form} & \textbf{Meaning} & \textbf{Flight response} \\
 \midrule
-\begin{tabular}[t]{@{}l@{}}
-\ttcfield{ACK,<boot>,<sequence>,}\\
-\ttcfield{<uptime>,<tag>}
-\end{tabular} & Acknowledge one outstanding telemetry frame & Update independent ACK-status latch \\
-\begin{tabular}[t]{@{}l@{}}
-\ttcfield{CMD,<id>,REQ_TELEMETRY,}\\
-\ttcfield{<tag>}
-\end{tabular} & Request telemetry & Record ID/status; report it in the next nominally permitted frame \\
-\begin{tabular}[t]{@{}l@{}}
-\ttcfield{CMD,<id>,<other verb>,}\\
-\ttcfield{<tag>}
-\end{tabular} & Valid but unsupported command & Latch \texttt{UNSUPPORTED} for the next permitted frame \\
-Authenticated but malformed \texttt{CMD}/\texttt{ACK} & Invalid format & Reject without executing or releasing a frame \\
+\texttt{ACK,<sequence>} & Acknowledge telemetry & Update independent ACK-status latch \\
+\ttcfield{CMD,<id>,REQ_TELEMETRY} & Request out-of-cycle telemetry & Record ID/status and schedule immediate telemetry \\
+\ttcfield{CMD,<id>,<other verb>} & Valid but unsupported command & Latch \texttt{UNSUPPORTED} and schedule telemetry \\
+Malformed \texttt{CMD} or \texttt{ACK} & Invalid format & Latch \texttt{INVALID\_FORMAT} and schedule telemetry \\
 \bottomrule
 \end{tabular}
 \caption{Implemented uplink message classes.}
 \label{tab:ttc-uplink}
 \end{table}
 
-Command IDs are non-zero 16-bit values. A command is accepted once, an executed
-ID is reported as \texttt{DUPLICATE}, and an ID older than the replay window is
-reported as \texttt{STALE} rather than successful. Ground persists the next ID
-across backend restarts, serializes command transactions, and accepts a response
-only from telemetry newer than the pre-command baseline. It retries up to three
-times with a 5~s radio-TX timeout and a 25~s flight-response timeout. New
-commands and command-triggered responses are limited to the nominal 20~s
-telemetry cadence. The ground API additionally provides one-shot command
-arming, rate limiting, and operator-token enforcement for non-loopback
-operation. \texttt{REQ\_TELEMETRY} is currently the only operational verb.
-Ground never wraps the 16-bit ID space under one RF key; exhaustion requires
-coordinated rekeying, preventing captured commands from becoming valid again
-after an ID wrap. Unauthenticated packets are ignored without mutating the
-trusted command or ACK latches.
+Command IDs are non-zero 16-bit values. A command is accepted once and a
+repeated ID is reported as duplicate. Ground serializes command transactions,
+assigns a stable ID, and by default retries three times with 5~s TX and 5~s
+flight-response timeouts. Confirmation is the command ID and
+\texttt{ACCEPTED}/\texttt{DUPLICATE} status echoed in valid telemetry. \texttt{REQ\_TELEMETRY} is currently the only
+operational verb.
 
 \section{Protocol-v8 Telemetry Frame}
 
@@ -426,15 +403,12 @@ FDIR sets \ttcfield{EQUIPMENT_LORA} in a shared bitmask.
 The ground segment has three layers. Python controls an RFM95W through CH347,
 reads payload/RSSI/SNR/CRC, and restores continuous RX after transmissions.
 FastAPI validates and decodes v8, tracks lost/duplicate sequences, keeps bounded
-history, persists uplink IDs, retains rejected-frame observations, writes
-telemetry and event CSVs, exposes REST, and broadcasts a consistent status
-envelope over WebSocket. The React dashboard provides Overview, Health, Position/Flight
+history, writes telemetry and event CSVs, exposes REST, and broadcasts over
+WebSocket. The React dashboard provides Overview, Health, Position/Flight
 Phase, Link Analytics, Commands and Raw Telemetry views. Its live-data hook
 batches rapid updates, merges initial history with WebSocket traffic and keeps
 duplicate packets and ground events visible without replacing the latest valid
 spacecraft state.
 
-Invalid-length, unsupported-envelope and physical-CRC observations remain
-available for diagnosis but never replace the latest valid spacecraft state.
-RSSI packet power includes negative SNR as required by the SX1276 measurement
-model; flight and ground both enable and verify the same HF LNA-boost setting.
+Invalid and physical-CRC observations remain available for diagnosis but never
+replace the latest valid spacecraft state. 

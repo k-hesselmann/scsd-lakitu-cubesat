@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react"
+import { useState } from "react"
 import {
   Activity,
   AlertTriangle,
@@ -21,24 +21,12 @@ import { MissionStrip } from "@/components/MissionStrip"
 import { SettingsDialog } from "@/components/SettingsDialog"
 import { useTelemetryWebSocket } from "@/hooks/useTelemetryWebSocket"
 
-const OverviewPage = lazy(() =>
-  import("@/pages/OverviewPage").then((module) => ({ default: module.OverviewPage })),
-)
-const HealthPage = lazy(() =>
-  import("@/pages/HealthPage").then((module) => ({ default: module.HealthPage })),
-)
-const PositionPage = lazy(() =>
-  import("@/pages/PositionPage").then((module) => ({ default: module.PositionPage })),
-)
-const RawTelemetryPage = lazy(() =>
-  import("@/pages/RawTelemetryPage").then((module) => ({ default: module.RawTelemetryPage })),
-)
-const LinkAnalyticsPage = lazy(() =>
-  import("@/pages/LinkAnalyticsPage").then((module) => ({ default: module.LinkAnalyticsPage })),
-)
-const CommandsPage = lazy(() =>
-  import("@/pages/CommandsPage").then((module) => ({ default: module.CommandsPage })),
-)
+import { OverviewPage } from "@/pages/OverviewPage"
+import { HealthPage } from "@/pages/HealthPage"
+import { PositionPage } from "@/pages/PositionPage"
+import { RawTelemetryPage } from "@/pages/RawTelemetryPage"
+import { LinkAnalyticsPage } from "@/pages/LinkAnalyticsPage"
+import { CommandsPage } from "@/pages/CommandsPage"
 
 function navClass({ isActive }: { isActive: boolean }) {
   return [
@@ -110,24 +98,16 @@ export default function App() {
             />
 
             <div className="min-h-0 flex-1 overflow-hidden">
-              <Suspense
-                fallback={
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    Loading dashboard module...
-                  </div>
-                }
-              >
-                <Routes>
-                  <Route path="/" element={<Navigate to="/overview" replace />} />
-                  <Route path="/overview" element={<OverviewPage {...dashboardData} />} />
-                  <Route path="/health" element={<HealthPage {...dashboardData} />} />
-                  <Route path="/position" element={<PositionPage {...dashboardData} />} />
-                  <Route path="/phase" element={<Navigate to="/position" replace />} />
-                  <Route path="/commands" element={<CommandsPage latest={dashboardData.latest} />} />
-                  <Route path="/link" element={<LinkAnalyticsPage {...dashboardData} />} />
-                  <Route path="/raw" element={<RawTelemetryPage {...dashboardData} />} />
-                </Routes>
-              </Suspense>
+              <Routes>
+                <Route path="/" element={<Navigate to="/overview" replace />} />
+                <Route path="/overview" element={<OverviewPage {...dashboardData} />} />
+                <Route path="/health" element={<HealthPage {...dashboardData} />} />
+                <Route path="/position" element={<PositionPage {...dashboardData} />} />
+                <Route path="/phase" element={<Navigate to="/position" replace />} />
+                <Route path="/commands" element={<CommandsPage latest={dashboardData.latest} />} />
+                <Route path="/link" element={<LinkAnalyticsPage {...dashboardData} />} />
+                <Route path="/raw" element={<RawTelemetryPage {...dashboardData} />} />
+              </Routes>
             </div>
           </section>
         </div>

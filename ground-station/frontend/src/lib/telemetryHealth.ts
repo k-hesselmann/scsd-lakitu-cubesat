@@ -7,18 +7,60 @@ export const EQUIPMENT_CORAL = 1 << 3
 export const EQUIPMENT_SD = 1 << 4
 export const EQUIPMENT_LORA = 1 << 5
 export const EQUIPMENT_EPS_ADC = 1 << 6
+export const EQUIPMENT_CDH = 1 << 15
+
+const EQUIPMENT_BITS = [
+  [EQUIPMENT_GPS, "GPS"],
+  [EQUIPMENT_IMU, "IMU"],
+  [EQUIPMENT_BARO, "BARO"],
+  [EQUIPMENT_CORAL, "CORAL"],
+  [EQUIPMENT_SD, "SD"],
+  [EQUIPMENT_LORA, "LORA"],
+  [EQUIPMENT_EPS_ADC, "EPS ADC"],
+  [EQUIPMENT_CDH, "CDH"],
+] as const
 
 export function rawFlagIsValid(value: unknown) {
   return value === 1 || value === true
 }
 
-function parseEquipmentMask(value: unknown) {
-  if (typeof value === "number" && Number.isInteger(value)) return value
+export function parseEquipmentMask(value: unknown) {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xffff) return value
   if (typeof value === "string") {
-    const parsed = Number.parseInt(value, 0)
-    return Number.isNaN(parsed) ? null : parsed
+    const trimmed = value.trim()
+    if (!/^(?:0[xX][0-9a-fA-F]+|\d+)$/.test(trimmed)) return null
+    const parsed = Number.parseInt(trimmed, 0)
+    return parsed >= 0 && parsed <= 0xffff ? parsed : null
   }
   return null
+}
+
+export function decodeEquipmentMask(value: unknown) {
+  const mask = parseEquipmentMask(value)
+  if (mask === null) return null
+
+  const names: string[] = []
+  let knownMask = 0
+  for (const [bitMask, name] of EQUIPMENT_BITS) {
+    knownMask |= bitMask
+    if ((mask & bitMask) !== 0) names.push(name)
+  }
+  for (let bit = 0; bit < 16; bit += 1) {
+    const bitMask = 1 << bit
+    if ((mask & bitMask) !== 0 && (knownMask & bitMask) === 0) {
+      names.push(`UNKNOWN_BIT_${bit}`)
+    }
+  }
+  return names
+}
+
+export function formatEquipmentMask(value: unknown) {
+  const mask = parseEquipmentMask(value)
+  if (mask === null) return "\u2014"
+
+  const names = decodeEquipmentMask(mask) ?? []
+  const hex = `0x${mask.toString(16).toUpperCase().padStart(4, "0")}`
+  return `${hex} (${names.length > 0 ? names.join(", ") : "none"})`
 }
 
 export function equipmentEnabledMask(row: TelemetryRow | null) {

@@ -83,16 +83,11 @@ export function SystemArchitectureDiagram({
   const baroEnabled = isEquipmentEnabled(latest, EQUIPMENT_BARO)
   const batteryEnabled = isEquipmentEnabled(latest, EQUIPMENT_EPS_ADC)
   const coralEnabled = isEquipmentEnabled(latest, EQUIPMENT_CORAL)
-  const gpsValid = rawFlagIsValid(latest.gps_valid_raw)
-  const imuValid = rawFlagIsValid(latest.imu_valid_raw)
-  const baroValid = rawFlagIsValid(latest.baro_valid_raw)
-  const batteryValid = rawFlagIsValid(latest.batt_valid_raw)
-  const coralValid = rawFlagIsValid(latest.coral_valid_raw)
-  const gps = statusFromValidity(gpsValid, gpsFault, gpsEnabled)
-  const imu = statusFromValidity(imuValid, imuFault, imuEnabled)
-  const baro = statusFromValidity(baroValid, baroFault, baroEnabled)
-  const battery = statusFromValidity(batteryValid, batteryFault, batteryEnabled)
-  const coral = statusFromValidity(coralValid, coralFault, coralEnabled)
+  const gps = statusFromValidity(rawFlagIsValid(latest.gps_valid_raw), gpsFault, gpsEnabled)
+  const imu = statusFromValidity(rawFlagIsValid(latest.imu_valid_raw), imuFault, imuEnabled)
+  const baro = statusFromValidity(rawFlagIsValid(latest.baro_valid_raw), baroFault, baroEnabled)
+  const battery = statusFromValidity(rawFlagIsValid(latest.batt_valid_raw), batteryFault, batteryEnabled)
+  const coral = statusFromValidity(rawFlagIsValid(latest.coral_valid_raw), coralFault, coralEnabled)
 
   // This packet arriving proves a successful flight-to-ground transmission.
   // The embedded values are the onboard snapshot taken before that transmission.
@@ -147,11 +142,11 @@ export function SystemArchitectureDiagram({
         <Badge variant={badgeVariant(obc)}>OBC {obc.toUpperCase()}</Badge>
       </div>
       <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
-        <StatusCard title="GNSS" variant={gps} detail={`Altitude ${fmt(gpsValid ? latest.gnss_altitude_m : null, " m", 1)} · Vertical speed ${fmt(gpsValid ? latest.vertical_speed_ms : null, " m/s", 2)}`} tags={[`enabled ${fmt(gpsEnabled)}`, `valid ${fmt(gpsValid)}`, `fix ${fmt(gpsValid ? latest.gnss_fix_type : null)}`, `satellites ${fmt(gpsValid ? latest.gnss_satellites_used : null)}`, `UTC ${formatGnssUtc(gpsValid ? latest.gnss_utc_sod : null)}`, `course ${fmt(gpsValid ? latest.course_deg : null, "°", 2)}`]} />
-        <StatusCard title="IMU" variant={imu} detail={`Accel X ${fmt(imuValid ? latest.imu_accel_x_g : null, " g", 3)} · Y ${fmt(imuValid ? latest.imu_accel_y_g : null, " g", 3)} · Z ${fmt(imuValid ? latest.imu_accel_z_g : null, " g", 3)}`} tags={[`enabled ${fmt(imuEnabled)}`, `valid ${fmt(imuValid)}`, `gyro X ${fmt(imuValid ? latest.imu_gyro_x_dps : null, " deg/s", 1)}`, `Y ${fmt(imuValid ? latest.imu_gyro_y_dps : null, " deg/s", 1)}`, `Z ${fmt(imuValid ? latest.imu_gyro_z_dps : null, " deg/s", 1)}`]} />
-        <StatusCard title="Barometer" variant={baro} detail={`${fmt(baroValid ? latest.baro_pressure_pa : null, " Pa")} · ${fmt(baroValid ? latest.baro_altitude_m : null, " m", 1)}`} tags={[`enabled ${fmt(baroEnabled)}`, `valid ${fmt(baroValid)}`, `temperature ${fmt(baroValid ? latest.baro_temperature_c : null, " °C", 2)}`]} />
-        <StatusCard title="Battery ADC" variant={battery} detail={fmt(batteryValid ? latest.battery_v : null, " V", 2)} tags={[`enabled ${fmt(batteryEnabled)}`, `valid ${fmt(batteryValid)}`, `fault ${fmt(batteryFault)}`]} />
-        <StatusCard title="Coral" variant={coral} detail={`Cloud fraction ${fmt(coralValid ? latest.coral_fraction_percent : null, "%", 2)}`} tags={[`enabled ${fmt(coralEnabled)}`, `valid ${fmt(coralValid)}`, `sequence low ${fmt(coralValid ? latest.coral_sequence_low : null)}`, `age ${fmt(coralValid ? latest.coral_result_age_s : null, " s")}`, `status ${fmt(latest.coral_status)}`]} />
+        <StatusCard title="GNSS" variant={gps} detail={`Altitude ${fmt(latest.gnss_altitude_m, " m", 1)} · Vertical speed ${fmt(latest.vertical_speed_ms, " m/s", 2)}`} tags={[`enabled ${fmt(gpsEnabled)}`, `valid ${fmt(latest.gps_valid_raw)}`, `fix ${fmt(latest.gnss_fix_type)}`, `satellites ${fmt(latest.gnss_satellites_used)}`, `UTC ${formatGnssUtc(latest.gnss_utc_sod)}`, `course ${fmt(latest.course_deg, "°", 2)}`]} />
+        <StatusCard title="IMU" variant={imu} detail={`Accel X ${fmt(latest.imu_accel_x_g, " g", 3)} · Y ${fmt(latest.imu_accel_y_g, " g", 3)} · Z ${fmt(latest.imu_accel_z_g, " g", 3)}`} tags={[`enabled ${fmt(imuEnabled)}`, `valid ${fmt(latest.imu_valid_raw)}`, `gyro X ${fmt(latest.imu_gyro_x_dps, " deg/s", 1)}`, `Y ${fmt(latest.imu_gyro_y_dps, " deg/s", 1)}`, `Z ${fmt(latest.imu_gyro_z_dps, " deg/s", 1)}`]} />
+        <StatusCard title="Barometer" variant={baro} detail={`${fmt(latest.baro_pressure_pa, " Pa")} · ${fmt(latest.baro_altitude_m, " m", 1)}`} tags={[`enabled ${fmt(baroEnabled)}`, `valid ${fmt(latest.baro_valid_raw)}`, `temperature ${fmt(latest.baro_temperature_c, " °C", 2)}`]} />
+        <StatusCard title="Battery ADC" variant={battery} detail={fmt(latest.battery_v, " V", 2)} tags={[`enabled ${fmt(batteryEnabled)}`, `valid ${fmt(latest.batt_valid_raw)}`, `fault ${fmt(batteryFault)}`]} />
+        <StatusCard title="Coral" variant={coral} detail={`Cloud fraction ${fmt(latest.coral_fraction_percent, "%", 2)}`} tags={[`enabled ${fmt(coralEnabled)}`, `valid ${fmt(latest.coral_valid_raw)}`, `sequence low ${fmt(latest.coral_sequence_low)}`, `age ${fmt(latest.coral_result_age_s, " s")}`, `status ${fmt(latest.coral_status)}`]} />
         <StatusCard
           title="Flight TX Health (Downlink)"
           variant={flightTx}

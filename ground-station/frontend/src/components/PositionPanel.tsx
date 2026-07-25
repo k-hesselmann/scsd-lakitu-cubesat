@@ -9,7 +9,7 @@ import { rawFlagIsValid } from "@/lib/telemetryHealth"
 import { sampleEvenly } from "@/lib/telemetrySeries"
 import type { TelemetryRow } from "@/types/telemetry"
 
-function validCoordinate(lat?: number | null, lon?: number | null) { return typeof lat === "number" && typeof lon === "number" && Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 }
+function validCoordinate(lat?: number, lon?: number) { return typeof lat === "number" && typeof lon === "number" && Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 }
 function packetTime(row: TelemetryRow) { return row.pc_receive_time_iso ? new Date(row.pc_receive_time_iso).toLocaleTimeString() : "—" }
 function MapController({ center, bounds, followLatest, fitRequest }: { center: LatLngExpression; bounds: LatLngBoundsExpression | null; followLatest: boolean; fitRequest: number }) {
   const map = useMap()
@@ -33,7 +33,6 @@ export function PositionPanel({ latest, history }: { latest: TelemetryRow | null
   const tableRows = useMemo(() => [...validRows].reverse().slice(0, 75), [validRows])
   const launchPoint = trajectory[0] ?? null
   const latestPoint = latest && rawFlagIsValid(latest.gps_valid_raw) && validCoordinate(latest.latitude_deg, latest.longitude_deg) ? [latest.latitude_deg as number, latest.longitude_deg as number] as [number, number] : null
-  const latestGpsValid = rawFlagIsValid(latest?.gps_valid_raw)
   const maxAltitudeRow = useMemo(() => validRows.reduce<TelemetryRow | null>((best, row) => !best || (row.gnss_altitude_m ?? -Infinity) > (best.gnss_altitude_m ?? -Infinity) ? row : best, null), [validRows])
   const maxAltitudePoint = maxAltitudeRow && validCoordinate(maxAltitudeRow.latitude_deg, maxAltitudeRow.longitude_deg) ? [maxAltitudeRow.latitude_deg as number, maxAltitudeRow.longitude_deg as number] as [number, number] : null
   const center: LatLngExpression = latestPoint ?? launchPoint ?? [48.1351, 11.582]
@@ -41,16 +40,16 @@ export function PositionPanel({ latest, history }: { latest: TelemetryRow | null
 
   return <div className="grid h-full min-h-0 gap-3 xl:grid-cols-[460px_minmax(0,1fr)]">
     <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_190px] gap-3">
-      <Card className="min-h-0 overflow-hidden"><CardHeader className="px-3 py-1.5"><CardTitle className="text-xs">Valid GPS Position History</CardTitle></CardHeader><CardContent className="h-[calc(100%-32px)] px-3 pb-3"><div className="h-full overflow-auto rounded-md border"><Table className="min-w-max text-xs"><TableHeader className="sticky top-0 bg-background"><TableRow><TableHead>Ground time</TableHead><TableHead>Seq</TableHead><TableHead>Latitude</TableHead><TableHead>Longitude</TableHead><TableHead>GPS alt</TableHead><TableHead>Baro alt</TableHead><TableHead>Ground speed</TableHead><TableHead>Vertical speed</TableHead></TableRow></TableHeader><TableBody>{tableRows.map((row, index) => <TableRow key={`${row.sequence_number}-${index}`}><TableCell>{packetTime(row)}</TableCell><TableCell>{fmt(row.sequence_number)}</TableCell><TableCell>{fmt(row.latitude_deg, "", 7)}</TableCell><TableCell>{fmt(row.longitude_deg, "", 7)}</TableCell><TableCell>{fmt(row.gnss_altitude_m, " m", 1)}</TableCell><TableCell>{fmt(rawFlagIsValid(row.baro_valid_raw) ? row.baro_altitude_m : null, " m", 1)}</TableCell><TableCell>{fmt(row.ground_speed_ms, " m/s", 2)}</TableCell><TableCell>{fmt(row.vertical_speed_ms, " m/s", 2)}</TableCell></TableRow>)}</TableBody></Table></div></CardContent></Card>
+      <Card className="min-h-0 overflow-hidden"><CardHeader className="px-3 py-1.5"><CardTitle className="text-xs">Valid GPS Position History</CardTitle></CardHeader><CardContent className="h-[calc(100%-32px)] px-3 pb-3"><div className="h-full overflow-auto rounded-md border"><Table className="min-w-max text-xs"><TableHeader className="sticky top-0 bg-background"><TableRow><TableHead>Ground time</TableHead><TableHead>Seq</TableHead><TableHead>Latitude</TableHead><TableHead>Longitude</TableHead><TableHead>GPS alt</TableHead><TableHead>Baro alt</TableHead><TableHead>Ground speed</TableHead><TableHead>Vertical speed</TableHead></TableRow></TableHeader><TableBody>{tableRows.map((row, index) => <TableRow key={`${row.sequence_number}-${index}`}><TableCell>{packetTime(row)}</TableCell><TableCell>{fmt(row.sequence_number)}</TableCell><TableCell>{fmt(row.latitude_deg, "", 7)}</TableCell><TableCell>{fmt(row.longitude_deg, "", 7)}</TableCell><TableCell>{fmt(row.gnss_altitude_m, " m", 1)}</TableCell><TableCell>{fmt(row.baro_altitude_m, " m", 1)}</TableCell><TableCell>{fmt(row.ground_speed_ms, " m/s", 2)}</TableCell><TableCell>{fmt(row.vertical_speed_ms, " m/s", 2)}</TableCell></TableRow>)}</TableBody></Table></div></CardContent></Card>
       <Card>
         <CardHeader className="px-3 py-1.5"><CardTitle className="text-xs">Protocol-v8 GNSS Metrics</CardTitle></CardHeader>
         <CardContent className="grid h-[calc(100%-32px)] grid-cols-2 gap-x-3 gap-y-1 overflow-auto px-3 pb-2 text-[11px]">
-          <div>GNSS valid</div><div>{latest ? latestGpsValid ? "YES" : "NO" : "—"}</div>
-          <div>UTC</div><div>{formatGnssUtc(latestGpsValid ? latest?.gnss_utc_sod : null)}</div>
-          <div>Fix type</div><div>{fmt(latestGpsValid ? latest?.gnss_fix_type : null)}</div>
-          <div>Satellites</div><div>{fmt(latestGpsValid ? latest?.gnss_satellites_used : null)}</div>
-          <div>Course</div><div>{fmt(latestGpsValid ? latest?.course_deg : null, "°", 2)}</div>
-          <div>GNSS altitude</div><div>{fmt(latestGpsValid ? latest?.gnss_altitude_m : null, " m", 1)}</div>
+          <div>GNSS valid</div><div>{latest ? rawFlagIsValid(latest.gps_valid_raw) ? "YES" : "NO" : "—"}</div>
+          <div>UTC</div><div>{formatGnssUtc(latest?.gnss_utc_sod)}</div>
+          <div>Fix type</div><div>{fmt(latest?.gnss_fix_type)}</div>
+          <div>Satellites</div><div>{fmt(latest?.gnss_satellites_used)}</div>
+          <div>Course</div><div>{fmt(latest?.course_deg, "°", 2)}</div>
+          <div>GNSS altitude</div><div>{fmt(latest?.gnss_altitude_m, " m", 1)}</div>
           <div>Vertical speed</div><div>{fmt(latest?.vertical_speed_ms, " m/s", 2)}</div>
           <div>Ground speed</div><div>{fmt(latest?.ground_speed_ms, " m/s", 2)}</div>
           <div>Sample age</div><div>{fmt(latest?.sample_age_ms, " ms")}</div>

@@ -3,6 +3,7 @@
 #include "fdir/scv.h"
 #include "fsw/fsm.h"
 #include "main.h"
+#include "sd_logger.h"
 #include "ttc/ttc.h"
 #include <string.h>
 
@@ -24,8 +25,10 @@ static uint16_t s_reinit_requests;
 static uint8_t  s_batt_timeout_count;   /* RAM-only: no SCV field for batt  */
 static uint8_t  s_subsys_enabled[FDIR_SUBSYS_COUNT];
 static uint32_t s_last_bus_restart_ms;
+static uint32_t s_last_sd_reinit_ms;
 static uint32_t s_prev_datapool_timestamp_ms;
 static uint32_t s_stale_since_ms;       /* 0 = datapool timestamp currently advancing */
+static uint8_t  s_prev_sd_consecutive_faults;
 
 /* LoRa TX outcome ring buffer (FMECA T1): tracks the last
  * FDIR_LORA_RECOVERY_WINDOW attempts to evaluate both the recovery and SCV
@@ -111,6 +114,12 @@ static uint8_t FDIR_StaleSeconds(uint32_t now_ms, uint32_t last_ok_ms)
     return (seconds > UINT8_MAX) ? UINT8_MAX : (uint8_t)seconds;
 }
 
+static void FDIR_AddSdFaultEvidence(SCV_t *scv, uint8_t delta)
+{
+    uint16_t total = (uint16_t)scv->sd_fault_count + delta;
+    scv->sd_fault_count = (total > UINT8_MAX) ? UINT8_MAX : (uint8_t)total;
+}
+
 static void FDIR_InitDefaults(SCV_t *scv)
 {
     scv->magic = SCV_MAGIC;
@@ -158,6 +167,29 @@ static void FDIR_LoraRecordAttempt(uint8_t failed)
     s_lora.index = (uint8_t)((s_lora.index + 1U) % FDIR_LORA_RECOVERY_WINDOW);
     if (s_lora.count < FDIR_LORA_RECOVERY_WINDOW)
         s_lora.count++;
+}
+
+static uint8_t FDIR_LoraUnavailable(const TTC_FDIR_Health_t *health)
+{
+    return (!health->radio_busy &&
+            !health->recovery_in_progress &&
+            !health->isolation_active &&
+            (!health->radio_ready || !health->rx_active)) ? 1U : 0U;
+}
+
+static uint8_t FDIR_LoraTxRecoveryThresholdMet(const TTC_FDIR_Health_t *health)
+{
+    return ((health->consecutive_tx_failures >= FDIR_LORA_TX_FAILURE_LIMIT) ||
+            ((s_lora.count == FDIR_LORA_RECOVERY_WINDOW) &&
+             (FDIR_LoraWindowFailures(FDIR_LORA_RECOVERY_WINDOW) >=
+              FDIR_LORA_RECOVERY_WINDOW_FAILS))) ? 1U : 0U;
+}
+
+static uint8_t FDIR_LoraTxFaultThresholdMet(void)
+{
+    return ((s_lora.count >= FDIR_LORA_FAULT_WINDOW) &&
+            (FDIR_LoraWindowFailures(FDIR_LORA_FAULT_WINDOW) >=
+             FDIR_LORA_FAULT_WINDOW_FAILS)) ? 1U : 0U;
 }
 
 static uint8_t FDIR_ClassifyResetReason(void)
@@ -244,8 +276,10 @@ void FDIR_Init(SCV_t *scv)
     s_reinit_requests = 0U;
     s_batt_timeout_count = 0U;
     s_last_bus_restart_ms = 0U;
+    s_last_sd_reinit_ms = 0U;
     s_prev_datapool_timestamp_ms = 0U;
     s_stale_since_ms = 0U;
+    s_prev_sd_consecutive_faults = 0U;
     memset(&s_lora, 0, sizeof(s_lora));
     for (uint32_t i = 0U; i < FDIR_MONITOR_COUNT; i++)
     {
@@ -285,6 +319,33 @@ static void FDIR_RunMonitor(FDIR_Monitor_t *m, const SCV_t *scv,
     }
 }
 
+static void FDIR_RunSdMonitor(SCV_t *scv, uint32_t now_ms)
+{
+    SD_LoggerHealth_t health;
+    uint8_t faulted;
+
+    SD_Logger_GetHealth(&health);
+
+    if (health.consecutive_faults > s_prev_sd_consecutive_faults)
+        FDIR_AddSdFaultEvidence(scv,
+            (uint8_t)(health.consecutive_faults - s_prev_sd_consecutive_faults));
+    s_prev_sd_consecutive_faults = health.consecutive_faults;
+
+    faulted = ((health.state != SD_LOGGER_ACTIVE) ||
+               (health.last_error != FR_OK) ||
+               (health.consecutive_faults > 0U)) ? 1U : 0U;
+
+    FDIR_SetEquipmentFault(EQUIPMENT_SD, faulted);
+
+    if (faulted &&
+        (scv->equipment_enabled & EQUIPMENT_SD) &&
+        FDIR_CooldownElapsed(now_ms, &s_last_sd_reinit_ms,
+                             FDIR_SD_REINIT_PERIOD_MS))
+    {
+        s_reinit_requests |= EQUIPMENT_SD;
+    }
+}
+
 void FDIR_Update(SensorData_t *dp, SCV_t *scv)
 {
     uint32_t now_ms = HAL_GetTick();
@@ -306,6 +367,9 @@ void FDIR_Update(SensorData_t *dp, SCV_t *scv)
 
     if (dp->batt_valid)
         scv->last_batt_mv = dp->batt_voltage_mv;
+
+    if (s_subsys_enabled[FDIR_SUBSYS_SD])
+        FDIR_RunSdMonitor(scv, now_ms);
 
     /* L2 escalation (FMECA C7): both fast I2C monitors faulted means the
      * shared bus is suspect, not the devices. CDH owns the bus and executes
@@ -342,29 +406,27 @@ void FDIR_Update(SensorData_t *dp, SCV_t *scv)
         scv->lora_timeout_count = health.consecutive_tx_failures;
         scv->lora_tx_fault_counter = health.lora_tx_fault_counter;
 
-        /* Recovery: consecutive-failure limit, or a sustained failure rate
-         * over the last FDIR_LORA_RECOVERY_WINDOW attempts.
+        /* Recovery: an idle-but-unavailable modem/RX path, consecutive-failure
+         * limit, or a sustained failure rate over the last
+         * FDIR_LORA_RECOVERY_WINDOW attempts.
          * TODO(give-up policy, optional next step): after N recovery
          * requests with no lasting improvement, escalate to
          * TTC_FDIR_RequestIsolation()/RequestReturnToService() — same shape
          * as the CDH give-up TODO above; needs its own persisted retry count
          * and re-arm rule. */
-        if (((health.consecutive_tx_failures >= FDIR_LORA_TX_FAILURE_LIMIT) ||
-             ((s_lora.count == FDIR_LORA_RECOVERY_WINDOW) &&
-              (FDIR_LoraWindowFailures(FDIR_LORA_RECOVERY_WINDOW) >=
-               FDIR_LORA_RECOVERY_WINDOW_FAILS))) &&
+        if ((FDIR_LoraUnavailable(&health) ||
+             FDIR_LoraTxRecoveryThresholdMet(&health)) &&
             FDIR_CooldownElapsed(now_ms, &s_lora.last_request_ms,
                                  FDIR_REINIT_PERIOD_MS))
         {
             s_reinit_requests |= EQUIPMENT_LORA;
         }
 
-        /* SCV fault: tighter, shorter window than recovery, recomputed every
-         * cycle (level, not edge-latched) so it clears once the ratio drops. */
+        /* SCV fault: unavailable idle modem/RX path or a tighter, shorter TX
+         * failure-rate window than recovery, recomputed every cycle (level, not
+         * edge-latched) so it clears once the ratio drops. */
         FDIR_SetEquipmentFault(EQUIPMENT_LORA,
-            (s_lora.count >= FDIR_LORA_FAULT_WINDOW) &&
-            (FDIR_LoraWindowFailures(FDIR_LORA_FAULT_WINDOW) >=
-             FDIR_LORA_FAULT_WINDOW_FAILS));
+            FDIR_LoraUnavailable(&health) || FDIR_LoraTxFaultThresholdMet());
     }
 
     /* CDH freshness (FMECA C10): CDH_Update writes timestamp_ms every cycle;
