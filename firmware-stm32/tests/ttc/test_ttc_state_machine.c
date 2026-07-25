@@ -180,26 +180,29 @@ static void CompleteTransmitAndRestartRx(void)
     Mock_Complete(LORA_OK, 1U, 1U); TTC_Service();
 }
 
-static int TestAckRetriesAndNackCounter(void)
+static int TestNoAckIsReportedWithoutRetry(void)
 {
     TelemetryPacket_t packet;
     TTC_FDIR_Health_t health;
-    uint8_t attempt;
     Mock_Reset(); StartHealthyTtc();
     memset(&packet, 0, sizeof(packet));
     packet.sequence_number = 42U;
     TTC_Transmit(&packet);
-    for (attempt = 0U; attempt < TTC_MAX_TX_ATTEMPTS; attempt++) {
-        TTC_Service();
-        CHECK(mock_send_calls == (uint16_t)(attempt + 1U));
-        CHECK(mock_last_send_length == TELEMETRY_PACKET_V8_SIZE);
-        CompleteTransmitAndRestartRx();
-        mock_tick += TTC_ACK_TIMEOUT_MS;
-    }
+    TTC_Service();
+    CHECK(mock_send_calls == 1U);
+    CHECK(mock_last_send_length == TELEMETRY_PACKET_V8_SIZE);
+    CompleteTransmitAndRestartRx();
+    mock_tick += TTC_ACK_TIMEOUT_MS;
     TTC_Service(); TTC_FDIR_GetHealth(&health);
+    CHECK(mock_send_calls == 1U);
     CHECK(health.nack_counter == 1U);
     CHECK(TTC_GetHealth()->ack_timeout_count == 1U);
+    CHECK(TTC_GetHealth()->last_event == LORA_EVENT_ACK_TIMEOUT);
     CHECK(s_pending_valid == 0U);
+    mock_tick = TTC_TELEMETRY_INTERVAL_MS - 1U;
+    CHECK(TTC_TelemetryDue() == 0U);
+    mock_tick++;
+    CHECK(TTC_TelemetryDue() == 1U);
     return 0;
 }
 
@@ -267,7 +270,7 @@ int main(void)
     if (result != 0) return result;
     result = TestIsolationPreemptsStartup();
     if (result != 0) return result;
-    result = TestAckRetriesAndNackCounter();
+    result = TestNoAckIsReportedWithoutRetry();
     if (result != 0) return result;
     result = TestCommandAndAckLatchesAreIndependent();
     if (result != 0) return result;

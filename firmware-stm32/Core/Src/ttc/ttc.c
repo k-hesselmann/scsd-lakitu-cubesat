@@ -33,7 +33,6 @@ _Static_assert(sizeof(TelemetryPacket_t) == TELEMETRY_PACKET_V8_SIZE,
 
 #define TTC_TX_TIMEOUT_MS               5000U
 #define TTC_ACK_TIMEOUT_MS              5000U
-#define TTC_MAX_TX_ATTEMPTS                3U
 #define TTC_UPLINK_MAX_LENGTH              64U
 #define TTC_COMMAND_REPLAY_WINDOW_SIZE     16U
 
@@ -57,7 +56,6 @@ static uint8_t s_radio_faulted;
 static uint8_t s_immediate_telemetry;
 static uint8_t s_pending_valid;
 static uint8_t s_pending_awaiting_ack;
-static uint8_t s_pending_attempts;
 static uint8_t s_driver_fault_observed;
 #if TTC_CDC_BINARY_MIRROR
 static uint8_t s_cdc_mirror_pending;
@@ -475,7 +473,6 @@ static void TTC_ProcessAcknowledgement(uint16_t acknowledged_sequence)
         s_uplink.last_ack_sequence = acknowledged_sequence;
         s_pending_valid = 0U;
         s_pending_awaiting_ack = 0U;
-        s_pending_attempts = 0U;
     }
     else if (acknowledged_sequence == s_uplink.last_ack_sequence)
     {
@@ -587,23 +584,24 @@ static void TTC_StartPendingTransmit(uint32_t now)
     if (status != LORA_OK)
     {
         TTC_RecordTxFailure(status);
+        s_pending_valid = 0U;
+        s_last_tx_ms = now;
+        s_has_transmitted = 1U;
         return;
     }
 
-    TTC_IncrementU8(&s_pending_attempts);
     s_pending_awaiting_ack = 0U;
     s_state = TTC_STATE_TX_WAIT;
-    (void)now;
 }
 
-static void TTC_ServicePendingRetry(uint32_t now)
+static void TTC_ServicePendingTelemetry(uint32_t now)
 {
     if (!s_pending_valid)
         return;
 
     if (!s_pending_awaiting_ack)
     {
-        if (s_pending_attempts < TTC_MAX_TX_ATTEMPTS && !s_radio_faulted)
+        if (!s_radio_faulted)
             TTC_StartPendingTransmit(now);
         return;
     }
@@ -611,18 +609,13 @@ static void TTC_ServicePendingRetry(uint32_t now)
     if ((uint32_t)(now - s_pending_last_attempt_ms) < TTC_ACK_TIMEOUT_MS)
         return;
 
-    if (s_pending_attempts >= TTC_MAX_TX_ATTEMPTS)
-    {
-        s_health.last_event = LORA_EVENT_ACK_TIMEOUT;
-        s_health.ack_timeout_count = TTC_IncrementU16(s_health.ack_timeout_count);
-        s_fdir_health.nack_counter = TTC_IncrementU16(s_fdir_health.nack_counter);
-        s_pending_valid = 0U;
-        s_pending_awaiting_ack = 0U;
-        s_pending_attempts = 0U;
-        return;
-    }
-
-    TTC_StartPendingTransmit(now);
+    /* A missing ground ACK is reported by the next fresh telemetry packet.
+     * Do not retransmit this packet or reuse its sequence number. */
+    s_health.last_event = LORA_EVENT_ACK_TIMEOUT;
+    s_health.ack_timeout_count = TTC_IncrementU16(s_health.ack_timeout_count);
+    s_fdir_health.nack_counter = TTC_IncrementU16(s_fdir_health.nack_counter);
+    s_pending_valid = 0U;
+    s_pending_awaiting_ack = 0U;
 }
 
 static void TTC_BeginRequestedAction(void)
@@ -721,7 +714,6 @@ void TTC_Init(void)
     s_immediate_telemetry = 0U;
     s_pending_valid = 0U;
     s_pending_awaiting_ack = 0U;
-    s_pending_attempts = 0U;
     s_driver_fault_observed = 0U;
 #if TTC_CDC_BINARY_MIRROR
     s_cdc_mirror_pending = 0U;
@@ -843,7 +835,10 @@ void TTC_Service(void)
         else
         {
             TTC_RecordTxFailure(status);
+            s_pending_valid = 0U;
             s_pending_awaiting_ack = 0U;
+            s_last_tx_ms = now;
+            s_has_transmitted = 1U;
             s_state = TTC_STATE_IDLE;
         }
         goto done;
@@ -896,7 +891,7 @@ void TTC_Service(void)
         goto done;
     TTC_ReconcileDriverFault();
     TTC_PollUplink(now);
-    TTC_ServicePendingRetry(now);
+    TTC_ServicePendingTelemetry(now);
 
 done:
     TTC_SyncFdirHealth();
@@ -948,7 +943,6 @@ void TTC_Transmit(const TelemetryPacket_t *pkt)
     s_pending_packet = *pkt;
     s_pending_valid = 1U;
     s_pending_awaiting_ack = 0U;
-    s_pending_attempts = 0U;
     s_immediate_telemetry = 0U;
 #if TTC_CDC_BINARY_MIRROR
     s_cdc_mirror_pending = 1U;

@@ -74,13 +74,13 @@ validity bits, operational FDIR masks, compact Coral results, and CRC-16/CCITT.
 The ground station accepts only this 92-byte v8 frame and converts its wire
 values back to engineering units.
 
-TTC normally transmits every 20 seconds, but queues an immediate packet after a
+TTC normally transmits every 10 seconds, but queues an immediate packet after a
 flight-state transition or valid ground command. It accepts reliable
 `CMD,<id>,REQ_TELEMETRY` commands and `ACK,<sequence>` telemetry
-acknowledgements. Flight retries an unacknowledged packet up to three times
-using the exact same bytes and sequence. Command confirmation and telemetry-ACK
-status are independently latched, so ACK processing cannot hide a command
-response before ground receives it.
+acknowledgements. Flight sends each telemetry packet once and waits five seconds
+for its ACK; the ACK or timeout state is included in the next fresh packet.
+Command confirmation and telemetry-ACK status are independently latched, so ACK
+processing cannot hide a command response before ground receives it.
 
 V8 includes GNSS UTC, fix type, satellites, and course; all IMU axes; barometer
 pressure/altitude/temperature; battery voltage; Coral cloud fraction/status;
@@ -93,9 +93,8 @@ Connect RFM95W NSS to PB6/D10 and RESET to PC7/D9. The SD card uses SPI2.
 The normal radio profile on flight and ground is **869.525 MHz, SF8,
 125 kHz bandwidth, coding rate 4/5, 17 dBm PA_BOOST, preamble 8, explicit
 header, payload CRC, and private sync word `0x12`**. A 92-byte frame occupies
-about 287 ms, so the nominal 20-second cadence uses about 1.44% duty cycle;
-three transmissions of the same frame use about 4.31% in the conservative
-retry case. Antenna gain and feeder loss must be included when checking ERP.
+about 287 ms, so the nominal 10-second cadence uses about 2.87% duty cycle.
+Antenna gain and feeder loss must be included when checking ERP.
 
 
 ### LoRa FDIR

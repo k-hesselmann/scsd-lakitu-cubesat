@@ -96,7 +96,7 @@ def test_recovery_regressions_have_behavioral_harnesses() -> None:
     assert "LoRa_ForceSpiQuiesce" in driver_source
     assert "TestStartupFailureCanRecover" in ttc_harness
     assert "TestRxFaultIsRecordedOnce" in ttc_harness
-    assert "TestAckRetriesAndNackCounter" in ttc_harness
+    assert "TestNoAckIsReportedWithoutRetry" in ttc_harness
     assert "TestOversizedObservationIsConsumed" in driver_harness
     assert "TestAbortRejectionStillAllowsRecovery" in driver_harness
     assert "TestAbortTimeoutStillAllowsRecovery" in driver_harness

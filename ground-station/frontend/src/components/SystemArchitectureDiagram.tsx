@@ -123,7 +123,7 @@ export function SystemArchitectureDiagram({
   if (!rxModeActive) rxDetail = "The flight radio reported that continuous RX mode was inactive before this downlink."
   else if (rxHardwareFailure) rxDetail = `The flight receiver reported ${latest.lora_last_rx_status_name ?? "a hardware/configuration error"}.`
   else if (commandOutcome === "unacknowledged") rxDetail = `Command ${receiver?.last_command_id ?? "—"} was not confirmed after ${receiver?.last_command_attempt ?? "—"} attempt(s); the uplink or its telemetry response may have been lost.`
-  else if (duplicateTelemetry) rxDetail = `Telemetry sequence ${latest.sequence_number ?? "—"} was duplicated: flight did not confirm the previous ground ACK before its retry deadline. The ground ACK was sent again.`
+  else if (duplicateTelemetry) rxDetail = `Telemetry sequence ${latest.sequence_number ?? "—"} was duplicated in reception. The ground ACK was sent again.`
   else if (commandOutcome === "retrying") rxDetail = `Command ${receiver?.last_command_id ?? "—"} has not yet been confirmed; the ground station is retrying the same command ID.`
   else if (ackTxFailed) rxDetail = `The ground radio did not complete ACK transmission for telemetry sequence ${receiver?.last_telemetry_ack_sequence ?? "—"}.`
   else if (unexpectedAck) rxDetail = "Flight received an ACK that did not match its outstanding telemetry sequence."
