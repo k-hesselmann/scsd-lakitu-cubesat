@@ -128,29 +128,28 @@ static void SaveSeq(uint32_t seq) {
 // Images are the same headerless 224x224 Y8 format the OBC's SD card gets, so
 // tools/raw_to_png.py converts them too.
 //
-// The littlefs partition needs the coralmicro fork patch
-// patches/coralmicro-littlefs-full-partition.patch, which widens it from the
-// upstream 64 MiB to the chip's full 128 MiB (see that patch's comment in
-// filesystem.cc for why upstream only used half). After the model (~2.8 MiB)
-// that leaves ~123.7 MiB free. Once kBackupMaxImages is reached, further
-// images are just skipped -- NOT wrapped/overwritten -- so a long flight
-// fills up and stops rather than erasing the early (most interesting:
-// ascent) frames.
+// The littlefs partition is the stock 64 MiB (512 blocks, ~57 MiB free after
+// the ~2.8 MiB model). It can optionally be widened to the chip's full 128 MiB
+// with patches/coralmicro-littlefs-full-partition.patch (block_count 512->1012),
+// but archiving every SECOND frame (kBackupImageEveryN below) already keeps a
+// full flight in 64 MiB, so the patch is not required. Once the partition fills
+// (or kBackupMaxImages is reached) further images are just skipped -- NOT
+// wrapped/overwritten -- so a long flight stops rather than erasing the early
+// (most interesting: ascent) frames.
 //
 // Sized against the mission profile: flights run at most 6 h at the 10 s
-// inference cadence the OBC actually configures (coral.c's SET_INTERVAL
-// 10000), i.e. <= 2160 inferences/flight. Saving every frame (no
-// downsampling) needs:
-//   2160 images * 50176 B = ~103.4 MB, vs. ~123.7 MB free (~16% margin) --
-// only fits because of the full-partition patch above; on the stock 64 MiB
-// partition this same setting would run out after ~3.5 h. kBackupMaxImages
-// is 2200, a little above the 2160 a full 6 h flight actually produces, so
-// the cap is a backstop (e.g. against a shorter SET_INTERVAL) rather than
-// the thing that ends up truncating a nominal flight.
+// inference cadence the OBC configures (coral.c's SET_INTERVAL 10000), i.e.
+// <= 2160 inferences/flight. Archiving every SECOND frame (kBackupImageEveryN=2)
+// keeps a whole flight in the stock 64 MiB partition:
+//   1080 images * 50176 B = ~54.2 MB, vs. ~57 MiB free -- fits with ~5% margin.
+// log.csv still logs EVERY inference's seq,fraction, so the cloud-cover series
+// stays complete even though only every other frame is archived as an image.
+// kBackupMaxImages (2200) is a backstop against a shorter-than-10 s interval;
+// on 64 MiB the partition itself fills (~1150 images) before that cap binds.
 // ---------------------------------------------------------------------------
 const char kBackupDir[]     = "/backup";
 const char kBackupLogPath[] = "/backup/log.csv";
-constexpr int kBackupImageEveryN  = 1;
+constexpr int kBackupImageEveryN  = 2;   // archive every 2nd frame (fits 64 MiB)
 constexpr int kBackupMaxImages    = 2200;
 // Backstop only (not sized against a real budget): stop growing the CSV log
 // past this size. At one ~12-byte line per inference this is many years of
@@ -206,7 +205,8 @@ static void BackupAppendLog(uint32_t seq, float fraction) {
 
 // Saves one full image, unless the cap has already been reached -- in which
 // case this is a no-op (see banner comment: stop, don't overwrite).
-static void BackupSaveImage(uint32_t seq, const std::vector<uint8_t>& pixels) {
+static void BackupSaveImage(uint32_t seq, float fraction,
+                            const std::vector<uint8_t>& pixels) {
     if (g_backup_img_count >= kBackupMaxImages) {
         if (!g_backup_img_cap_logged) {
             printf("Backup: image cap (%d) reached, no further images saved "
@@ -215,9 +215,11 @@ static void BackupSaveImage(uint32_t seq, const std::vector<uint8_t>& pixels) {
         }
         return;
     }
-    char path[48];
-    snprintf(path, sizeof(path), "%s/img_%08lu.raw", kBackupDir,
-             (unsigned long)seq);
+    // Name carries seq AND cloud percent (e.g. img_00000003_cloud30.1.raw) so
+    // the fraction travels with the frame; log.csv still holds the exact values.
+    char path[64];
+    snprintf(path, sizeof(path), "%s/img_%08lu_cloud%.1f.raw", kBackupDir,
+             (unsigned long)seq, fraction * 100.0f);
     if (LfsWriteFile(path, pixels.data(), pixels.size())) {
         ++g_backup_img_count;
     } else {
@@ -555,7 +557,7 @@ void CloudConsole(tflite::MicroInterpreter* interpreter, uint32_t seq) {
                         (uint16_t)model_width, (uint16_t)model_height);
         BackupAppendLog(seq, fraction);
         if (seq % kBackupImageEveryN == 0) {
-            BackupSaveImage(seq, gray_image);
+            BackupSaveImage(seq, fraction, gray_image);
         }
     } else {
         printf("Failed to read cloud cover from camera.\r\n");
