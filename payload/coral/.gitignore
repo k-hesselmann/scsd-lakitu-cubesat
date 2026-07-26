@@ -5,6 +5,7 @@
 # On-bench debug captures (see tools/cloud_regressor_client.py)
 /burst_frames/
 /debug_frames/
+/backup_frames/     # pulled from the board by tools/fetch_backup.py
 *.png
 
 # Python

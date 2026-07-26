@@ -22,6 +22,22 @@ typedef struct
     uint32_t tx_error_count;
 } TTCDebugStatus_t;
 
+typedef struct
+{
+    uint8_t radio_ready;
+    LoRaStatus_t last_init_status;
+    LoRaStatus_t last_send_status;
+    uint8_t last_lora_version;
+    uint8_t last_irq_flags;
+    uint16_t last_sequence_number;
+    uint16_t last_crc16;
+    uint8_t last_payload_length;
+    uint32_t tx_attempt_count;
+    uint32_t tx_success_count;
+    uint32_t tx_timeout_count;
+    uint32_t tx_error_count;
+} TTCDebugStatus_t;
+
 /* Initialise the TTC state machine. Hardware work is queued, not awaited. */
 void TTC_Init(void);
 

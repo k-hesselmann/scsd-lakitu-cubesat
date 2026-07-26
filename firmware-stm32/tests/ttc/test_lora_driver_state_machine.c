@@ -95,6 +95,19 @@ static int TestFullLengthFifoTransferDoesNotWrap(void)
     return 0;
 }
 
+static int TestRxStartCompletionEntersPolling(void)
+{
+    Mock_Reset();
+    s_state = LORA_STATE_STARTING_RX;
+    s_driver_state = DRIVER_RX_START_ACTIONS;
+    LoRa_CompleteReceiveStart();
+    CHECK(s_state == LORA_STATE_IDLE);
+    CHECK(s_rx_active == 1U);
+    CHECK(s_driver_state == DRIVER_RX_POLL);
+    CHECK(LoRa_GetLastStatus() == LORA_OK);
+    return 0;
+}
+
 static int TestAbortRejectionStillAllowsRecovery(void)
 {
     Mock_Reset();
@@ -148,6 +161,8 @@ int main(void)
     result = TestOversizedObservationIsConsumed();
     if (result != 0) return result;
     result = TestFullLengthFifoTransferDoesNotWrap();
+    if (result != 0) return result;
+    result = TestRxStartCompletionEntersPolling();
     if (result != 0) return result;
     result = TestAbortRejectionStillAllowsRecovery();
     if (result != 0) return result;

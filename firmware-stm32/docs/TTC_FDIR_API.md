@@ -40,7 +40,11 @@ Fills a snapshot FDIR should poll every cycle:
 | `recovery_in_progress` | 1 while a `RECOVERY` or `RETURN_TO_SERVICE` action is `PENDING` or `IN_PROGRESS`. |
 | `isolation_active` | 1 while the modem is held in reset by `LoRa_Isolate()` (`LoRa_IsIsolated()`). |
 | `lora_tx_fault_counter` | Lifetime (not consecutive) count of TX failures since boot. `uint16_t`, saturates. |
+<<<<<<< HEAD
 | `nack_counter` | Count of telemetry packets that received no matching ACK within the five-second observation window. |
+=======
+| `nack_counter` | Count of telemetry packets whose retry budget was exhausted without a matching ACK. |
+>>>>>>> origin/main
 | `last_tx_success_ms` | `HAL_GetTick()` value of the most recent successful transmit. |
 | `last_rx_success_ms` | `HAL_GetTick()` value of the most recent CRC-valid received packet. |
 

@@ -450,6 +450,13 @@ static void LoRa_CompleteOperation(LoRaStatus_t status)
     }
 }
 
+static void LoRa_CompleteReceiveStart(void)
+{
+    s_rx_active = 1U;
+    LoRa_CompleteOperation(LORA_OK);
+    s_driver_state = DRIVER_RX_POLL;
+}
+
 static uint8_t LoRa_RunActions(const LoRaAction_t *actions, uint8_t count)
 {
     const LoRaAction_t *action;
@@ -950,10 +957,7 @@ void LoRa_Service(void)
     {
         if (LoRa_RunActions(s_rx_start_actions,
                             (uint8_t)(sizeof(s_rx_start_actions) / sizeof(s_rx_start_actions[0]))))
-        {
-            s_rx_active = 1U;
-            LoRa_CompleteOperation(LORA_OK);
-        }
+            LoRa_CompleteReceiveStart();
         return;
     }
     if (s_state == LORA_STATE_IDLE && s_rx_active)
