@@ -288,7 +288,10 @@ static void FDIR_RunMonitor(FDIR_Monitor_t *m, const SCV_t *scv,
 static void FDIR_RunGpsNoFixMonitor(const SensorData_t *dp, const SCV_t *scv,
                                     uint32_t now_ms)
 {
-    if (!dp->gps_valid || dp->gps_fix_type != M10S_FIX_NONE) {
+    /* gps_valid reports a fresh receiver message, while flight software uses
+     * only a 3D solution. A sustained sub-3D state is therefore a recovery
+     * condition even though receiver transport is still healthy. */
+    if (!dp->gps_valid || dp->gps_fix_type >= M10S_FIX_3D) {
         s_gps_no_fix_since_ms = 0U;
         return;
     }

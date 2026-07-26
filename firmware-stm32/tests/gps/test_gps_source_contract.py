@@ -18,13 +18,19 @@ def test_flight_software_requires_a_3d_fix() -> None:
     assert "dp->gps_fix_type == M10S_FIX_3D" in source
 
 
-def test_fdir_tracks_no_fix_separately_from_transport() -> None:
+def test_fdir_recovers_after_a_sustained_sub_3d_fix() -> None:
     source = (ROOT / "Core/Src/fdir/fdir.c").read_text(encoding="utf-8")
     header = (ROOT / "Core/Inc/fdir/fdir.h").read_text(encoding="utf-8")
 
     assert "FDIR_RunGpsNoFixMonitor" in source
     assert "FDIR_GPS_NO_FIX_REINIT_MS" in header
-    assert "M10S_FIX_NONE" in source
+    assert "dp->gps_fix_type >= M10S_FIX_3D" in source
+
+
+def test_boot_does_not_run_the_pre_initialization_gps_diagnostic() -> None:
+    source = (ROOT / "Core/Src/main.c").read_text(encoding="utf-8")
+
+    assert "GPS_Diag_Test(&hi2c1);" not in source
 
 
 def test_parser_accepts_one_complete_nav_pvt_frame() -> None:

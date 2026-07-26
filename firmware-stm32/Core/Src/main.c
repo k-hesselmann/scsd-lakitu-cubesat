@@ -23,7 +23,6 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "cdh/cdh.h"
-#include "cdh/gps_diag.h"
 #include "cdh/baro_diag.h"
 #include "datapool.h"
 #include "fdir/fdir.h"
@@ -135,7 +134,9 @@ int main(void)
   if (FDIR_SubsystemEnabled(FDIR_SUBSYS_CDH))
   {
     CDH_Init();
-    GPS_Diag_Test(&hi2c1);
+    /* GPS initialization is cooperative. Running the legacy diagnostic here
+     * would poll before M10S_InitService() has configured the receiver, then
+     * emit a false "not responding" result and delay boot. */
     Baro_Diag_Test(&hi2c1);
   }
   if (FDIR_SubsystemEnabled(FDIR_SUBSYS_FSW))
