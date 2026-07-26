@@ -2,7 +2,6 @@
 #include "ttc/lora_driver.h"
 #include "fdir/fdir.h"
 
-#include "debug_log.h"
 #include "main.h"
 #include "usbd_cdc_if.h"
 
