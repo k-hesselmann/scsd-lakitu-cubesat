@@ -29,7 +29,7 @@
  *   WAKE  (3 bytes):        {0x18, crc_hi, crc_lo}   resume inference
  *   CRC covers all bytes before the CRC field.
  *
- * SD output:  F<SEQ8>.RAW  -- raw 224x224 Y8 grayscale, no header.
+ * SD output:  F<SEQ>_C<PCT>_G<GEN>.RAW -- raw 224x224 Y8 grayscale, no header.
  *
  * DEBUG OUTPUT
  * ------------
@@ -102,6 +102,7 @@ static volatile uint8_t s_rx_ring[CORAL_RX_RING_SIZE];
 static volatile uint16_t s_rx_head = 0U;
 static volatile uint16_t s_rx_tail = 0U;
 static volatile uint16_t s_rx_high_water = 0U;
+static volatile uint32_t s_rx_last_byte_ms = 0U;
 
 /* Live-expression debug counters (add to STM32CubeIDE Live Expressions) */
 volatile uint32_t coral_sof_count     = 0;  /* incremented on each confirmed SOF   */
@@ -122,6 +123,7 @@ static uint8_t s_chunk[512];
 #define HDR_TIMEOUT_MS    500U   /* 16-byte header                             */
 #define CHUNK_TIMEOUT_MS  200U   /* 512-byte chunk (44 ms + 4.5x margin)       */
 #define CRC_TIMEOUT_MS    100U   /* 2-byte CRC trailer                         */
+#define CORAL_PREOPEN_QUIET_MS 100U /* no RX bytes before a blocking pre-open   */
 /* Clear coral_valid at the expected frame cadence; FDIR adds its 5 s invalid
  * debounce before setting the Coral equipment fault. */
 #define FRAME_STALE_TIMEOUT_MS CORAL_DEFAULT_INTERVAL_MS
@@ -147,6 +149,7 @@ static void coral_rx_ring_push(uint8_t byte)
 
     s_rx_ring[s_rx_head] = byte;
     s_rx_head = next;
+    s_rx_last_byte_ms = HAL_GetTick();
 
     {
         uint16_t queued = (uint16_t)((s_rx_head - s_rx_tail) & CORAL_RX_RING_MASK);
@@ -260,8 +263,8 @@ static uint16_t s_crc_pos;
 static uint8_t  s_status;   /* accumulated CORAL_STATUS_* flags for this frame */
 static uint8_t  s_sd_ok;
 static FIL      s_fframe;
-static char     s_fname[32];        /* this frame's final desired name       */
-static char     s_open_name[32];    /* name actually bound to s_fframe right now */
+static char     s_fname[40];        /* this frame's final desired name       */
+static char     s_open_name[40];    /* name actually bound to s_fframe right now */
 static uint8_t  s_using_staged_name; /* s_open_name is CORAL_STAGING_NAME, needs rename on success */
 static uint8_t  s_seen_good_frame;
 static uint8_t  s_frame_stale_reported;
@@ -271,6 +274,44 @@ static uint32_t s_last_good_frame_ms;
 static const char CORAL_STAGING_NAME[] = "CORAL.STG";
 static uint8_t   s_preopen_ok;
 static uint32_t  s_last_preopen_attempt_ms;
+static uint32_t  s_frame_name_generation;
+
+/* The Coral SEQ counter may restart after a payload reset. Include a local
+ * generation in the filename and retry on FR_EXIST so a new, CRC-valid image
+ * never overwrites or is discarded because of a file from a prior boot. */
+static void coral_make_next_filename(void)
+{
+    snprintf(s_fname, sizeof(s_fname), "F%08lu_C%03u_G%05lu.RAW",
+             (unsigned long)s_seq, (unsigned)s_frac_pct,
+             (unsigned long)s_frame_name_generation++);
+}
+
+static FRESULT coral_open_unique_frame_file(void)
+{
+    FRESULT result;
+
+    do
+    {
+        coral_make_next_filename();
+        result = f_open(&s_fframe, s_fname, FA_CREATE_NEW | FA_WRITE);
+    } while (result == FR_EXIST);
+
+    return result;
+}
+
+static FRESULT coral_rename_staged_file(void)
+{
+    FRESULT result;
+
+    do
+    {
+        result = f_rename(s_open_name, s_fname);
+        if (result == FR_EXIST)
+            coral_make_next_filename();
+    } while (result == FR_EXIST);
+
+    return result;
+}
 
 /* Abort the in-progress frame: close/delete any partial SD file, publish
  * the given status, log why, and return the state machine to IDLE so the
@@ -315,14 +356,46 @@ static void coral_rx_abort(uint8_t status, const char *reason)
  * than accumulating stale files. */
 static void coral_try_preopen(void)
 {
+    FRESULT result;
+
     if (s_preopen_ok)
         return;
 
-    if (f_open(&s_fframe, CORAL_STAGING_NAME, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
+    result = f_open(&s_fframe, CORAL_STAGING_NAME, FA_CREATE_ALWAYS | FA_WRITE);
+    if (result == FR_OK)
     {
-        (void)f_sync(&s_fframe);   /* durable even if power is lost before it's claimed */
-        s_preopen_ok = 1U;
+        result = f_sync(&s_fframe);
+        if (result == FR_OK)
+        {
+            s_preopen_ok = 1U;
+        }
+        else
+        {
+            (void)f_close(&s_fframe);
+        }
     }
+}
+
+void Coral_OnFilesystemUnmount(void)
+{
+    uint8_t frame_file_active =
+        ((s_rx_state == CORAL_RX_PIXELS || s_rx_state == CORAL_RX_CRC) && s_sd_ok) ? 1U : 0U;
+
+    /* FatFs invalidates every FIL object when f_mount(NULL, ...) is called.
+     * Close our handle first, then make the current frame fail cleanly rather
+     * than attempting f_write() through a stale object after remount. */
+    if (s_preopen_ok || (s_rx_state == CORAL_RX_PIXELS && s_sd_ok))
+        (void)f_close(&s_fframe);
+
+    if (frame_file_active)
+    {
+        s_sd_ok = 0U;
+        s_status |= CORAL_STATUS_SD_ERR;
+        coral_sd_err_count++;
+    }
+
+    s_preopen_ok = 0U;
+    s_using_staged_name = 0U;
 }
 
 /* 16-byte header complete: validate, open the SD file, and set up the
@@ -371,16 +444,9 @@ static void coral_header_complete(void)
         dbg(buf);
     }
 
-    /* Cloud percentage folded into the filename (UART_PROTOCOL.md section 6's
-     * OBC-side naming convention) so it's visible without cross-referencing
-     * the SD-logger CSV by SEQ. */
-    snprintf(s_fname, sizeof(s_fname), "F%08lu_cloud%u.RAW",
-             (unsigned long)s_seq, (unsigned)s_frac_pct);
-
     s_sd_ok = 0U;
     s_using_staged_name = 0U;
-    strncpy(s_open_name, s_fname, sizeof(s_open_name) - 1U);
-    s_open_name[sizeof(s_open_name) - 1U] = '\0';
+    s_open_name[0] = '\0';
 
     if (s_preopen_ok)
     {
@@ -388,13 +454,16 @@ static void coral_header_complete(void)
          * paying for another f_open() here, on the time-critical path. */
         s_preopen_ok = 0U;
         s_using_staged_name = 1U;
+        coral_make_next_filename();
         strncpy(s_open_name, CORAL_STAGING_NAME, sizeof(s_open_name) - 1U);
         s_open_name[sizeof(s_open_name) - 1U] = '\0';
         s_sd_ok = 1U;
         dbg("[CORAL] SD file ready (pre-opened)\r\n");
     }
-    else if (f_open(&s_fframe, s_fname, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
+    else if (coral_open_unique_frame_file() == FR_OK)
     {
+        strncpy(s_open_name, s_fname, sizeof(s_open_name) - 1U);
+        s_open_name[sizeof(s_open_name) - 1U] = '\0';
         s_sd_ok = 1U;
         dbg("[CORAL] SD file opened OK\r\n");
     }
@@ -471,7 +540,8 @@ static void coral_frame_complete(void)
         dbg(buf);
         s_status |= CORAL_STATUS_CRC_ERR;
         coral_crc_err_count++;
-        f_unlink(s_open_name);   /* delete corrupt file (final or staged name) */
+        if (s_open_name[0] != '\0')
+            (void)f_unlink(s_open_name); /* delete corrupt file (final or staged name) */
     }
     else
     {
@@ -482,12 +552,19 @@ static void coral_frame_complete(void)
          * closed at this point (coral_pixel_chunk_complete() closes it once
          * the pixel stream finishes), so the rename is a quick metadata-only
          * operation, not another slow allocation like the original open. */
-        if (s_using_staged_name)
+        if ((s_status & CORAL_STATUS_SD_ERR) != 0U)
         {
-            if (f_rename(s_open_name, s_fname) != FR_OK)
+            /* A remount or write failure can leave a partial file behind even
+             * when the wire CRC is valid. Never publish it as a good frame. */
+            if (s_open_name[0] != '\0')
+                (void)f_unlink(s_open_name);
+        }
+        else if (s_using_staged_name)
+        {
+            if (coral_rename_staged_file() != FR_OK)
             {
                 dbg("[CORAL] !!! rename to final name failed -- discarding\r\n");
-                f_unlink(s_open_name);
+                (void)f_unlink(s_open_name);
                 s_status |= CORAL_STATUS_SD_ERR;
                 coral_sd_err_count++;
             }
@@ -628,19 +705,23 @@ void Coral_Update(SensorData_t *dp)
         uint8_t b0 = 0U;
         uint8_t scanned = 0U;
 
-        /* Get the next frame's file ready while nothing is time-critical.
-         * Rate-limited to at most once/second so a persistently unavailable
-         * SD card can't turn this into its own per-tick stall. */
-        if (!s_preopen_ok && (uint32_t)(now - s_last_preopen_attempt_ms) >= 1000U)
-        {
-            s_last_preopen_attempt_ms = now;
-            coral_try_preopen();
-        }
-
         while (scanned < 64U)
         {
             if (!coral_rx_ring_pop(&b0))
+            {
+                /* Only pre-open after confirming that no received byte is
+                 * waiting, plus a short RX-quiet window. This avoids taking
+                 * the known multi-second f_open() stall in front of an SOF
+                 * already captured by the UART interrupt. */
+                if (!s_preopen_ok &&
+                    (uint32_t)(now - s_last_preopen_attempt_ms) >= 1000U &&
+                    (uint32_t)(now - s_rx_last_byte_ms) >= CORAL_PREOPEN_QUIET_MS)
+                {
+                    s_last_preopen_attempt_ms = now;
+                    coral_try_preopen();
+                }
                 return;
+            }
 
             scanned++;
 

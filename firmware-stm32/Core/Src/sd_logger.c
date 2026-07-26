@@ -1,5 +1,6 @@
 #include "sd_logger.h"
 
+#include "cdh/coral.h"
 #include "debug_log.h"
 #include "fatfs.h"
 #include "fdir/fdir.h"
@@ -130,6 +131,11 @@ static void sd_note_successful_sync(void)
 
 static void sd_drop_filesystem_state(void)
 {
+    /* All FatFs file objects become invalid after f_mount(NULL, ...). Coral
+     * can keep a staging file open between captures, so release it before
+     * changing the volume state. */
+    Coral_OnFilesystemUnmount();
+
     if (s_file_open)
     {
         (void)f_close(&s_file);
@@ -587,6 +593,7 @@ void SD_Logger_Close(void)
     FRESULT result = close_and_name_file();
     if (result != FR_OK)
         sd_record_fault(result);
+    Coral_OnFilesystemUnmount();
     (void)f_mount(NULL, USERPath, 0U);
     sd_logger_state = SD_LOGGER_OFF;
 }

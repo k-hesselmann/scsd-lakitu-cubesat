@@ -80,6 +80,11 @@ void Coral_Init(void);
  * ring doesn't overflow (see coral_rx_overflow_count). */
 void Coral_Update(SensorData_t *dp);
 
+/* Must be called before the SD owner unmounts or reinitializes FatFs. It
+ * releases any Coral-owned file handle so a later remount cannot leave the
+ * receiver using an invalid FIL object. */
+void Coral_OnFilesystemUnmount(void);
+
 /* Send an immediate-inference trigger command to the Coral. */
 void Coral_SendTrigger(void);
 
