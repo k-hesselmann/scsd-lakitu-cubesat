@@ -39,6 +39,15 @@ typedef struct {
     uint32_t timestamp;     /* HAL_GetTick() */
 } M10S_NavPVT;
 
+typedef struct {
+    uint32_t last_i2c_data_ms;
+    uint32_t last_nav_pvt_ms;
+    uint32_t last_valid_fix_ms;
+    uint32_t i2c_bytes_received;
+    uint32_t nav_pvt_count;
+    uint32_t bad_checksum_count;
+} M10S_Diagnostics_t;
+
 /* ========================================================================== */
 /* Public API Functions                                                      */
 /* ========================================================================== */
@@ -106,6 +115,9 @@ uint8_t M10S_IsInitialized(void);
  * @return Number of bytes currently buffered
  */
 uint16_t M10S_GetBufferFillLevel(void);
+
+/* Snapshot of communication freshness and parser activity for [SYS_STAT]. */
+void M10S_GetDiagnostics(M10S_Diagnostics_t *diagnostics);
 
 /**
  * @brief Clear all buffered data (for recovery/reset)

@@ -1,5 +1,6 @@
 #include "cdh/sensor_validation.h"
 #include "cdh/cdh.h"
+#include "debug_log.h"
 #include "main.h"
 #include <math.h>
 #include <stdio.h>
@@ -24,6 +25,42 @@ static uint8_t s_imu_prev_valid_for_stuck = 0;
 /* FMECA C6: cross-check debounce state. */
 static uint32_t s_baro_disagree_since_ms = 0;
 
+#define VALIDATION_REPEAT_LOG_MS 10000U
+
+typedef enum
+{
+    VALIDATION_LOG_IMU_MAGNITUDE = 0,
+    VALIDATION_LOG_IMU_STUCK,
+    VALIDATION_LOG_IMU_FLATLINE,
+    VALIDATION_LOG_BARO_PRESSURE,
+    VALIDATION_LOG_BARO_TEMPERATURE,
+    VALIDATION_LOG_GPS_NO_FIX,
+    VALIDATION_LOG_GPS_TIMEOUT,
+    VALIDATION_LOG_GPS_ALTITUDE,
+    VALIDATION_LOG_GPS_DISTANCE,
+    VALIDATION_LOG_BARO_GPS_DISAGREE,
+    VALIDATION_LOG_MULTI_SENSOR,
+    VALIDATION_LOG_COUNT
+} ValidationLogId_t;
+
+static uint32_t s_validation_last_log_ms[VALIDATION_LOG_COUNT];
+static uint8_t s_validation_log_seen[VALIDATION_LOG_COUNT];
+
+static void Validation_LogFault(ValidationLogId_t id, const char *message, int length)
+{
+    uint32_t now = HAL_GetTick();
+
+    if (id >= VALIDATION_LOG_COUNT)
+        return;
+    if (s_validation_log_seen[id] &&
+        (uint32_t)(now - s_validation_last_log_ms[id]) < VALIDATION_REPEAT_LOG_MS)
+        return;
+
+    s_validation_log_seen[id] = 1U;
+    s_validation_last_log_ms[id] = now;
+    DebugLog_WriteN(message, length);
+}
+
 void SensorValidation_Init(void)
 {
     memset(&g_sensor_validation, 0, sizeof(g_sensor_validation));
@@ -31,6 +68,8 @@ void SensorValidation_Init(void)
     g_sensor_validation.baro_valid = 1;
     g_sensor_validation.gps_valid = 1;
     g_sensor_validation.last_recovery_attempt_ms = HAL_GetTick();
+    memset(s_validation_last_log_ms, 0, sizeof(s_validation_last_log_ms));
+    memset(s_validation_log_seen, 0, sizeof(s_validation_log_seen));
 }
 
 static float calculateDistance(float lat1, float lon1, float lat2, float lon2)
@@ -56,7 +95,7 @@ static uint8_t validateImuPlausibility(SensorData_t *dp, float accel_mag)
     if (accel_mag > IMU_ACCEL_MAG_MAX_G) {
         char dbg[64];
         int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] IMU magnitude implausible\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        Validation_LogFault(VALIDATION_LOG_IMU_MAGNITUDE, dbg, len);
         dp->imu_valid = 0;
         g_sensor_validation.imu_valid = 0;
         g_sensor_validation.imu_plausibility_fault_count++;
@@ -82,7 +121,7 @@ static uint8_t validateImuPlausibility(SensorData_t *dp, float accel_mag)
     if (s_imu_stuck_count >= IMU_STUCK_CYCLES) {
         char dbg[64];
         int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] IMU stuck value\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        Validation_LogFault(VALIDATION_LOG_IMU_STUCK, dbg, len);
         dp->imu_valid = 0;
         g_sensor_validation.imu_valid = 0;
         g_sensor_validation.imu_plausibility_fault_count++;
@@ -113,7 +152,7 @@ static void validateIMU(SensorData_t *dp)
         if ((now - s_imu_last_flatline_ms) > (IMU_FLATLINE_TIMEOUT_S * 1000)) {
             char dbg[64];
             int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] IMU flatline\r\n");
-            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+            Validation_LogFault(VALIDATION_LOG_IMU_FLATLINE, dbg, len);
             dp->imu_valid = 0;
             g_sensor_validation.imu_valid = 0;
             g_sensor_validation.imu_fault_count++;
@@ -126,7 +165,7 @@ static void validateIMU(SensorData_t *dp)
         if (!g_sensor_validation.imu_valid) {
             char dbg[64];
             int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] IMU recovered\r\n");
-            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+            DebugLog_WriteN((uint8_t*)dbg, len);
         }
         g_sensor_validation.imu_valid = 1;
         s_imu_flatline_count = 0;
@@ -140,7 +179,7 @@ static void validateBaro(SensorData_t *dp)
     if (dp->baro_pressure_pa < 0.0f || dp->baro_pressure_pa > BARO_MAX_PRESSURE_PA) {
         char dbg[80];
         int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] BARO pressure fault\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        Validation_LogFault(VALIDATION_LOG_BARO_PRESSURE, dbg, len);
         dp->baro_valid = 0;
         g_sensor_validation.baro_valid = 0;
         g_sensor_validation.baro_fault_count++;
@@ -150,7 +189,7 @@ static void validateBaro(SensorData_t *dp)
     if (dp->baro_temp_c < BARO_MIN_TEMP_C) {
         char dbg[80];
         int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] BARO temp fault\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        Validation_LogFault(VALIDATION_LOG_BARO_TEMPERATURE, dbg, len);
         dp->baro_valid = 0;
         g_sensor_validation.baro_valid = 0;
         g_sensor_validation.baro_fault_count++;
@@ -160,7 +199,7 @@ static void validateBaro(SensorData_t *dp)
     if (!g_sensor_validation.baro_valid) {
         char dbg[64];
         int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] BARO recovered\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        DebugLog_WriteN(dbg, len);
     }
     g_sensor_validation.baro_valid = 1;
 }
@@ -178,7 +217,7 @@ static void validateGPS(SensorData_t *dp)
     if (dp->gps_fix_type == 0) {
         char dbg[80];
         int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] GPS no fix\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        Validation_LogFault(VALIDATION_LOG_GPS_NO_FIX, dbg, len);
         dp->gps_valid = 0;
         g_sensor_validation.gps_valid = 0;
         g_sensor_validation.gps_fault_count++;
@@ -189,7 +228,7 @@ static void validateGPS(SensorData_t *dp)
     if ((now - g_sensor_validation.last_gps_update_ms) > (GPS_TIMEOUT_S * 1000)) {
         char dbg[80];
         int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] GPS timeout (%ds)\r\n", GPS_TIMEOUT_S);
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        Validation_LogFault(VALIDATION_LOG_GPS_TIMEOUT, dbg, len);
         dp->gps_valid = 0;
         g_sensor_validation.gps_valid = 0;
         g_sensor_validation.gps_fault_count++;
@@ -199,7 +238,7 @@ static void validateGPS(SensorData_t *dp)
     if (dp->gps_alt_m < GPS_MIN_ALTITUDE_M || dp->gps_alt_m > GPS_MAX_ALTITUDE_M) {
         char dbg[80];
         int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] GPS altitude fault\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        Validation_LogFault(VALIDATION_LOG_GPS_ALTITUDE, dbg, len);
         dp->gps_valid = 0;
         g_sensor_validation.gps_valid = 0;
         g_sensor_validation.gps_fault_count++;
@@ -210,7 +249,7 @@ static void validateGPS(SensorData_t *dp)
     if (distance_km > GPS_MAX_DISTANCE_KM) {
         char dbg[80];
         int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] GPS distance fault\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        Validation_LogFault(VALIDATION_LOG_GPS_DISTANCE, dbg, len);
         dp->gps_valid = 0;
         g_sensor_validation.gps_valid = 0;
         g_sensor_validation.gps_fault_count++;
@@ -220,7 +259,7 @@ static void validateGPS(SensorData_t *dp)
     if (!g_sensor_validation.gps_valid) {
         char dbg[64];
         int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] GPS recovered\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        DebugLog_WriteN(dbg, len);
     }
     g_sensor_validation.gps_valid = 1;
     dp->gps_valid = 1;  /* Set datapool valid flag when all checks pass */
@@ -255,7 +294,7 @@ static void validateBaroGpsCrossCheck(SensorData_t *dp)
     if ((now - s_baro_disagree_since_ms) >= BARO_CROSSCHECK_DEBOUNCE_MS) {
         char dbg[80];
         int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] BARO/GPS altitude disagree\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        Validation_LogFault(VALIDATION_LOG_BARO_GPS_DISAGREE, dbg, len);
         dp->baro_valid = 0;   /* FMECA C6 isolation: prefer GPS altitude on disagreement */
         g_sensor_validation.baro_valid = 0;
         g_sensor_validation.baro_crosscheck_fault_count++;
@@ -278,7 +317,7 @@ static void handleRecovery(SCV_t *scv)
     if (fault_count > 1) {
         if ((now - g_sensor_validation.last_recovery_attempt_ms) < 1000) return;
         len = snprintf(dbg, sizeof(dbg), "[VALIDATION] %d sensors broken - I2C restart\r\n", fault_count);
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        Validation_LogFault(VALIDATION_LOG_MULTI_SENSOR, dbg, len);
         CDH_RequestBusRestart();
         g_sensor_validation.last_recovery_attempt_ms = now;
     } else {
@@ -290,7 +329,7 @@ static void handleRecovery(SCV_t *scv)
             } else {
                 len = snprintf(dbg, sizeof(dbg), "[VALIDATION] Recovery retry\r\n");
             }
-            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+            DebugLog_WriteN((uint8_t*)dbg, len);
             g_sensor_validation.last_recovery_attempt_ms = now;
         }
     }

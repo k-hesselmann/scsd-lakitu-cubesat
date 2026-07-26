@@ -11,8 +11,10 @@ static LoRaStatus_t mock_isolate_result;
 static uint8_t mock_busy;
 static uint8_t mock_ready;
 static uint8_t mock_rx_active;
+static uint8_t mock_on_air;
 static uint16_t mock_init_calls;
 static uint16_t mock_send_calls;
+static uint16_t mock_rx_start_calls;
 static uint8_t mock_last_send_length;
 static uint16_t mock_fdir_requests;
 
@@ -49,6 +51,7 @@ LoRaStatus_t LoRa_Send(const uint8_t *data, uint8_t length, uint32_t timeout)
 
 LoRaStatus_t LoRa_StartReceive(void)
 {
+    mock_rx_start_calls++;
     mock_busy = 1U; mock_rx_active = 0U;
     mock_state = LORA_STATE_STARTING_RX; mock_status = LORA_BUSY;
     return LORA_OK;
@@ -61,8 +64,11 @@ uint8_t LoRa_IsBusy(void) { return mock_busy; }
 uint8_t LoRa_IsReady(void) { return mock_ready; }
 uint8_t LoRa_IsRxActive(void) { return mock_rx_active; }
 uint8_t LoRa_IsIsolated(void) { return mock_state == LORA_STATE_ISOLATED; }
+uint8_t LoRa_WasLastTxOnAir(void) { return mock_on_air; }
 LoRaState_t LoRa_GetState(void) { return mock_state; }
 LoRaStatus_t LoRa_GetLastStatus(void) { return mock_status; }
+void LoRa_GetDebugStatus(LoRaDebugStatus_t *status)
+{ if (status != NULL) memset(status, 0, sizeof(*status)); }
 
 LoRaStatus_t LoRa_Isolate(void)
 {
@@ -81,7 +87,9 @@ static void Mock_Reset(void)
     mock_tick = 0U; mock_state = LORA_STATE_IDLE; mock_status = LORA_NOT_READY;
     mock_init_result = LORA_OK; mock_isolate_result = LORA_OK;
     mock_busy = 0U; mock_ready = 0U; mock_rx_active = 0U;
+    mock_on_air = 0U;
     mock_init_calls = 0U; mock_send_calls = 0U;
+    mock_rx_start_calls = 0U;
     mock_last_send_length = 0U; mock_fdir_requests = 0U;
 }
 
@@ -176,8 +184,73 @@ static int TestIsolationPreemptsStartup(void)
 
 static void CompleteTransmitAndRestartRx(void)
 {
+    mock_on_air = 1U;
     Mock_Complete(LORA_OK, 1U, 0U); TTC_Service();
     Mock_Complete(LORA_OK, 1U, 1U); TTC_Service();
+}
+
+static int TestAckTimerStartsOnlyAfterRxIsActive(void)
+{
+    TelemetryPacket_t packet;
+
+    Mock_Reset(); StartHealthyTtc();
+    memset(&packet, 0, sizeof(packet));
+    packet.sequence_number = 43U;
+    mock_tick = 100U;
+    TTC_Transmit(&packet);
+    TTC_Service();
+    mock_on_air = 1U;
+    Mock_Complete(LORA_OK, 1U, 0U);
+    TTC_Service();
+    CHECK(s_pending_waiting_for_rx == 1U);
+    CHECK(s_pending_awaiting_ack == 0U);
+
+    mock_tick += TTC_ACK_TIMEOUT_MS + 1U;
+    CHECK(TTC_GetHealth()->ack_timeout_count == 0U);
+    Mock_Complete(LORA_OK, 1U, 1U);
+    TTC_Service();
+    CHECK(s_pending_waiting_for_rx == 0U);
+    CHECK(s_pending_awaiting_ack == 1U);
+
+    mock_tick += TTC_ACK_TIMEOUT_MS - 1U;
+    TTC_Service();
+    CHECK(TTC_GetHealth()->ack_timeout_count == 0U);
+    mock_tick++;
+    TTC_Service();
+    CHECK(TTC_GetHealth()->ack_timeout_count == 1U);
+    return 0;
+}
+
+static int TestOnAirTxSurvivesCleanupFailure(void)
+{
+    TelemetryPacket_t packet;
+    TTC_FDIR_Health_t health;
+
+    Mock_Reset(); StartHealthyTtc();
+    memset(&packet, 0, sizeof(packet));
+    packet.sequence_number = 44U;
+    mock_tick = 100U;
+    TTC_Transmit(&packet);
+    TTC_Service();
+    mock_on_air = 1U;
+    Mock_Complete(LORA_SPI_ERROR, 0U, 0U);
+    TTC_Service();
+
+    CHECK(s_debug.tx_success_count == 1U);
+    CHECK(s_debug.tx_error_count == 0U);
+    CHECK(s_pending_valid == 1U);
+    CHECK(s_pending_waiting_for_rx == 1U);
+    CHECK(s_pending_awaiting_ack == 0U);
+    CHECK(TTC_GetHealth()->last_event == LORA_EVENT_RX_SPI_FAIL);
+
+    mock_tick += TTC_ACK_RX_RECOVERY_GRACE_MS;
+    TTC_Service();
+    TTC_FDIR_GetHealth(&health);
+    CHECK(TTC_GetHealth()->last_event == LORA_EVENT_ACK_RX_UNAVAILABLE);
+    CHECK(TTC_GetHealth()->ack_timeout_count == 1U);
+    CHECK(health.nack_counter == 0U);
+    CHECK(s_pending_valid == 0U);
+    return 0;
 }
 
 static int TestNoAckIsReportedWithoutRetry(void)
@@ -232,11 +305,12 @@ static int TestFdirReinitBitTriggersRecovery(void)
     TTC_FDIR_ActionStatus_t action;
     Mock_Reset(); StartHealthyTtc();
 
+    mock_rx_active = 0U;
     mock_fdir_requests = EQUIPMENT_LORA;
     TTC_Service();
     CHECK((mock_fdir_requests & EQUIPMENT_LORA) == 0U);   /* acked         */
     action = TTC_FDIR_GetActionStatus();
-    CHECK(action.action == TTC_FDIR_ACTION_RECOVERY);
+    CHECK(action.action == TTC_FDIR_ACTION_RX_RESTART);
     CHECK((action.state == TTC_FDIR_ACTION_PENDING) ||
           (action.state == TTC_FDIR_ACTION_IN_PROGRESS));
     return 0;
@@ -271,6 +345,10 @@ int main(void)
     result = TestIsolationPreemptsStartup();
     if (result != 0) return result;
     result = TestNoAckIsReportedWithoutRetry();
+    if (result != 0) return result;
+    result = TestAckTimerStartsOnlyAfterRxIsActive();
+    if (result != 0) return result;
+    result = TestOnAirTxSurvivesCleanupFailure();
     if (result != 0) return result;
     result = TestCommandAndAckLatchesAreIndependent();
     if (result != 0) return result;

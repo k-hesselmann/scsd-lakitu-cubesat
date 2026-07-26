@@ -1,4 +1,5 @@
 #include "sd_spi.h"
+#include "debug_log.h"
 #include <string.h>
 
 #if __has_include("spi.h")
@@ -6,7 +7,6 @@
 #endif
 
 extern SPI_HandleTypeDef  hspi2;
-extern UART_HandleTypeDef huart2;   /* NUCLEO ST-LINK virtual COM port */
 
 #ifndef SD_SPI_DEBUG
 #define SD_SPI_DEBUG 0   /* set to 1 to enable the SD init trace on UART2 */
@@ -18,7 +18,7 @@ extern UART_HandleTypeDef huart2;   /* NUCLEO ST-LINK virtual COM port */
 static void dbg(const char *msg)
 {
 #if SD_SPI_DEBUG
-  HAL_UART_Transmit(&huart2, (const uint8_t *)msg, (uint16_t)strlen(msg), 100);
+  DebugLog_Write(msg);
 #else
   (void)msg;
 #endif

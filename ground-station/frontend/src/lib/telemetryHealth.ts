@@ -94,6 +94,7 @@ export const LORA_EVENT_RX_CRC_ERROR = 10
 export const LORA_EVENT_RX_SPI_FAIL = 11
 export const LORA_EVENT_RX_MODE_FAIL = 12
 export const LORA_EVENT_ACK_TIMEOUT = 13
+export const LORA_EVENT_ACK_RX_UNAVAILABLE = 14
 
 export function isLoraFailureEvent(event: unknown) {
   return event === LORA_EVENT_INIT_FAIL ||
@@ -104,6 +105,7 @@ export function isLoraFailureEvent(event: unknown) {
     event === LORA_EVENT_RX_SPI_FAIL ||
     event === LORA_EVENT_RX_MODE_FAIL ||
     event === LORA_EVENT_ACK_TIMEOUT ||
+    event === LORA_EVENT_ACK_RX_UNAVAILABLE ||
     event === LORA_EVENT_NOT_READY
 }
 

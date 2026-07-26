@@ -7,6 +7,7 @@
  */
 
 #include "cdh/m10s.h"
+#include "debug_log.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -22,6 +23,10 @@ extern UART_HandleTypeDef huart2;
 #define M10S_I2C_REG_DATA_STREAM   0xFF
 #define M10S_BUFFER_SIZE           1024
 
+#ifndef M10S_VERBOSE_RUNTIME_LOGS
+#define M10S_VERBOSE_RUNTIME_LOGS 0
+#endif
+
 /* ========================================================================== */
 /* Static Module Data                                                        */
 /* ========================================================================== */
@@ -32,6 +37,7 @@ static M10S_NavPVT s_last_pvt = {0};
 static uint8_t s_initialized = 0;
 static int32_t s_last_altitude_m = 0;
 static uint32_t s_last_altitude_update_ms = 0;
+static M10S_Diagnostics_t s_diagnostics = {0};
 
 /* ========================================================================== */
 /* I2C Helper Functions                                                      */
@@ -94,7 +100,7 @@ static void M10S_QueryVersion(I2C_HandleTypeDef *hi2c)
     request[7] = ck_b;
 
     len = snprintf(dbg, sizeof(dbg), "[M10S] Querying UBX-MON-VER (testing UBX communication)...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    DebugLog_WriteN((uint8_t*)dbg, len);
 
     /* Clear any buffered data first */
     uint16_t bytes_avail;
@@ -112,7 +118,7 @@ static void M10S_QueryVersion(I2C_HandleTypeDef *hi2c)
 
     if (!result) {
         len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: Failed to send UBX-MON-VER request\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        DebugLog_WriteN((uint8_t*)dbg, len);
         return;
     }
 
@@ -130,9 +136,9 @@ static void M10S_QueryVersion(I2C_HandleTypeDef *hi2c)
                 response[2] == 0x0A && response[3] == 0x04) {
 
                 len = snprintf(dbg, sizeof(dbg),
-                    "[M10S] ✓ GPS responds to UBX! Got %d bytes of UBX-MON-VER response\r\n",
+                    "[M10S] [OK] GPS responds to UBX; got %d bytes of UBX-MON-VER response\r\n",
                     bytes_avail);
-                HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+                DebugLog_WriteN((uint8_t*)dbg, len);
 
                 /* Print first part of version string if available (starts at byte 8) */
                 if (bytes_avail > 8) {
@@ -142,18 +148,18 @@ static void M10S_QueryVersion(I2C_HandleTypeDef *hi2c)
                     ver_str[ver_len] = '\0';
 
                     len = snprintf(dbg, sizeof(dbg), "[M10S] Firmware: %s\r\n", ver_str);
-                    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+                    DebugLog_WriteN((uint8_t*)dbg, len);
                 }
             } else {
                 len = snprintf(dbg, sizeof(dbg),
                     "[M10S] Got response but not UBX-MON-VER. First bytes: %02X %02X %02X %02X\r\n",
                     response[0], response[1], response[2], response[3]);
-                HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+                DebugLog_WriteN((uint8_t*)dbg, len);
             }
         }
     } else {
         len = snprintf(dbg, sizeof(dbg), "[M10S] No response to UBX-MON-VER query\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        DebugLog_WriteN((uint8_t*)dbg, len);
     }
 }
 
@@ -294,14 +300,14 @@ static void M10S_ConfigureNMEAViaValset(I2C_HandleTypeDef *hi2c, uint32_t key, u
     char dbg[128];
     int len = snprintf(dbg, sizeof(dbg),
         "[M10S] CFG-VALSET %s=%d\r\n", msg_name, value);
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    DebugLog_WriteN((uint8_t*)dbg, len);
 
     /* Send via I2C */
     uint8_t result = M10S_WriteDataStream(hi2c, msg, idx);
 
     if (!result) {
         len = snprintf(dbg, sizeof(dbg), "[M10S]   ERROR: Failed to send command\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        DebugLog_WriteN((uint8_t*)dbg, len);
         return;
     }
 
@@ -310,11 +316,11 @@ static void M10S_ConfigureNMEAViaValset(I2C_HandleTypeDef *hi2c, uint32_t key, u
     uint8_t ack = M10S_WaitForACK(hi2c, 300);
 
     if (ack) {
-        len = snprintf(dbg, sizeof(dbg), "[M10S]   ✓ ACK received\r\n");
+        len = snprintf(dbg, sizeof(dbg), "[M10S]   [OK] ACK received\r\n");
     } else {
-        len = snprintf(dbg, sizeof(dbg), "[M10S]   ✗ No ACK (may not support this key on I2C)\r\n");
+        len = snprintf(dbg, sizeof(dbg), "[M10S]   [WARN] No ACK (key may be unsupported on I2C)\r\n");
     }
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    DebugLog_WriteN((uint8_t*)dbg, len);
 
     HAL_Delay(100);
 }
@@ -352,17 +358,17 @@ static void M10S_ConfigureNMEAMessage(I2C_HandleTypeDef *hi2c, uint8_t msg_id, u
     int len = snprintf(dbg, sizeof(dbg),
         "[M10S] Sending CFG-MSG for %s at %dHz (msg_id=0x%02X, ck_a=0x%02X, ck_b=0x%02X)\r\n",
         msg_name, rate, msg_id, ck_a, ck_b);
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    DebugLog_WriteN((uint8_t*)dbg, len);
 
     /* Send via I2C */
     uint8_t result = M10S_WriteDataStream(hi2c, full_msg, 11);
 
     if (result) {
-        len = snprintf(dbg, sizeof(dbg), "[M10S]   ✓ %s command sent\r\n", msg_name);
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        len = snprintf(dbg, sizeof(dbg), "[M10S]   [OK] %s command sent\r\n", msg_name);
+        DebugLog_WriteN((uint8_t*)dbg, len);
     } else {
-        len = snprintf(dbg, sizeof(dbg), "[M10S]   ✗ ERROR: Failed to send %s\r\n", msg_name);
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        len = snprintf(dbg, sizeof(dbg), "[M10S]   [FAIL] Failed to send %s\r\n", msg_name);
+        DebugLog_WriteN((uint8_t*)dbg, len);
         return;
     }
 
@@ -604,18 +610,18 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
     }
 
     len = snprintf(dbg, sizeof(dbg), "[M10S] Initializing MAX-M10S at I2C 0x42...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    DebugLog_WriteN((uint8_t*)dbg, len);
 
     /* Check device presence */
     uint16_t bytes_avail = 0;
     if (!M10S_GetBytesAvailable(hi2c, &bytes_avail)) {
         len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: Device not found at I2C 0x42\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        DebugLog_WriteN((uint8_t*)dbg, len);
         return 0;
     }
 
     len = snprintf(dbg, sizeof(dbg), "[M10S] Device found. Testing UBX communication...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    DebugLog_WriteN((uint8_t*)dbg, len);
 
     /* Query version to verify GPS responds to UBX commands */
     M10S_QueryVersion(hi2c);
@@ -623,7 +629,7 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
 
     /* Perform controlled software reset to clear any stuck state */
     len = snprintf(dbg, sizeof(dbg), "[M10S] Performing controlled software reset...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    DebugLog_WriteN((uint8_t*)dbg, len);
 
     uint8_t reset_msg[10];
     reset_msg[0] = 0xB5;           /* Sync 1 */
@@ -659,7 +665,7 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
      *   CFG-MSGOUT-UBX_NAV_PVT_I2C 0x20910006 (U1) - NAV-PVT rate on I2C
      */
     len = snprintf(dbg, sizeof(dbg), "[M10S] Configuring via VALSET: UBX out, NMEA off, NAV-PVT 1Hz...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    DebugLog_WriteN((uint8_t*)dbg, len);
 
     M10S_ConfigureNMEAViaValset(hi2c, 0x10720001, 1);  /* CFG-I2COUTPROT-UBX = 1 */
     M10S_ConfigureNMEAViaValset(hi2c, 0x10720002, 0);  /* CFG-I2COUTPROT-NMEA = 0 */
@@ -667,7 +673,7 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
     M10S_ConfigureNMEAViaValset(hi2c, 0x20110021, 6);  /* CFG-NAVSPG-DYNMODEL = 6 (Airborne <1g) */
 
     len = snprintf(dbg, sizeof(dbg), "[M10S] UBX-NAV-PVT configured. Waiting for data...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    DebugLog_WriteN((uint8_t*)dbg, len);
 
     /* Wait for GPS to start sending configured data */
     HAL_Delay(2000);
@@ -675,7 +681,7 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
     /* Check if we're receiving data */
     uint8_t data_detected = 0;
     len = snprintf(dbg, sizeof(dbg), "[M10S] Checking for incoming UBX data...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    DebugLog_WriteN((uint8_t*)dbg, len);
 
     /* Clear any initial buffered data and reset internal buffer pointers */
     uint8_t flush_buf[64];
@@ -683,7 +689,7 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
         if (M10S_GetBytesAvailable(hi2c, &bytes_avail) && bytes_avail > 0) {
             data_detected = 1;
             len = snprintf(dbg, sizeof(dbg), "[M10S]   Received %u bytes\r\n", bytes_avail);
-            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+            DebugLog_WriteN((uint8_t*)dbg, len);
 
             if (bytes_avail > 64) bytes_avail = 64;
             M10S_ReadDataStream(hi2c, flush_buf, bytes_avail);
@@ -693,10 +699,10 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
 
     if (!data_detected) {
         len = snprintf(dbg, sizeof(dbg), "[M10S] WARNING: No UBX data detected after configuration!\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        DebugLog_WriteN((uint8_t*)dbg, len);
     } else {
-        len = snprintf(dbg, sizeof(dbg), "[M10S] ✓ UBX data detected successfully\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        len = snprintf(dbg, sizeof(dbg), "[M10S] [OK] UBX data detected successfully\r\n");
+        DebugLog_WriteN((uint8_t*)dbg, len);
     }
 
     /* Clear the internal sentence buffer completely */
@@ -705,7 +711,7 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
 
     s_initialized = 1;
     len = snprintf(dbg, sizeof(dbg), "[M10S] Initialization complete. UBX-NAV-PVT at 1Hz...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    DebugLog_WriteN((uint8_t*)dbg, len);
 
     return 1;
 }
@@ -719,14 +725,16 @@ uint16_t M10S_CheckUblox(I2C_HandleTypeDef *hi2c)
         return 0;
     }
 
+#if M10S_VERBOSE_RUNTIME_LOGS
     static uint32_t last_debug = 0;
     if (HAL_GetTick() - last_debug > 3000) {
         char dbg[100];
         int len = snprintf(dbg, sizeof(dbg), "[M10S_CHECK] %u bytes available, buffer fill: %d/%d\r\n",
             bytes_avail, s_rx_index, M10S_BUFFER_SIZE);
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        DebugLog_WriteN((uint8_t*)dbg, len);
         last_debug = HAL_GetTick();
     }
+#endif
 
     /* Cap to remaining buffer space (no wrap - parser assumes linear buffer) */
     uint16_t space = M10S_BUFFER_SIZE - s_rx_index;
@@ -753,6 +761,11 @@ uint16_t M10S_CheckUblox(I2C_HandleTypeDef *hi2c)
         total_read += chunk;
     }
 
+    if (total_read > 0U) {
+        s_diagnostics.last_i2c_data_ms = HAL_GetTick();
+        s_diagnostics.i2c_bytes_received += total_read;
+    }
+
     return total_read;
 }
 
@@ -761,25 +774,29 @@ uint8_t M10S_Read(I2C_HandleTypeDef *hi2c, M10S_NavPVT *pvt)
     (void)hi2c;  /* Not used in UBX mode */
 
     if (!s_initialized || s_rx_index < 100) {
+#if M10S_VERBOSE_RUNTIME_LOGS
         static uint32_t last_debug = 0;
         if (HAL_GetTick() - last_debug > 5000) {
             char dbg[100];
             int len = snprintf(dbg, sizeof(dbg), "[M10S_READ] Buffer: %d bytes (need 100+)\r\n", s_rx_index);
-            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+            DebugLog_WriteN((uint8_t*)dbg, len);
             last_debug = HAL_GetTick();
         }
+#endif
         return 0;
     }
 
+#if M10S_VERBOSE_RUNTIME_LOGS
     /* Debug: once per 3s, show what message types are sitting in the buffer */
     static uint32_t last_sync_debug = 0;
     if (HAL_GetTick() - last_sync_debug > 3000) {
         char dbg[100];
         int len = snprintf(dbg, sizeof(dbg), "[M10S_READ] Scanning %d bytes, first: %02X %02X %02X %02X\r\n",
             s_rx_index, s_rx_buffer[0], s_rx_buffer[1], s_rx_buffer[2], s_rx_buffer[3]);
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+        DebugLog_WriteN((uint8_t*)dbg, len);
         last_sync_debug = HAL_GetTick();
     }
+#endif
 
     /* Look for UBX-NAV-PVT message: B5 62 01 07 */
     for (uint16_t i = 0; i < s_rx_index - 100; i++) {
@@ -816,8 +833,9 @@ uint8_t M10S_Read(I2C_HandleTypeDef *hi2c, M10S_NavPVT *pvt)
 
             if (ck_a != s_rx_buffer[i + 6 + payload_len] ||
                 ck_b != s_rx_buffer[i + 7 + payload_len]) {
+                s_diagnostics.bad_checksum_count++;
                 len = snprintf(dbg, sizeof(dbg), "[M10S_READ] Bad checksum, dropping message\r\n");
-                HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+                DebugLog_WriteN((uint8_t*)dbg, len);
                 /* Drop everything through this sync so we don't rescan it forever */
                 s_rx_index -= (i + 2);
                 memmove(s_rx_buffer, &s_rx_buffer[i + 2], s_rx_index);
@@ -828,38 +846,22 @@ uint8_t M10S_Read(I2C_HandleTypeDef *hi2c, M10S_NavPVT *pvt)
              * Field offsets per u-blox M10 interface description. */
             uint8_t *payload = &s_rx_buffer[i + 6];
 
-            #define LE_U16(o) ((uint16_t)((uint16_t)payload[o] | ((uint16_t)payload[(o)+1]<<8)))
             #define LE_U32(o) ((uint32_t)payload[o] | ((uint32_t)payload[(o)+1]<<8) | ((uint32_t)payload[(o)+2]<<16) | ((uint32_t)payload[(o)+3]<<24))
-            #define LE_I16(o) ((int16_t)LE_U16(o))
             #define LE_I32(o) ((int32_t)LE_U32(o))
 
             uint32_t iTOW   = LE_U32(0);       /* GPS time of week (ms) */
-            uint16_t year   = LE_U16(4);
-            uint8_t  month  = payload[6];
-            uint8_t  day    = payload[7];
             uint8_t  hour   = payload[8];
             uint8_t  minute = payload[9];
             uint8_t  second = payload[10];
-            uint8_t  validFlags = payload[11]; /* validDate|validTime|fullyResolved|validMag */
-            uint32_t tAcc   = LE_U32(12);       /* time accuracy (ns) */
-            int32_t  nano   = LE_I32(16);       /* fraction of second (ns) */
             uint8_t  fixType = payload[20];
             uint8_t  flags  = payload[21];      /* gnssFixOK, diffSoln, ... */
             uint8_t  numSV  = payload[23];
             int32_t  lon    = LE_I32(24);       /* deg 1e-7 */
             int32_t  lat    = LE_I32(28);       /* deg 1e-7 */
-            int32_t  height = LE_I32(32);       /* mm above ellipsoid */
             int32_t  hMSL   = LE_I32(36);       /* mm above mean sea level */
-            uint32_t hAcc   = LE_U32(40);       /* horizontal accuracy (mm) */
-            uint32_t vAcc   = LE_U32(44);       /* vertical accuracy (mm) */
-            int32_t  velN   = LE_I32(48);       /* mm/s */
-            int32_t  velE   = LE_I32(52);       /* mm/s */
             int32_t  velD   = LE_I32(56);       /* mm/s */
             int32_t  gSpeed = LE_I32(60);       /* ground speed mm/s */
             int32_t  heading = LE_I32(64);      /* heading of motion deg 1e-5 */
-            uint32_t sAcc   = LE_U32(68);       /* speed accuracy mm/s */
-            uint32_t headAcc = LE_U32(72);      /* heading accuracy deg 1e-5 */
-            uint16_t pDOP   = LE_U16(76);       /* position DOP 0.01 */
 
             /* Store in PVT structure (units: deg*1e-7 -> deg, mm -> m, mm/s -> m/s, deg*1e-5 -> deg) */
             s_last_pvt.latitude = lat / 10000000.0;
@@ -872,37 +874,27 @@ uint8_t M10S_Read(I2C_HandleTypeDef *hi2c, M10S_NavPVT *pvt)
             s_last_pvt.num_satellites = numSV;
             s_last_pvt.fix_type = fixType;
             s_last_pvt.timestamp = HAL_GetTick();
+            s_diagnostics.last_nav_pvt_ms = s_last_pvt.timestamp;
+            s_diagnostics.nav_pvt_count++;
+            if (fixType > 0U && numSV > 0U && (flags & 0x01U) != 0U)
+                s_diagnostics.last_valid_fix_ms = s_last_pvt.timestamp;
 
-            /* Debug output (integer formatting - %f not linked for this path).
-             * Split over several lines to stay within the dbg buffer. */
+            /* A compact, rate-limited summary replaces four synchronous lines
+             * per 1 Hz NAV-PVT message. Full fields remain in s_last_pvt and
+             * the 10-second [SYS_STAT] reports parser/fix freshness. */
+            static uint32_t last_pvt_log_ms = 0U;
+            if ((uint32_t)(s_last_pvt.timestamp - last_pvt_log_ms) >= 10000U)
+            {
             len = snprintf(dbg, sizeof(dbg),
-                "[M10S] NAV-PVT iTOW=%lu %04u-%02u-%02u %02u:%02u:%02u nano=%ld valid=0x%02X\r\n",
-                (unsigned long)iTOW, year, month, day, hour, minute, second,
-                (long)nano, validFlags);
-            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+                "[GPS_PVT] t=%lu iTOW=%lu fix=%u flags=0x%02X sv=%u lat_e7=%ld lon_e7=%ld hmsl_mm=%ld\r\n",
+                (unsigned long)s_last_pvt.timestamp, (unsigned long)iTOW,
+                (unsigned int)fixType, (unsigned int)flags, (unsigned int)numSV,
+                (long)lat, (long)lon, (long)hMSL);
+                DebugLog_WriteN(dbg, len);
+                last_pvt_log_ms = s_last_pvt.timestamp;
+            }
 
-            len = snprintf(dbg, sizeof(dbg),
-                "[M10S]   Lat=%ld.%07ld Lon=%ld.%07ld hMSL=%ldmm hEll=%ldmm Fix=%d flags=0x%02X SV=%d\r\n",
-                (long)(lat / 10000000), (long)labs(lat % 10000000),
-                (long)(lon / 10000000), (long)labs(lon % 10000000),
-                (long)hMSL, (long)height, fixType, flags, numSV);
-            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-
-            len = snprintf(dbg, sizeof(dbg),
-                "[M10S]   velN=%ld velE=%ld velD=%ld gSpeed=%ldmm/s head=%ld.%05ldeg\r\n",
-                (long)velN, (long)velE, (long)velD, (long)gSpeed,
-                (long)(heading / 100000), (long)labs(heading % 100000));
-            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-
-            len = snprintf(dbg, sizeof(dbg),
-                "[M10S]   hAcc=%lumm vAcc=%lumm sAcc=%lumm/s headAcc=%ludeg-e5 pDOP=%u.%02u tAcc=%luns\r\n",
-                (unsigned long)hAcc, (unsigned long)vAcc, (unsigned long)sAcc,
-                (unsigned long)headAcc, pDOP / 100, pDOP % 100, (unsigned long)tAcc);
-            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-
-            #undef LE_U16
             #undef LE_U32
-            #undef LE_I16
             #undef LE_I32
 
             /* Remove processed message (and anything before it) from buffer */
@@ -932,6 +924,12 @@ uint8_t M10S_IsInitialized(void)
 uint16_t M10S_GetBufferFillLevel(void)
 {
     return s_rx_index;
+}
+
+void M10S_GetDiagnostics(M10S_Diagnostics_t *diagnostics)
+{
+    if (diagnostics != NULL)
+        *diagnostics = s_diagnostics;
 }
 
 void M10S_ClearBufferedData(void)

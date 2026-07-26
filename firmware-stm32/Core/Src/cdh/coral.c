@@ -38,6 +38,7 @@
  * ========================================================================== */
 
 #include "cdh/coral.h"
+#include "debug_log.h"
 #include "main.h"        /* huart3, huart2, Error_Handler */
 #include "fatfs.h"       /* f_open, f_write, f_close, f_unlink, FIL, FR_OK */
 #include <stdio.h>       /* snprintf */
@@ -56,8 +57,7 @@ extern UART_HandleTypeDef huart2;   /* debug console (USART2, ST-LINK)       */
 /* ---- Debug helpers ------------------------------------------------------- */
 static void dbg(const char *msg)
 {
-    HAL_UART_Transmit(&huart2, (const uint8_t *)msg,
-                      (uint16_t)strlen(msg), 100U);
+    DebugLog_WriteN((const uint8_t *)msg, (uint16_t)strlen(msg));
 }
 
 static void dbg_hex(const char *label, uint8_t val)
@@ -101,6 +101,7 @@ static uint8_t s_rx_irq_byte;
 static volatile uint8_t s_rx_ring[CORAL_RX_RING_SIZE];
 static volatile uint16_t s_rx_head = 0U;
 static volatile uint16_t s_rx_tail = 0U;
+static volatile uint16_t s_rx_high_water = 0U;
 
 /* Live-expression debug counters (add to STM32CubeIDE Live Expressions) */
 volatile uint32_t coral_sof_count     = 0;  /* incremented on each confirmed SOF   */
@@ -130,6 +131,7 @@ static void coral_rx_ring_reset(void)
     __disable_irq();
     s_rx_head = 0U;
     s_rx_tail = 0U;
+    s_rx_high_water = 0U;
     __enable_irq();
 }
 
@@ -145,6 +147,12 @@ static void coral_rx_ring_push(uint8_t byte)
 
     s_rx_ring[s_rx_head] = byte;
     s_rx_head = next;
+
+    {
+        uint16_t queued = (uint16_t)((s_rx_head - s_rx_tail) & CORAL_RX_RING_MASK);
+        if (queued > s_rx_high_water)
+            s_rx_high_water = queued;
+    }
 }
 
 static uint8_t coral_rx_ring_pop(uint8_t *byte)
@@ -506,6 +514,8 @@ void Coral_Init(void)
 
 void Coral_Update(SensorData_t *dp)
 {
+    uint32_t now = HAL_GetTick();
+
     if (!s_uart_ready)
     {
         dp->coral_block[7] = CORAL_STATUS_NO_UART;
@@ -519,16 +529,20 @@ void Coral_Update(SensorData_t *dp)
      * where doing blocking UART debug I/O would be unsafe; surface/log the
      * condition here instead, in normal main-loop context. */
     static uint32_t s_last_reported_overflow = 0U;
-    if (coral_rx_overflow_count != s_last_reported_overflow)
+    static uint32_t s_last_overflow_report_ms = 0U;
+    if (coral_rx_overflow_count != s_last_reported_overflow &&
+        (s_last_reported_overflow == 0U ||
+         (uint32_t)(now - s_last_overflow_report_ms) >= 10000U))
     {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "[CORAL] !!! RX ring overflow (total=%lu)\r\n",
-                 (unsigned long)coral_rx_overflow_count);
+        char buf[96];
+        snprintf(buf, sizeof(buf),
+                 "[CORAL] RX ring overflow total=%lu delta=%lu\r\n",
+                 (unsigned long)coral_rx_overflow_count,
+                 (unsigned long)(coral_rx_overflow_count - s_last_reported_overflow));
         dbg(buf);
         s_last_reported_overflow = coral_rx_overflow_count;
+        s_last_overflow_report_ms = now;
     }
-
-    uint32_t now = HAL_GetTick();
 
     if (dp->coral_valid &&
         s_seen_good_frame &&
@@ -729,6 +743,26 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 
     coral_clear_uart_errors();
     (void)HAL_UART_Receive_IT(&CORAL_HUART, &s_rx_irq_byte, 1U);
+}
+
+void Coral_GetDiagnostics(CoralDiagnostics_t *diagnostics)
+{
+    uint32_t primask;
+
+    if (diagnostics == NULL)
+        return;
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+    diagnostics->rx_queued_bytes =
+        (uint16_t)((s_rx_head - s_rx_tail) & CORAL_RX_RING_MASK);
+    diagnostics->rx_high_water = s_rx_high_water;
+    diagnostics->rx_overflow_count = coral_rx_overflow_count;
+    diagnostics->good_frame_count = coral_good_frames;
+    diagnostics->timeout_count = coral_timeout_count;
+    diagnostics->crc_error_count = coral_crc_err_count;
+    if (primask == 0U)
+        __enable_irq();
 }
 
 /* SLEEP / WAKE share the 3-byte {CMD, CRC_hi, CRC_lo} framing of TRIGGER;

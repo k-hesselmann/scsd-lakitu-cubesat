@@ -143,6 +143,10 @@ class TelemetryV8DecoderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "expected 92"):
             decode_telemetry_packet(bytes(155))
 
+    def test_ack_rx_unavailable_event_is_distinct_from_ack_timeout(self):
+        packet = decode_telemetry_packet(build_v8_packet(lora_event=14))
+        self.assertEqual(packet.lora_last_event_name, "ACK_RX_UNAVAILABLE")
+
     def test_previous_protocol_version_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "protocol version: 7"):
             decode_telemetry_packet(build_v8_packet(protocol_version=7))
