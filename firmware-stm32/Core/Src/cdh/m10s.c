@@ -855,7 +855,10 @@ uint8_t M10S_Read(I2C_HandleTypeDef *hi2c, M10S_NavPVT *pvt)
     }
 
     /* Look for UBX-NAV-PVT message: B5 62 01 07 */
-    for (uint16_t i = 0; i < s_rx_index - 100; i++) {
+    /* A UBX-NAV-PVT frame is exactly 100 bytes. Accept a buffer containing
+     * one complete frame; the previous strict inequality deferred parsing
+     * until a later byte arrived, which made fresh no-fix reports look stale. */
+    for (uint16_t i = 0U; i + 100U <= s_rx_index; ++i) {
         if (s_rx_buffer[i] == 0xB5 && s_rx_buffer[i+1] == 0x62 &&
             s_rx_buffer[i+2] == 0x01 && s_rx_buffer[i+3] == 0x07) {
 

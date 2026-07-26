@@ -25,3 +25,9 @@ def test_fdir_tracks_no_fix_separately_from_transport() -> None:
     assert "FDIR_RunGpsNoFixMonitor" in source
     assert "FDIR_GPS_NO_FIX_REINIT_MS" in header
     assert "M10S_FIX_NONE" in source
+
+
+def test_parser_accepts_one_complete_nav_pvt_frame() -> None:
+    source = (ROOT / "Core/Src/cdh/m10s.c").read_text(encoding="utf-8")
+
+    assert "i + 100U <= s_rx_index" in source
