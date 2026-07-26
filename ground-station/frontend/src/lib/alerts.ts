@@ -222,7 +222,7 @@ export function buildMissionAlerts({
       id: "telemetry-ack-timeouts",
       level: "warning",
       title: "Telemetry acknowledgements missed",
-      message: `Flight exhausted its retry budget without receiving a matching ground ACK ${latest.lora_ack_timeout_count} time(s) since boot.`,
+      message: `Flight received no matching ground ACK within five seconds ${latest.lora_ack_timeout_count} time(s) since boot.`,
     })
   }
 

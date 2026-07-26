@@ -45,6 +45,8 @@ typedef struct {
     uint16_t prev_fault_counter;
     uint32_t prev_success_ms;
     uint32_t last_request_ms;       /* recovery cooldown (FDIR_CooldownElapsed) */
+    uint32_t unavailable_since_ms;
+    uint8_t unavailable_tracking;
 } FDIR_LoraWindow_t;
 
 static FDIR_LoraWindow_t s_lora;
@@ -172,12 +174,32 @@ static void FDIR_LoraRecordAttempt(uint8_t failed)
         s_lora.count++;
 }
 
-static uint8_t FDIR_LoraUnavailable(const TTC_FDIR_Health_t *health)
+static uint8_t FDIR_LoraUnavailableRaw(const TTC_FDIR_Health_t *health)
 {
     return (!health->radio_busy &&
             !health->recovery_in_progress &&
             !health->isolation_active &&
             (!health->radio_ready || !health->rx_active)) ? 1U : 0U;
+}
+
+static uint8_t FDIR_LoraUnavailablePersistent(const TTC_FDIR_Health_t *health,
+                                              uint32_t now_ms)
+{
+    if (!FDIR_LoraUnavailableRaw(health))
+    {
+        s_lora.unavailable_tracking = 0U;
+        return 0U;
+    }
+
+    if (!s_lora.unavailable_tracking)
+    {
+        s_lora.unavailable_since_ms = now_ms;
+        s_lora.unavailable_tracking = 1U;
+        return 0U;
+    }
+
+    return ((uint32_t)(now_ms - s_lora.unavailable_since_ms) >=
+            FDIR_LORA_UNAVAILABLE_PERSIST_MS) ? 1U : 0U;
 }
 
 static uint8_t FDIR_LoraTxRecoveryThresholdMet(const TTC_FDIR_Health_t *health)
@@ -425,7 +447,9 @@ void FDIR_Update(SensorData_t *dp, SCV_t *scv)
     if (s_subsys_enabled[FDIR_SUBSYS_TTC])
     {
         TTC_FDIR_Health_t health;
+        uint8_t unavailable;
         TTC_FDIR_GetHealth(&health);
+        unavailable = FDIR_LoraUnavailablePersistent(&health, now_ms);
 
         if (health.lora_tx_fault_counter != s_lora.prev_fault_counter)
             FDIR_LoraRecordAttempt(1U);
@@ -445,7 +469,7 @@ void FDIR_Update(SensorData_t *dp, SCV_t *scv)
          * TTC_FDIR_RequestIsolation()/RequestReturnToService() — same shape
          * as the CDH give-up TODO above; needs its own persisted retry count
          * and re-arm rule. */
-        if ((FDIR_LoraUnavailable(&health) ||
+        if ((unavailable ||
              FDIR_LoraTxRecoveryThresholdMet(&health)) &&
             FDIR_CooldownElapsed(now_ms, &s_lora.last_request_ms,
                                  FDIR_REINIT_PERIOD_MS))
@@ -457,7 +481,7 @@ void FDIR_Update(SensorData_t *dp, SCV_t *scv)
          * failure-rate window than recovery, recomputed every cycle (level, not
          * edge-latched) so it clears once the ratio drops. */
         FDIR_SetEquipmentFault(EQUIPMENT_LORA,
-            FDIR_LoraUnavailable(&health) || FDIR_LoraTxFaultThresholdMet());
+            unavailable || FDIR_LoraTxFaultThresholdMet());
     }
 
     /* CDH freshness (FMECA C10): CDH_Update writes timestamp_ms every cycle;

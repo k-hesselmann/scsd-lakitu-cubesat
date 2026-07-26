@@ -2,6 +2,7 @@
 #include "ttc/lora_driver.h"
 #include "fdir/fdir.h"
 
+#include "debug_log.h"
 #include "main.h"
 #include "usbd_cdc_if.h"
 
@@ -23,6 +24,10 @@ _Static_assert(sizeof(TelemetryPacket_t) == TELEMETRY_PACKET_V8_SIZE,
 #define TTC_UART_DEBUG_LOGS 0
 #endif
 
+#ifndef TTC_LORA_TRACE_LOGS
+#define TTC_LORA_TRACE_LOGS 0
+#endif
+
 #ifndef TTC_DEBUG_INTERVAL_MS
 #define TTC_DEBUG_INTERVAL_MS 0U
 #endif
@@ -33,7 +38,8 @@ _Static_assert(sizeof(TelemetryPacket_t) == TELEMETRY_PACKET_V8_SIZE,
 
 #define TTC_TX_TIMEOUT_MS               5000U
 #define TTC_ACK_TIMEOUT_MS              5000U
-#define TTC_MAX_TX_ATTEMPTS                3U
+#define TTC_ACK_RX_RECOVERY_GRACE_MS   15000U
+#define TTC_LORA_STATS_INTERVAL_MS      10000U
 #define TTC_UPLINK_MAX_LENGTH              64U
 #define TTC_COMMAND_REPLAY_WINDOW_SIZE     16U
 
@@ -51,13 +57,14 @@ typedef enum
 
 static uint32_t s_last_tx_ms;
 static uint32_t s_pending_last_attempt_ms;
+static uint32_t s_pending_tx_done_ms;
 static uint8_t s_has_transmitted;
 static uint8_t s_radio_ready;
 static uint8_t s_radio_faulted;
 static uint8_t s_immediate_telemetry;
 static uint8_t s_pending_valid;
 static uint8_t s_pending_awaiting_ack;
-static uint8_t s_pending_attempts;
+static uint8_t s_pending_waiting_for_rx;
 static uint8_t s_driver_fault_observed;
 #if TTC_CDC_BINARY_MIRROR
 static uint8_t s_cdc_mirror_pending;
@@ -74,7 +81,7 @@ static uint16_t s_command_seen_mask;
 static uint8_t s_has_command_high_water;
 static TTC_State_t s_state;
 
-#if TTC_UART_DEBUG_LOGS
+#if TTC_UART_DEBUG_LOGS || TTC_LORA_TRACE_LOGS
 extern UART_HandleTypeDef huart2;
 #endif
 
@@ -146,7 +153,13 @@ static uint8_t TTC_IntervalElapsed(uint32_t now)
             (uint32_t)(now - s_last_tx_ms) >= TTC_TelemetryIntervalMs()) ? 1U : 0U;
 }
 
-#if TTC_CDC_DEBUG_LOGS || TTC_UART_DEBUG_LOGS
+#if TTC_CDC_DEBUG_LOGS || TTC_UART_DEBUG_LOGS || TTC_LORA_TRACE_LOGS
+static uint32_t s_last_lora_stats_ms;
+static LoRaRuntimeStats_t s_previous_lora_stats;
+#if TTC_LORA_TRACE_LOGS
+static uint8_t s_lora_trace_banner_logged;
+#endif
+
 static void TTC_DebugLog(const char *line)
 {
     size_t len = 0U;
@@ -157,11 +170,173 @@ static void TTC_DebugLog(const char *line)
 #if TTC_CDC_DEBUG_LOGS
     (void)CDC_Transmit_FS((uint8_t *)line, (uint16_t)len);
 #endif
-#if TTC_UART_DEBUG_LOGS
-    (void)HAL_UART_Transmit(&huart2, (uint8_t *)line, (uint16_t)len, 100U);
+#if TTC_UART_DEBUG_LOGS || TTC_LORA_TRACE_LOGS
+    (void)DebugLog_WriteN((uint8_t *)line, (uint16_t)len);
 #endif
 }
 
+static const char *TTC_LoraPhaseName(uint8_t phase)
+{
+    switch ((LoRaOperationPhase_t)phase)
+    {
+        case LORA_PHASE_INIT: return "INIT";
+        case LORA_PHASE_TX_SETUP: return "TX_SETUP";
+        case LORA_PHASE_TX_POLL: return "TX_POLL";
+        case LORA_PHASE_TX_FINISH: return "TX_FINISH";
+        case LORA_PHASE_RX_START: return "RX_START";
+        case LORA_PHASE_RX_POLL: return "RX_POLL";
+        case LORA_PHASE_RX_PAYLOAD: return "RX_PAYLOAD";
+        case LORA_PHASE_ISOLATION: return "ISOLATE";
+        case LORA_PHASE_SPI_REINIT: return "SPI_REINIT";
+        case LORA_PHASE_DEBUG_READ: return "DEBUG_READ";
+        default: return "NONE";
+    }
+}
+
+static const char *TTC_LoraFailureCauseName(uint8_t cause)
+{
+    switch ((LoRaSpiFailureCause_t)cause)
+    {
+        case LORA_SPI_FAIL_START_REJECTED: return "START_REJECT";
+        case LORA_SPI_FAIL_IRQ_ERROR: return "IRQ_ERROR";
+        case LORA_SPI_FAIL_TRANSFER_TIMEOUT: return "XFER_TIMEOUT";
+        case LORA_SPI_FAIL_ABORT_REJECTED: return "ABORT_REJECT";
+        case LORA_SPI_FAIL_ABORT_TIMEOUT: return "ABORT_TIMEOUT";
+        case LORA_SPI_FAIL_DEINIT: return "DEINIT_FAIL";
+        case LORA_SPI_FAIL_REINIT: return "REINIT_FAIL";
+        case LORA_SPI_FAIL_VERIFY: return "VERIFY_FAIL";
+        default: return "UNKNOWN";
+    }
+}
+
+static const char *TTC_LoraOperationName(uint8_t operation)
+{
+    switch (operation)
+    {
+        case 1U: return "READ";
+        case 2U: return "WRITE";
+        case 3U: return "FIFO_WRITE";
+        case 4U: return "SPI_REINIT";
+        default: return "NONE";
+    }
+}
+
+static const char *TTC_LoraRegisterName(uint8_t address)
+{
+    switch (address)
+    {
+        case 0x00U: return "FIFO";
+        case 0x01U: return "OP_MODE";
+        case 0x06U: return "FRF_MSB";
+        case 0x07U: return "FRF_MID";
+        case 0x08U: return "FRF_LSB";
+        case 0x09U: return "PA_CONFIG";
+        case 0x0DU: return "FIFO_ADDR_PTR";
+        case 0x0EU: return "FIFO_TX_BASE";
+        case 0x10U: return "FIFO_RX_CURRENT";
+        case 0x12U: return "IRQ_FLAGS";
+        case 0x13U: return "RX_NB_BYTES";
+        case 0x1DU: return "MODEM_CONFIG_1";
+        case 0x1EU: return "MODEM_CONFIG_2";
+        case 0x26U: return "MODEM_CONFIG_3";
+        case 0x39U: return "SYNC_WORD";
+        case 0x42U: return "VERSION";
+        case 0x4DU: return "PA_DAC";
+        case 0xFFU: return "SPI1";
+        default: return "UNKNOWN";
+    }
+}
+
+static const char *TTC_HalStatusName(uint8_t status)
+{
+    switch ((HAL_StatusTypeDef)status)
+    {
+        case HAL_OK: return "OK";
+        case HAL_ERROR: return "ERROR";
+        case HAL_BUSY: return "BUSY";
+        case HAL_TIMEOUT: return "TIMEOUT";
+        default: return "UNKNOWN";
+    }
+}
+
+static void TTC_LogLoRaFaults(void)
+{
+    LoRaFaultTrace_t trace;
+    char line[256];
+
+    while (LoRa_TakeFaultTrace(&trace))
+    {
+        int len = snprintf(
+            line, sizeof(line),
+            "[LORA_FAULT] n=%lu t=%lu cause=%s phase=%s state=%u reg=%s(0x%02X) op=%s hal=%s(%u) err=0x%08lX active=%u wait=%u abort=%u irq=0x%02X txdone=%u\r\n",
+            (unsigned long)trace.occurrence,
+            (unsigned long)trace.timestamp_ms,
+            TTC_LoraFailureCauseName(trace.cause),
+            TTC_LoraPhaseName(trace.phase),
+            (unsigned int)trace.lora_state,
+            TTC_LoraRegisterName(trace.register_address),
+            (unsigned int)trace.register_address,
+            TTC_LoraOperationName(trace.operation),
+            TTC_HalStatusName(trace.hal_status),
+            (unsigned int)trace.hal_status,
+            (unsigned long)trace.hal_error,
+            (unsigned int)trace.spi_active,
+            (unsigned int)trace.action_waiting,
+            (unsigned int)trace.abort_pending,
+            (unsigned int)trace.irq_flags,
+            (unsigned int)trace.tx_done_seen);
+        if (len > 0)
+            TTC_DebugLog(line);
+    }
+}
+
+static void TTC_LogLoRaStats(uint32_t now)
+{
+    LoRaRuntimeStats_t stats;
+    char line[224];
+    int len;
+
+    if ((uint32_t)(now - s_last_lora_stats_ms) < TTC_LORA_STATS_INTERVAL_MS)
+        return;
+
+    LoRa_GetRuntimeStats(&stats);
+    len = snprintf(
+        line, sizeof(line),
+        "[LORA_STAT] t=%lu window_ms=%lu spi=%lu complete=%lu irqerr=%lu timeout=%lu abort=%lu txpoll=%lu rxpoll=%lu dropped=%lu\r\n",
+        (unsigned long)now,
+        (unsigned long)(now - s_last_lora_stats_ms),
+        (unsigned long)(stats.spi_transfer_count - s_previous_lora_stats.spi_transfer_count),
+        (unsigned long)(stats.spi_completion_count - s_previous_lora_stats.spi_completion_count),
+        (unsigned long)(stats.spi_irq_error_count - s_previous_lora_stats.spi_irq_error_count),
+        (unsigned long)(stats.spi_timeout_count - s_previous_lora_stats.spi_timeout_count),
+        (unsigned long)(stats.spi_abort_count - s_previous_lora_stats.spi_abort_count),
+        (unsigned long)(stats.tx_irq_poll_count - s_previous_lora_stats.tx_irq_poll_count),
+        (unsigned long)(stats.rx_irq_poll_count - s_previous_lora_stats.rx_irq_poll_count),
+        (unsigned long)(stats.dropped_fault_trace_count - s_previous_lora_stats.dropped_fault_trace_count));
+    if (len > 0)
+        TTC_DebugLog(line);
+
+    s_previous_lora_stats = stats;
+    s_last_lora_stats_ms = now;
+}
+
+static void TTC_LogLoRaDiagnostics(uint32_t now)
+{
+#if TTC_LORA_TRACE_LOGS
+    if (!s_lora_trace_banner_logged)
+    {
+        TTC_DebugLog("[LORA_TRACE] enabled tx_poll_ms=2 rx_poll_ms=5 stats_ms=10000\r\n");
+        s_lora_trace_banner_logged = 1U;
+    }
+#endif
+    TTC_LogLoRaFaults();
+    /* Periodic logging is intentionally deferred until normal RX is active,
+     * so the bench trace cannot delay the TX-to-RX turnaround. */
+    if (!LoRa_IsBusy() && LoRa_IsRxActive())
+        TTC_LogLoRaStats(now);
+}
+
+#if TTC_CDC_DEBUG_LOGS || TTC_UART_DEBUG_LOGS
 static void TTC_LogInitStatus(void)
 {
     char line[160];
@@ -215,6 +390,11 @@ static void TTC_LogTxStatus(void)
 static void TTC_LogInitStatus(void) {}
 static void TTC_LogTxStatus(void) {}
 #endif
+#else
+static void TTC_LogInitStatus(void) {}
+static void TTC_LogTxStatus(void) {}
+static void TTC_LogLoRaDiagnostics(uint32_t now) { (void)now; }
+#endif
 
 static void TTC_RefreshDebugFromLora(void)
 {
@@ -242,8 +422,8 @@ static void TTC_RecordDebugTxCompletion(LoRaStatus_t status)
         s_debug.tx_error_count++;
     }
 
-    if (!LoRa_IsBusy())
-        (void)LoRa_ReadDebugRegisters();
+    /* The driver continuously caches the relevant registers. Do not add a
+     * synchronous 11-register SPI snapshot to every TX completion. */
     TTC_RefreshDebugFromLora();
     TTC_LogTxStatus();
 }
@@ -299,8 +479,7 @@ static void TTC_RecordInitResult(LoRaStatus_t status)
         TTC_IncrementU8(&s_health.consecutive_failures);
         s_radio_faulted = 1U;
     }
-    if (!LoRa_IsBusy())
-        (void)LoRa_ReadDebugRegisters();
+    /* Init read-verifies and caches the modem profile asynchronously. */
     TTC_RefreshDebugFromLora();
     TTC_LogInitStatus();
     TTC_SyncFdirHealth();
@@ -475,7 +654,7 @@ static void TTC_ProcessAcknowledgement(uint16_t acknowledged_sequence)
         s_uplink.last_ack_sequence = acknowledged_sequence;
         s_pending_valid = 0U;
         s_pending_awaiting_ack = 0U;
-        s_pending_attempts = 0U;
+        s_pending_waiting_for_rx = 0U;
     }
     else if (acknowledged_sequence == s_uplink.last_ack_sequence)
     {
@@ -587,23 +766,40 @@ static void TTC_StartPendingTransmit(uint32_t now)
     if (status != LORA_OK)
     {
         TTC_RecordTxFailure(status);
+        s_pending_valid = 0U;
+        s_last_tx_ms = now;
+        s_has_transmitted = 1U;
         return;
     }
 
-    TTC_IncrementU8(&s_pending_attempts);
     s_pending_awaiting_ack = 0U;
+    s_pending_waiting_for_rx = 0U;
     s_state = TTC_STATE_TX_WAIT;
-    (void)now;
 }
 
-static void TTC_ServicePendingRetry(uint32_t now)
+static void TTC_ServicePendingTelemetry(uint32_t now)
 {
     if (!s_pending_valid)
         return;
 
+    if (s_pending_waiting_for_rx)
+    {
+        if ((uint32_t)(now - s_pending_tx_done_ms) <
+            TTC_ACK_RX_RECOVERY_GRACE_MS)
+            return;
+
+        /* TxDone was observed, but TTC never regained RX. Do not attribute
+         * this to a silent ground station: the ACK was unobservable. */
+        s_health.last_event = LORA_EVENT_ACK_RX_UNAVAILABLE;
+        s_health.ack_timeout_count = TTC_IncrementU16(s_health.ack_timeout_count);
+        s_pending_valid = 0U;
+        s_pending_waiting_for_rx = 0U;
+        return;
+    }
+
     if (!s_pending_awaiting_ack)
     {
-        if (s_pending_attempts < TTC_MAX_TX_ATTEMPTS && !s_radio_faulted)
+        if (!s_radio_faulted)
             TTC_StartPendingTransmit(now);
         return;
     }
@@ -611,18 +807,13 @@ static void TTC_ServicePendingRetry(uint32_t now)
     if ((uint32_t)(now - s_pending_last_attempt_ms) < TTC_ACK_TIMEOUT_MS)
         return;
 
-    if (s_pending_attempts >= TTC_MAX_TX_ATTEMPTS)
-    {
-        s_health.last_event = LORA_EVENT_ACK_TIMEOUT;
-        s_health.ack_timeout_count = TTC_IncrementU16(s_health.ack_timeout_count);
-        s_fdir_health.nack_counter = TTC_IncrementU16(s_fdir_health.nack_counter);
-        s_pending_valid = 0U;
-        s_pending_awaiting_ack = 0U;
-        s_pending_attempts = 0U;
-        return;
-    }
-
-    TTC_StartPendingTransmit(now);
+    /* A missing ground ACK is reported by the next fresh telemetry packet.
+     * Do not retransmit this packet or reuse its sequence number. */
+    s_health.last_event = LORA_EVENT_ACK_TIMEOUT;
+    s_health.ack_timeout_count = TTC_IncrementU16(s_health.ack_timeout_count);
+    s_fdir_health.nack_counter = TTC_IncrementU16(s_fdir_health.nack_counter);
+    s_pending_valid = 0U;
+    s_pending_awaiting_ack = 0U;
 }
 
 static void TTC_BeginRequestedAction(void)
@@ -699,6 +890,14 @@ static void TTC_CompleteRxStart(TTC_State_t next_state, uint8_t action_completio
     LoRaStatus_t status = LoRa_GetLastStatus();
 
     TTC_RecordRxModeResult(status);
+    if (status == LORA_OK && s_pending_valid && s_pending_waiting_for_rx)
+    {
+        /* The ACK timer measures observable receive time, not modem cleanup
+         * or FDIR recovery time following TxDone. */
+        s_pending_last_attempt_ms = HAL_GetTick();
+        s_pending_awaiting_ack = 1U;
+        s_pending_waiting_for_rx = 0U;
+    }
     if (action_completion)
         TTC_SetActionResult((status == LORA_OK) ? TTC_FDIR_ACTION_SUCCEEDED :
                                                TTC_FDIR_ACTION_FAILED, status);
@@ -715,13 +914,14 @@ void TTC_Init(void)
     memset(&s_action_status, 0, sizeof(s_action_status));
     s_last_tx_ms = 0U;
     s_pending_last_attempt_ms = 0U;
+    s_pending_tx_done_ms = 0U;
     s_has_transmitted = 0U;
     s_radio_ready = 0U;
     s_radio_faulted = 0U;
     s_immediate_telemetry = 0U;
     s_pending_valid = 0U;
     s_pending_awaiting_ack = 0U;
-    s_pending_attempts = 0U;
+    s_pending_waiting_for_rx = 0U;
     s_driver_fault_observed = 0U;
 #if TTC_CDC_BINARY_MIRROR
     s_cdc_mirror_pending = 0U;
@@ -755,12 +955,23 @@ void TTC_Service(void)
      * action. A different active action leaves the request bit set. */
     if (FDIR_GetReinitRequests() & EQUIPMENT_LORA)
     {
-        TTC_FDIR_Result_t result = TTC_FDIR_RequestRecovery();
+        TTC_FDIR_Result_t result;
+
+        /* Use the least disruptive recovery that matches the observation.
+         * A configured modem that only lost RX gets an RX restart; SPI/modem
+         * faults still receive the full reset, reconfigure and verify path. */
+        TTC_SyncFdirHealth();
+        if (s_fdir_health.radio_ready && !s_fdir_health.rx_active &&
+            !s_fdir_health.isolation_active)
+            result = TTC_FDIR_RequestRxRestart();
+        else
+            result = TTC_FDIR_RequestRecovery();
         if (result != TTC_FDIR_RESULT_REJECTED)
             FDIR_AcknowledgeReinit(EQUIPMENT_LORA);
     }
 
     LoRa_Service();
+    TTC_LogLoRaDiagnostics(now);
 
 #if TTC_CDC_BINARY_MIRROR
     if (s_cdc_mirror_pending)
@@ -824,13 +1035,26 @@ void TTC_Service(void)
         if (LoRa_IsBusy())
             goto done;
         status = LoRa_GetLastStatus();
-        if (status == LORA_OK)
+        if (status == LORA_OK || LoRa_WasLastTxOnAir())
         {
+            /* TxDone is the on-air success boundary. A later IRQ-clear or
+             * standby-write failure must not be counted as a lost downlink. */
             TTC_RecordTxSuccess(now);
-            s_pending_last_attempt_ms = now;
-            s_pending_awaiting_ack = 1U;
+            s_pending_tx_done_ms = now;
+            s_pending_awaiting_ack = 0U;
+            s_pending_waiting_for_rx = 1U;
             s_last_tx_ms = now;
             s_has_transmitted = 1U;
+
+            if (status != LORA_OK)
+            {
+                /* The packet was radiated, but the local modem/SPI cleanup
+                 * failed. Preserve the packet until FDIR restores RX. */
+                TTC_RecordRxModeResult(status);
+                s_state = TTC_STATE_IDLE;
+                goto done;
+            }
+
             status = LoRa_StartReceive();
             if (status == LORA_OK)
                 s_state = TTC_STATE_TX_RX_START;
@@ -843,7 +1067,11 @@ void TTC_Service(void)
         else
         {
             TTC_RecordTxFailure(status);
+            s_pending_valid = 0U;
             s_pending_awaiting_ack = 0U;
+            s_pending_waiting_for_rx = 0U;
+            s_last_tx_ms = now;
+            s_has_transmitted = 1U;
             s_state = TTC_STATE_IDLE;
         }
         goto done;
@@ -896,7 +1124,7 @@ void TTC_Service(void)
         goto done;
     TTC_ReconcileDriverFault();
     TTC_PollUplink(now);
-    TTC_ServicePendingRetry(now);
+    TTC_ServicePendingTelemetry(now);
 
 done:
     TTC_SyncFdirHealth();
@@ -948,7 +1176,7 @@ void TTC_Transmit(const TelemetryPacket_t *pkt)
     s_pending_packet = *pkt;
     s_pending_valid = 1U;
     s_pending_awaiting_ack = 0U;
-    s_pending_attempts = 0U;
+    s_pending_waiting_for_rx = 0U;
     s_immediate_telemetry = 0U;
 #if TTC_CDC_BINARY_MIRROR
     s_cdc_mirror_pending = 1U;

@@ -25,6 +25,8 @@
 #define FDIR_LORA_RECOVERY_WINDOW_FAILS  12U   /* 60% of 20 */
 #define FDIR_LORA_FAULT_WINDOW           10U
 #define FDIR_LORA_FAULT_WINDOW_FAILS      9U   /* 90% of 10 */
+/* Ignore brief normal TTC state transitions before requesting radio recovery. */
+#define FDIR_LORA_UNAVAILABLE_PERSIST_MS 250U
 #define FDIR_FRESHNESS_MS             2000U
 #define FDIR_SD_REINIT_PERIOD_MS      20000U
 #define FDIR_WATCHDOG_RESET_LIMIT     3U      /* consecutive boots, not time */

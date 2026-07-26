@@ -24,7 +24,7 @@ airtime of one explicit-header packet with radio CRC enabled is:
 | Proposed v8 | 92 bytes | 287 ms |
 
 This is a **41% payload-size reduction** and approximately a **36% airtime
-reduction** per transmission or retry.
+reduction** per transmission.
 
 ## Findings in the current implementation
 
@@ -70,7 +70,7 @@ offsets. Signed values use two's-complement representation.
 |---:|---:|---|---|---|
 | 0 | 1 | `packet_type` | `uint8` | `0x01` telemetry |
 | 1 | 1 | `protocol_version` | `uint8` | `0x08` |
-| 2 | 2 | `sequence_number` | `uint16` | unchanged on a retry |
+| 2 | 2 | `sequence_number` | `uint16` | increments for each fresh packet; packets are not retried |
 | 4 | 4 | `tx_uptime_s` | `uint32` | OBC uptime, seconds |
 | 8 | 4 | `mission_elapsed_s` | `uint32` | persistent mission time, seconds |
 | 12 | 2 | `boot_count_sat` | `uint16` | boot count, saturated at 65535 |
@@ -111,7 +111,7 @@ offsets. Signed values use two's-complement representation.
 | 83 | 1 | `lora_recovery_count` | `uint8` | recovery attempts since boot |
 | 84 | 1 | `lora_rx_state` | `uint8` | packed RX state defined below |
 | 85 | 1 | `lora_tx_fault_count_sat` | `uint8` | lifetime TX failures, saturated at 255 |
-| 86 | 1 | `lora_ack_timeout_count_sat` | `uint8` | exhausted retry budgets, saturated at 255 |
+| 86 | 1 | `lora_ack_timeout_count_sat` | `uint8` | five-second ACK windows that expired, saturated at 255 |
 | 87 | 2 | `last_command_id` | `uint16` | last `CMD` ID observed by flight; latched across telemetry ACKs |
 | 89 | 1 | `uplink_state` | `uint8` | packed command and telemetry-ACK status |
 | 90 | 2 | `crc16` | `uint16` | CRC-16/CCITT-FALSE over bytes 0..89 |
@@ -218,5 +218,5 @@ Acceptance criteria:
 - ground displays all three IMU acceleration and gyro axes, barometer values,
   battery voltage, GNSS navigation/quality, and Coral fraction/status;
 - invalid/stale data are visually distinct from current valid measurements;
-- command ID/status confirmation and telemetry ACK/retry behavior still work;
+- command ID/status confirmation and telemetry ACK/no-ACK reporting still work;
 - non-v8 packet lengths are rejected before decoding.

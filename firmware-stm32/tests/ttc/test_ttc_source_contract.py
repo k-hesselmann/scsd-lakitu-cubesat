@@ -32,6 +32,8 @@ def test_driver_has_no_blocking_delay_or_tx_done_wait_loop() -> None:
     assert "HAL_SPI_TxRxCpltCallback" in source
     assert "LORA_STATE_TRANSMITTING" in source
     assert "DRIVER_TX_POLL" in source
+    assert "#define LORA_TX_IRQ_POLL_INTERVAL_MS 2U" in source
+    assert "#define LORA_RX_IRQ_POLL_INTERVAL_MS 5U" in source
 
     # A bounded, synchronous read is permitted only for explicit bench/debug
     # register snapshots. The operational driver paths must stay IRQ-driven.
@@ -47,6 +49,10 @@ def test_driver_has_no_blocking_delay_or_tx_done_wait_loop() -> None:
     ).replace(debug_reader, "")
     assert "HAL_SPI_TransmitReceive(&" not in operational_source
     assert "LoRa_ReadRegisterBlocking" not in operational_source
+
+    # TTC must use the driver's cached register state. Automatic synchronous
+    # snapshots used to add eleven SPI transactions after every init and TX.
+    assert "LoRa_ReadDebugRegisters" not in read("ttc.c")
 
 
 def test_ttc_has_no_scv_or_autonomous_recovery_policy() -> None:
@@ -96,10 +102,26 @@ def test_recovery_regressions_have_behavioral_harnesses() -> None:
     assert "LoRa_ForceSpiQuiesce" in driver_source
     assert "TestStartupFailureCanRecover" in ttc_harness
     assert "TestRxFaultIsRecordedOnce" in ttc_harness
-    assert "TestAckRetriesAndNackCounter" in ttc_harness
+    assert "TestNoAckIsReportedWithoutRetry" in ttc_harness
     assert "TestOversizedObservationIsConsumed" in driver_harness
+    assert "TestRxStartCompletionEntersPolling" in driver_harness
     assert "TestAbortRejectionStillAllowsRecovery" in driver_harness
     assert "TestAbortTimeoutStillAllowsRecovery" in driver_harness
+    assert "TestSpiTimeoutTraceCapturesExactOperation" in driver_harness
+    assert "TestLateServiceAcceptsCompletedTransfer" in driver_harness
+    assert "TestTxDoneIsVisibleBeforeCleanupCompletes" in driver_harness
+    assert "TestRxPollingIsCappedAtFiveMilliseconds" in driver_harness
+    assert "TestAckTimerStartsOnlyAfterRxIsActive" in ttc_harness
+    assert "TestOnAirTxSurvivesCleanupFailure" in ttc_harness
+
+
+def test_ttc_tracks_rx_availability_after_tx_done() -> None:
+    ttc = read("ttc.c")
+
+    assert "TTC_FDIR_RequestRxRestart" in ttc
+    assert "TTC_FDIR_RequestRecovery" in ttc
+    assert "LoRa_WasLastTxOnAir" in ttc
+    assert "LORA_EVENT_ACK_RX_UNAVAILABLE" in ttc
 
 
 def test_flight_radio_profile_is_869525_sf8_17_dbm() -> None:
@@ -157,6 +179,7 @@ if __name__ == "__main__":
     test_ttc_has_no_scv_or_autonomous_recovery_policy()
     test_fdir_interface_and_queued_operations_are_exposed()
     test_recovery_regressions_have_behavioral_harnesses()
+    test_ttc_tracks_rx_availability_after_tx_done()
     test_flight_radio_profile_is_869525_sf8_17_dbm()
     test_sd_recovery_policy_is_owned_by_fdir()
     test_coral_silent_link_ages_out_last_good_frame()

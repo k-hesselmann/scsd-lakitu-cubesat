@@ -6,6 +6,8 @@ import threading
 from collections import deque
 from datetime import datetime, timezone
 
+from telemetry_decoder import format_equipment_mask
+
 
 class TelemetryStore:
     """
@@ -211,7 +213,9 @@ class TelemetryStore:
             "coral_valid_raw",
             "scv_mission_elapsed_ms",
             "scv_equipment_enabled",
+            "scv_equipment_enabled_decoded",
             "scv_equipment_faults",
+            "scv_equipment_faults_decoded",
             "scv_sd_fault_count",
             "scv_watchdog_reset_count",
             "reset_reason_name",
@@ -488,7 +492,9 @@ class TelemetryStore:
             "coral_valid_raw": telemetry_packet.coral_valid_raw,
             "scv_mission_elapsed_ms": telemetry_packet.scv_mission_elapsed_ms,
             "scv_equipment_enabled": f"0x{telemetry_packet.scv_equipment_enabled:04X}",
+            "scv_equipment_enabled_decoded": format_equipment_mask(telemetry_packet.scv_equipment_enabled),
             "scv_equipment_faults": f"0x{telemetry_packet.scv_equipment_faults:04X}",
+            "scv_equipment_faults_decoded": format_equipment_mask(telemetry_packet.scv_equipment_faults),
             "scv_sd_fault_count": telemetry_packet.scv_sd_fault_count,
             "scv_watchdog_reset_count": telemetry_packet.scv_watchdog_reset_count,
             "reset_reason_name": telemetry_packet.reset_reason_name,
