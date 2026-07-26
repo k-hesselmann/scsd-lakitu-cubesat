@@ -61,6 +61,7 @@ typedef struct
     uint32_t good_frame_count;
     uint32_t timeout_count;
     uint32_t crc_error_count;
+    uint32_t sd_error_count;
 } CoralDiagnostics_t;
 
 /* ---- Public API --------------------------------------------------------- */

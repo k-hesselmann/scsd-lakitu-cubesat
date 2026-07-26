@@ -62,3 +62,24 @@ def test_repeat_logs_are_bounded():
     assert "s_last_overflow_report_ms" in coral
     assert "M10S_VERBOSE_RUNTIME_LOGS 0" in gps
     assert "[GPS_PVT]" in gps
+
+
+def test_sd_diagnostics_cover_filesystem_spi_and_recovery():
+    logger = read("Core/Src/sd_logger.c")
+    spi = read("Core/Src/sd_spi.c")
+    observability = read("Core/Src/observability.c")
+    platformio = read("platformio.ini")
+
+    assert "[SD_INIT]" in logger
+    assert "[SD_FAULT]" in logger
+    assert "[SD_RECOVERY]" in logger
+    assert "SD_Logger_ResultName" in logger
+    assert "SD_LOG_OP_DATA_WRITE" in logger
+    assert "SD_LOG_OP_SYNC" in logger
+    assert "SD_SPI_GetDiagnostics" in spi
+    assert "[SD_CMD]" in spi
+    assert "[SD_STAT]" in observability
+    assert "[SD_SPI]" in observability
+    assert "coral.sd_error_count" in observability
+    assert "[env:nucleo_l476rg_sd_trace]" in platformio
+    assert "-DSD_SPI_DEBUG=1" in platformio

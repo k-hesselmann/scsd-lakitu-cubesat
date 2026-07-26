@@ -7,6 +7,7 @@
 
 #define SD_LOG_ROTATE_SECONDS       60U
 #define SD_LOG_FLUSH_PERIOD_MS    5000U
+#define SD_LOGGER_OPEN_NAME_SIZE    96U
 
 typedef enum
 {
@@ -14,6 +15,20 @@ typedef enum
     SD_LOGGER_ACTIVE,
     SD_LOGGER_WAITING_RETRY
 } SD_LoggerState_t;
+
+typedef enum
+{
+    SD_LOG_OP_NONE = 0,
+    SD_LOG_OP_CARD_INIT,
+    SD_LOG_OP_MOUNT,
+    SD_LOG_OP_OPEN,
+    SD_LOG_OP_HEADER_WRITE,
+    SD_LOG_OP_DATA_WRITE,
+    SD_LOG_OP_SYNC,
+    SD_LOG_OP_CLOSE,
+    SD_LOG_OP_RENAME,
+    SD_LOG_OP_FORMAT_ROW
+} SD_LoggerOperation_t;
 
 extern volatile SD_LoggerState_t sd_logger_state;
 extern volatile FRESULT sd_logger_last_error;
@@ -29,9 +44,42 @@ typedef struct
     uint8_t file_open;
 } SD_LoggerHealth_t;
 
+typedef struct
+{
+    SD_LoggerState_t state;
+    FRESULT last_error;
+    SD_LoggerOperation_t last_operation;
+    SD_LoggerOperation_t last_fault_operation;
+    FRESULT last_fault_result;
+    uint8_t consecutive_faults;
+    uint8_t file_open;
+    uint32_t total_faults;
+    uint32_t last_fault_ms;
+    uint32_t last_success_ms;
+    uint32_t session;
+    uint32_t rows_in_file;
+    uint32_t buffer_used;
+    uint32_t buffer_capacity;
+    uint32_t total_bytes_committed;
+    uint32_t successful_flushes;
+    uint32_t last_flush_duration_ms;
+    uint32_t max_flush_duration_ms;
+    uint32_t recovery_attempts;
+    uint32_t last_recovery_duration_ms;
+    uint32_t rotation_count;
+    uint32_t discarded_buffer_bytes;
+    uint32_t last_requested_bytes;
+    uint32_t last_written_bytes;
+    char open_name[SD_LOGGER_OPEN_NAME_SIZE];
+} SD_LoggerDiagnostics_t;
+
 void SD_Logger_Init(SCV_t *scv);
 void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv);
 void SD_Logger_Close(void);
 void SD_Logger_GetHealth(SD_LoggerHealth_t *health);
+void SD_Logger_GetDiagnostics(SD_LoggerDiagnostics_t *diagnostics);
+const char *SD_Logger_StateName(SD_LoggerState_t state);
+const char *SD_Logger_OperationName(SD_LoggerOperation_t operation);
+const char *SD_Logger_ResultName(FRESULT result);
 
 #endif /* SD_LOGGER_H */

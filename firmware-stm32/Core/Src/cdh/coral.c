@@ -761,6 +761,7 @@ void Coral_GetDiagnostics(CoralDiagnostics_t *diagnostics)
     diagnostics->good_frame_count = coral_good_frames;
     diagnostics->timeout_count = coral_timeout_count;
     diagnostics->crc_error_count = coral_crc_err_count;
+    diagnostics->sd_error_count = coral_sd_err_count;
     if (primask == 0U)
         __enable_irq();
 }
