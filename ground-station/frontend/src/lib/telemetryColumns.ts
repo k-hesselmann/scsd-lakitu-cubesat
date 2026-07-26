@@ -1,6 +1,5 @@
 import type { TelemetryRow } from "@/types/telemetry"
 import { fmt } from "@/lib/format"
-import { formatEquipmentMask } from "@/lib/telemetryHealth"
 
 export type TelemetryColumn = { key: keyof TelemetryRow | string; label: string; decimals?: number; suffix?: string }
 
@@ -52,8 +51,8 @@ export const telemetryColumns: TelemetryColumn[] = [
   { key: "boot_count", label: "Boot count (saturated)" },
   { key: "flight_state_name", label: "Flight phase" },
   { key: "reset_reason_name", label: "Reset reason" },
-  { key: "scv_equipment_enabled", label: "Equipment enabled (decoded)" },
-  { key: "scv_equipment_faults", label: "Equipment faults (decoded)" },
+  { key: "scv_equipment_enabled", label: "Equipment enabled" },
+  { key: "scv_equipment_faults", label: "Equipment faults" },
   { key: "scv_sd_fault_count", label: "SD faults" },
   { key: "scv_watchdog_reset_count", label: "Watchdog resets" },
   { key: "uplink_last_command_id", label: "Last flight command ID" },
@@ -69,8 +68,5 @@ export const telemetryColumns: TelemetryColumn[] = [
 ]
 
 export function formatTelemetryCell(row: TelemetryRow, column: TelemetryColumn) {
-  if (column.key === "scv_equipment_enabled" || column.key === "scv_equipment_faults") {
-    return formatEquipmentMask(row[column.key])
-  }
   return fmt(row[column.key], column.suffix ?? "", column.decimals)
 }

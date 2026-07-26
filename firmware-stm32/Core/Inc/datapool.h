@@ -157,10 +157,7 @@ typedef enum {
     LORA_EVENT_RX_CRC_ERROR,
     LORA_EVENT_RX_SPI_FAIL,
     LORA_EVENT_RX_MODE_FAIL,
-    LORA_EVENT_ACK_TIMEOUT,
-    /* Packet reached TxDone, but RX could not be restored in time to make the
-     * ground ACK observable. This is distinct from an ordinary missing ACK. */
-    LORA_EVENT_ACK_RX_UNAVAILABLE
+    LORA_EVENT_ACK_TIMEOUT
 } LoRaHealthEvent_t;
 
 typedef enum {

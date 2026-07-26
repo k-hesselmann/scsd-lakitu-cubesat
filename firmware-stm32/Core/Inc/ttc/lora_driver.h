@@ -29,63 +29,6 @@ typedef enum
     LORA_STATE_FAULT
 } LoRaState_t;
 
-typedef enum
-{
-    LORA_PHASE_NONE = 0,
-    LORA_PHASE_INIT,
-    LORA_PHASE_TX_SETUP,
-    LORA_PHASE_TX_POLL,
-    LORA_PHASE_TX_FINISH,
-    LORA_PHASE_RX_START,
-    LORA_PHASE_RX_POLL,
-    LORA_PHASE_RX_PAYLOAD,
-    LORA_PHASE_ISOLATION,
-    LORA_PHASE_SPI_REINIT,
-    LORA_PHASE_DEBUG_READ
-} LoRaOperationPhase_t;
-
-typedef enum
-{
-    LORA_SPI_FAIL_START_REJECTED = 0,
-    LORA_SPI_FAIL_IRQ_ERROR,
-    LORA_SPI_FAIL_TRANSFER_TIMEOUT,
-    LORA_SPI_FAIL_ABORT_REJECTED,
-    LORA_SPI_FAIL_ABORT_TIMEOUT,
-    LORA_SPI_FAIL_DEINIT,
-    LORA_SPI_FAIL_REINIT,
-    LORA_SPI_FAIL_VERIFY
-} LoRaSpiFailureCause_t;
-
-typedef struct
-{
-    uint32_t occurrence;
-    uint32_t timestamp_ms;
-    uint8_t lora_state;
-    uint8_t phase;
-    uint8_t register_address;
-    uint8_t operation;
-    uint8_t cause;
-    uint8_t hal_status;
-    uint32_t hal_error;
-    uint8_t spi_active;
-    uint8_t action_waiting;
-    uint8_t abort_pending;
-    uint8_t irq_flags;
-    uint8_t tx_done_seen;
-} LoRaFaultTrace_t;
-
-typedef struct
-{
-    uint32_t spi_transfer_count;
-    uint32_t spi_completion_count;
-    uint32_t spi_irq_error_count;
-    uint32_t spi_timeout_count;
-    uint32_t spi_abort_count;
-    uint32_t tx_irq_poll_count;
-    uint32_t rx_irq_poll_count;
-    uint32_t dropped_fault_trace_count;
-} LoRaRuntimeStats_t;
-
 typedef struct
 {
     LoRaStatus_t last_status;
@@ -131,15 +74,10 @@ uint8_t LoRa_IsBusy(void);
 uint8_t LoRa_IsReady(void);
 uint8_t LoRa_IsRxActive(void);
 uint8_t LoRa_IsIsolated(void);
-/* True once the SX1276 TxDone IRQ has been observed for the most recent send,
- * even if a later IRQ-clear or standby write failed. */
-uint8_t LoRa_WasLastTxOnAir(void);
 LoRaState_t LoRa_GetState(void);
 LoRaStatus_t LoRa_GetLastStatus(void);
 void LoRa_GetDebugStatus(LoRaDebugStatus_t *status);
 LoRaStatus_t LoRa_ReadDebugRegisters(void);
-uint8_t LoRa_TakeFaultTrace(LoRaFaultTrace_t *trace);
-void LoRa_GetRuntimeStats(LoRaRuntimeStats_t *stats);
 
 /* Hold the modem in reset and cancel future driver activity. LORA_BUSY means
  * an in-flight SPI transfer is being cancelled asynchronously; call

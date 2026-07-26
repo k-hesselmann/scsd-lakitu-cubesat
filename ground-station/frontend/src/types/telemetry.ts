@@ -88,9 +88,7 @@ export type TelemetryRow = {
   reset_cause_raw?: number
   reset_reason_name?: string
   scv_equipment_enabled?: string
-  scv_equipment_enabled_decoded?: string
   scv_equipment_faults?: string
-  scv_equipment_faults_decoded?: string
   scv_sd_fault_count?: number
   scv_watchdog_reset_count?: number
 

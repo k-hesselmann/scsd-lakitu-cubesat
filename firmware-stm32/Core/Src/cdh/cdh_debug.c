@@ -1,17 +1,14 @@
 #include "cdh/cdh_debug.h"
-#include "debug_log.h"
 #include <stdio.h>
 
 extern UART_HandleTypeDef huart2;
-
-#define CDH_DEBUG_INTERVAL_MS 10000U
 
 void CDH_Debug_PrintGPS(GPS_EquipmentHandler *gps)
 {
   static uint32_t last_print_time = 0;
   uint32_t current_time = HAL_GetTick();
 
-  if (current_time - last_print_time >= CDH_DEBUG_INTERVAL_MS)
+  if (current_time - last_print_time >= 1000)
   {
     last_print_time = current_time;
 
@@ -33,7 +30,7 @@ void CDH_Debug_PrintGPS(GPS_EquipmentHandler *gps)
 
     if (len > 0)
     {
-      DebugLog_WriteN(debug_buffer, len);
+      HAL_UART_Transmit(&huart2, debug_buffer, len, 100);
     }
 
     /* Signal Status Check */
@@ -42,20 +39,20 @@ void CDH_Debug_PrintGPS(GPS_EquipmentHandler *gps)
         gps->data.num_satellites == 0 && gps->data.fix_type == 0)
     {
       int status_len = snprintf((char*)status_buffer, sizeof(status_buffer),
-        "   [FAIL] GPS: NOT COMMUNICATING (check wiring/baudrate)\r\n");
-      DebugLog_WriteN(status_buffer, status_len);
+        "   ✗ GPS: NOT COMMUNICATING (check wiring/baudrate)\r\n");
+      HAL_UART_Transmit(&huart2, status_buffer, status_len, 100);
     }
     else if (gps->data.num_satellites == 0)
     {
       int status_len = snprintf((char*)status_buffer, sizeof(status_buffer),
-        "   [OK] GPS: COMMUNICATING but NO SIGNAL (move outdoors)\r\n");
-      DebugLog_WriteN(status_buffer, status_len);
+        "   ✓ GPS: COMMUNICATING but NO SIGNAL (move outdoors)\r\n");
+      HAL_UART_Transmit(&huart2, status_buffer, status_len, 100);
     }
     else if (gps->gps_valid)
     {
       int status_len = snprintf((char*)status_buffer, sizeof(status_buffer),
-        "   [OK] GPS: FIX ACQUIRED (%d satellites)\r\n", gps->data.num_satellites);
-      DebugLog_WriteN(status_buffer, status_len);
+        "   ✓✓ GPS: FIX ACQUIRED! (%d satellites)\r\n", gps->data.num_satellites);
+      HAL_UART_Transmit(&huart2, status_buffer, status_len, 100);
     }
   }
 }
@@ -65,7 +62,7 @@ void CDH_Debug_PrintBaro(MS5607_EquipmentHandler *baro)
   static uint32_t last_print_time = 0;
   uint32_t current_time = HAL_GetTick();
 
-  if (current_time - last_print_time >= CDH_DEBUG_INTERVAL_MS)
+  if (current_time - last_print_time >= 1000)
   {
     last_print_time = current_time;
 
@@ -83,7 +80,7 @@ void CDH_Debug_PrintBaro(MS5607_EquipmentHandler *baro)
 
     if (len > 0)
     {
-      DebugLog_WriteN(debug_buffer, len);
+      HAL_UART_Transmit(&huart2, debug_buffer, len, 100);
     }
   }
 }
@@ -93,7 +90,7 @@ void CDH_Debug_PrintDatapool(SensorData_t *dp)
   static uint32_t last_print_time = 0;
   uint32_t current_time = HAL_GetTick();
 
-  if (current_time - last_print_time >= CDH_DEBUG_INTERVAL_MS)
+  if (current_time - last_print_time >= 1000)
   {
     last_print_time = current_time;
 
@@ -120,7 +117,7 @@ void CDH_Debug_PrintDatapool(SensorData_t *dp)
 
     if (len > 0)
     {
-      DebugLog_WriteN(debug_buffer, len);
+      HAL_UART_Transmit(&huart2, debug_buffer, len, 100);
     }
 
     /* IMU Debug Output */
@@ -143,7 +140,7 @@ void CDH_Debug_PrintDatapool(SensorData_t *dp)
 
     if (len > 0)
     {
-      DebugLog_WriteN(debug_buffer, len);
+      HAL_UART_Transmit(&huart2, debug_buffer, len, 100);
     }
   }
 }

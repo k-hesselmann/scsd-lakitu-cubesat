@@ -18,18 +18,6 @@ EQUIPMENT_CORAL = 1 << 3
 EQUIPMENT_SD = 1 << 4
 EQUIPMENT_LORA = 1 << 5
 EQUIPMENT_EPS_ADC = 1 << 6
-EQUIPMENT_CDH = 1 << 15
-
-EQUIPMENT_BITS = (
-    (EQUIPMENT_GPS, "GPS"),
-    (EQUIPMENT_IMU, "IMU"),
-    (EQUIPMENT_BARO, "BARO"),
-    (EQUIPMENT_CORAL, "CORAL"),
-    (EQUIPMENT_SD, "SD"),
-    (EQUIPMENT_LORA, "LORA"),
-    (EQUIPMENT_EPS_ADC, "EPS_ADC"),
-    (EQUIPMENT_CDH, "CDH"),
-)
 
 VALID_GPS = 1 << 0
 VALID_IMU = 1 << 1
@@ -51,7 +39,6 @@ LORA_EVENTS = {
     7: "NOT_READY", 8: "CONFIG_FAIL", 9: "RX_OK",
     10: "RX_CRC_ERROR", 11: "RX_SPI_FAIL", 12: "RX_MODE_FAIL",
     13: "ACK_TIMEOUT",
-    14: "ACK_RX_UNAVAILABLE",
 }
 UPLINK_STATUSES = {
     0: "NONE", 1: "ACCEPTED", 2: "INVALID_FORMAT",
@@ -200,23 +187,6 @@ def decode_reset_cause(reset_reason: int) -> dict:
         "OPTION_BYTE_RESET": False,
         "FIREWALL_RESET": False,
     }
-
-
-def decode_equipment_mask(mask: int) -> list[str]:
-    """Return all set equipment names, preserving any reserved set bits."""
-    names = [name for bit_mask, name in EQUIPMENT_BITS if mask & bit_mask]
-    known_mask = sum(bit_mask for bit_mask, _ in EQUIPMENT_BITS)
-    names.extend(
-        f"UNKNOWN_BIT_{bit}"
-        for bit in range(16)
-        if mask & (1 << bit) and not known_mask & (1 << bit)
-    )
-    return names
-
-
-def format_equipment_mask(mask: int) -> str:
-    names = decode_equipment_mask(mask)
-    return ", ".join(names) if names else "NONE"
 
 
 def decode_status_flags(gps_valid: int, imu_valid: int, baro_valid: int,

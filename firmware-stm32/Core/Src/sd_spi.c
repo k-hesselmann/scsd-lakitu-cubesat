@@ -1,6 +1,4 @@
 #include "sd_spi.h"
-#include "debug_log.h"
-#include <stdio.h>
 #include <string.h>
 
 #if __has_include("spi.h")
@@ -8,6 +6,7 @@
 #endif
 
 extern SPI_HandleTypeDef  hspi2;
+extern UART_HandleTypeDef huart2;   /* NUCLEO ST-LINK virtual COM port */
 
 #ifndef SD_SPI_DEBUG
 #define SD_SPI_DEBUG 0   /* set to 1 to enable the SD init trace on UART2 */
@@ -19,7 +18,7 @@ extern SPI_HandleTypeDef  hspi2;
 static void dbg(const char *msg)
 {
 #if SD_SPI_DEBUG
-  DebugLog_Write(msg);
+  HAL_UART_Transmit(&huart2, (const uint8_t *)msg, (uint16_t)strlen(msg), 100);
 #else
   (void)msg;
 #endif
@@ -71,49 +70,6 @@ volatile uint32_t spi_hal_error_last = 0;
 volatile uint32_t spi_hal_state_last = 0;
 volatile uint8_t  spi_rx_last = 0;
 
-static uint8_t s_initialized;
-static uint8_t s_last_command = 0xFFU;
-static uint8_t s_last_response = 0xFFU;
-static uint32_t s_sector_count;
-static uint32_t s_init_attempts;
-static uint32_t s_ready_timeout_count;
-static uint32_t s_data_token_timeout_count;
-static uint32_t s_write_reject_count;
-static uint32_t s_read_operations;
-static uint32_t s_read_failures;
-static uint32_t s_write_operations;
-static uint32_t s_write_failures;
-static uint32_t s_sync_operations;
-static uint32_t s_sync_failures;
-static uint32_t s_last_sector;
-static uint32_t s_last_sector_count;
-static uint32_t s_last_failure_ms;
-
-static void sd_spi_note_failure(void)
-{
-  s_last_failure_ms = HAL_GetTick();
-}
-
-static void sd_spi_record_command(uint8_t command, uint32_t argument, uint8_t response)
-{
-  s_last_command = command;
-  s_last_response = response;
-
-#if SD_SPI_DEBUG
-  {
-    char line[96];
-    int length = snprintf(line, sizeof(line),
-                          "[SD_CMD] cmd=%u arg=0x%08lX r1=0x%02X\r\n",
-                          (unsigned int)command,
-                          (unsigned long)argument,
-                          (unsigned int)response);
-    DebugLog_WriteN(line, length);
-  }
-#else
-  (void)argument;
-#endif
-}
-
 static uint8_t sd_spi_wait_not_busy(uint32_t timeout_ms)
 {
   uint32_t start = HAL_GetTick();
@@ -125,7 +81,6 @@ static uint8_t sd_spi_wait_not_busy(uint32_t timeout_ms)
       spi_error_count++;
       spi_hal_error_last = HAL_SPI_GetError(&hspi2);
       spi_hal_state_last = hspi2.State;
-      sd_spi_note_failure();
       return 0U;
     }
   }
@@ -233,7 +188,6 @@ static uint8_t sd_spi_recover_bus(void)
     spi_error_count++;
     spi_hal_error_last = HAL_SPI_GetError(&hspi2);
     spi_hal_state_last = hspi2.State;
-    sd_spi_note_failure();
     return 1U;
   }
 
@@ -255,7 +209,6 @@ static uint8_t spi_xchg(uint8_t data)
     spi_error_count++;
     spi_hal_error_last = HAL_SPI_GetError(&hspi2);
     spi_hal_state_last = hspi2.State;
-    sd_spi_note_failure();
     /* Force HAL state machine back to ready so next call can proceed */
     hspi2.State = HAL_SPI_STATE_READY;
     __HAL_SPI_CLEAR_OVRFLAG(&hspi2);
@@ -282,8 +235,6 @@ static uint8_t wait_ready(uint32_t timeout_ms)
     r = spi_xchg(0xFF);
     if (r == 0xFF) { return 1; }
   } while ((HAL_GetTick() - start) < timeout_ms);
-  s_ready_timeout_count++;
-  sd_spi_note_failure();
   return 0;
 }
 
@@ -316,8 +267,6 @@ static uint8_t receive_data_block(uint8_t *buff, uint32_t len)
       return 1;
     }
   } while ((HAL_GetTick() - start) < 200);
-  s_data_token_timeout_count++;
-  sd_spi_note_failure();
   return 0;
 }
 
@@ -331,12 +280,7 @@ static uint8_t transmit_data_block(const uint8_t *buff, uint8_t token)
     for (uint32_t i = 0; i < 512; i++) { spi_xchg(buff[i]); }
     spi_xchg(0xFF); spi_xchg(0xFF);    /* dummy CRC */
     response = spi_xchg(0xFF);
-    if ((response & 0x1F) != 0x05)
-    {
-      s_write_reject_count++;
-      sd_spi_note_failure();
-      return 0;
-    }
+    if ((response & 0x1F) != 0x05) { return 0; }
   }
   return 1;
 }
@@ -350,19 +294,11 @@ static uint8_t send_command(uint8_t cmd, uint32_t arg)
   {
     cmd &= 0x7F;
     response = send_command(CMD55, 0);
-    if (response > 1)
-    {
-      sd_spi_record_command(cmd, arg, response);
-      return response;
-    }
+    if (response > 1) { return response; }
   }
 
   deselect_card();
-  if (!select_card())
-  {
-    sd_spi_record_command(cmd, arg, 0xFFU);
-    return 0xFF;
-  }
+  if (!select_card()) { return 0xFF; }
 
   spi_xchg(0x40 | cmd);
   spi_xchg((uint8_t)(arg >> 24));
@@ -377,13 +313,8 @@ static uint8_t send_command(uint8_t cmd, uint32_t arg)
   for (uint8_t n = 0; n < 10; n++)
   {
     response = spi_xchg(0xFF);
-    if ((response & 0x80) == 0)
-    {
-      sd_spi_record_command(cmd, arg, response);
-      return response;
-    }
+    if ((response & 0x80) == 0) { return response; }
   }
-  sd_spi_record_command(cmd, arg, response);
   return response;
 }
 
@@ -394,13 +325,11 @@ uint8_t SD_SPI_Init(void)
 {
   uint8_t  n, ty = 0, ocr[4], r;
   uint32_t start;
-  uint32_t errors_before = spi_error_count;
 
   dbg("\r\n[SD] ===== Init start =====\r\n");
 
-  s_init_attempts++;
-  s_initialized = 0U;
-  s_sector_count = 0U;
+  /* Reset SPI error counter so a fresh init/recovery run is visible. */
+  spi_error_count = 0;
 
   /* FDIR only requests SD recovery; the SD subsystem owns the hardware action.
    * Every mount retry gets one deterministic SPI2/card restart: CS high,
@@ -409,7 +338,6 @@ uint8_t SD_SPI_Init(void)
   {
     dbg("[SD] SPI2 recovery failed\r\n");
     card_type = 0U;
-    sd_spi_note_failure();
     return 1U;
   }
 
@@ -431,7 +359,7 @@ uint8_t SD_SPI_Init(void)
     HAL_Delay(20);
   }
 
-  if (spi_error_count > errors_before)
+  if (spi_error_count > 0)
   {
     dbg("[SD] !!! SPI HAL errors detected - SPI peripheral problem !!!\r\n");
   }
@@ -441,7 +369,6 @@ uint8_t SD_SPI_Init(void)
     dbg("[SD] CMD0 failed - card not responding. Check wiring / power.\r\n");
     card_type = 0;
     deselect_card();
-    sd_spi_note_failure();
     return 1;
   }
 
@@ -541,13 +468,11 @@ uint8_t SD_SPI_Init(void)
   if (card_type)
   {
     sd_spi_set_high_speed();
-    s_initialized = 1U;
     dbg("[SD] ===== Init SUCCESS =====\r\n");
     return 0;
   }
   else
   {
-    sd_spi_note_failure();
     dbg("[SD] ===== Init FAILED =====\r\n");
     return 1;
   }
@@ -556,29 +481,11 @@ uint8_t SD_SPI_Init(void)
 /* ------------------------------------------------------------------ */
 uint8_t SD_SPI_ReadBlocks(uint8_t *buff, uint32_t sector, uint32_t count)
 {
-  uint32_t first_sector = sector;
-  uint32_t requested_count = count;
-
-  s_read_operations++;
-  s_last_sector = first_sector;
-  s_last_sector_count = requested_count;
   if (!(card_type & CT_BLOCK)) { sector *= 512; }
   while (count--)
   {
-    if (send_command(CMD17, sector) != 0)
-    {
-      deselect_card();
-      s_read_failures++;
-      sd_spi_note_failure();
-      return 1;
-    }
-    if (!receive_data_block(buff, 512))
-    {
-      deselect_card();
-      s_read_failures++;
-      sd_spi_note_failure();
-      return 1;
-    }
+    if (send_command(CMD17, sector) != 0) { deselect_card(); return 1; }
+    if (!receive_data_block(buff, 512))   { deselect_card(); return 1; }
     buff   += 512;
     sector++;
   }
@@ -588,29 +495,11 @@ uint8_t SD_SPI_ReadBlocks(uint8_t *buff, uint32_t sector, uint32_t count)
 
 uint8_t SD_SPI_WriteBlocks(const uint8_t *buff, uint32_t sector, uint32_t count)
 {
-  uint32_t first_sector = sector;
-  uint32_t requested_count = count;
-
-  s_write_operations++;
-  s_last_sector = first_sector;
-  s_last_sector_count = requested_count;
   if (!(card_type & CT_BLOCK)) { sector *= 512; }
   while (count--)
   {
-    if (send_command(CMD24, sector) != 0)
-    {
-      deselect_card();
-      s_write_failures++;
-      sd_spi_note_failure();
-      return 1;
-    }
-    if (!transmit_data_block(buff, 0xFE))
-    {
-      deselect_card();
-      s_write_failures++;
-      sd_spi_note_failure();
-      return 1;
-    }
+    if (send_command(CMD24, sector) != 0)       { deselect_card(); return 1; }
+    if (!transmit_data_block(buff, 0xFE))        { deselect_card(); return 1; }
     buff   += 512;
     sector++;
   }
@@ -621,20 +510,9 @@ uint8_t SD_SPI_WriteBlocks(const uint8_t *buff, uint32_t sector, uint32_t count)
 uint8_t SD_SPI_Sync(void)
 {
   uint8_t ok;
-  s_sync_operations++;
-  if (!select_card())
-  {
-    s_sync_failures++;
-    sd_spi_note_failure();
-    return 0;
-  }
+  if (!select_card()) { return 0; }
   ok = wait_ready(500);
   deselect_card();
-  if (!ok)
-  {
-    s_sync_failures++;
-    sd_spi_note_failure();
-  }
   return ok;
 }
 
@@ -649,7 +527,6 @@ uint8_t SD_SPI_GetSectorCount(uint32_t *sector_count)
   if (send_command(CMD9, 0U) != 0U || !receive_data_block(csd, sizeof(csd)))
   {
     deselect_card();
-    sd_spi_note_failure();
     return 1U;
   }
   deselect_card();
@@ -675,52 +552,9 @@ uint8_t SD_SPI_GetSectorCount(uint32_t *sector_count)
   }
 
   if (sectors == 0ULL || sectors > UINT32_MAX)
-  {
-    sd_spi_note_failure();
     return 1U;
-  }
 
   *sector_count = (uint32_t)sectors;
-  s_sector_count = (uint32_t)sectors;
   return 0U;
-}
-
-void SD_SPI_GetDiagnostics(SD_SPIDiagnostics_t *diagnostics)
-{
-  if (diagnostics == NULL)
-    return;
-
-  diagnostics->initialized = s_initialized;
-  diagnostics->card_type = card_type;
-  diagnostics->last_command = s_last_command;
-  diagnostics->last_response = s_last_response;
-  diagnostics->last_rx = spi_rx_last;
-  diagnostics->sector_count = s_sector_count;
-  diagnostics->init_attempts = s_init_attempts;
-  diagnostics->spi_error_count = spi_error_count;
-  diagnostics->hal_error_last = spi_hal_error_last;
-  diagnostics->hal_state_last = spi_hal_state_last;
-  diagnostics->ready_timeout_count = s_ready_timeout_count;
-  diagnostics->data_token_timeout_count = s_data_token_timeout_count;
-  diagnostics->write_reject_count = s_write_reject_count;
-  diagnostics->read_operations = s_read_operations;
-  diagnostics->read_failures = s_read_failures;
-  diagnostics->write_operations = s_write_operations;
-  diagnostics->write_failures = s_write_failures;
-  diagnostics->sync_operations = s_sync_operations;
-  diagnostics->sync_failures = s_sync_failures;
-  diagnostics->last_sector = s_last_sector;
-  diagnostics->last_sector_count = s_last_sector_count;
-  diagnostics->last_failure_ms = s_last_failure_ms;
-}
-
-const char *SD_SPI_GetCardTypeName(void)
-{
-  if (card_type == 0U) return "NONE";
-  if ((card_type & CT_SD2) && (card_type & CT_BLOCK)) return "SDHC";
-  if (card_type & CT_SD2) return "SDV2";
-  if (card_type & CT_SD1) return "SDV1";
-  if (card_type & CT_MMC) return "MMC";
-  return "UNKNOWN";
 }
 

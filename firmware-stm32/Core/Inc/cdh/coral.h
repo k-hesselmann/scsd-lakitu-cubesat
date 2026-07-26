@@ -53,17 +53,6 @@
 #define CORAL_STATUS_SD_ERR      0x04U   /* FatFS write error                  */
 #define CORAL_STATUS_NO_UART     0x80U   /* Coral_Init() not yet called        */
 
-typedef struct
-{
-    uint16_t rx_queued_bytes;
-    uint16_t rx_high_water;
-    uint32_t rx_overflow_count;
-    uint32_t good_frame_count;
-    uint32_t timeout_count;
-    uint32_t crc_error_count;
-    uint32_t sd_error_count;
-} CoralDiagnostics_t;
-
 /* ---- Public API --------------------------------------------------------- */
 
 /* Call once after MX_USART3_UART_Init() -- before the superloop. */
@@ -80,11 +69,6 @@ void Coral_Init(void);
  * ring doesn't overflow (see coral_rx_overflow_count). */
 void Coral_Update(SensorData_t *dp);
 
-/* Must be called before the SD owner unmounts or reinitializes FatFs. It
- * releases any Coral-owned file handle so a later remount cannot leave the
- * receiver using an invalid FIL object. */
-void Coral_OnFilesystemUnmount(void);
-
 /* Send an immediate-inference trigger command to the Coral. */
 void Coral_SendTrigger(void);
 
@@ -97,8 +81,5 @@ void Coral_SendSleep(void);
 
 /* Resume the Coral's inference (WAKE); triggers one immediate capture. */
 void Coral_SendWake(void);
-
-/* Atomic snapshot used by the low-rate [SYS_STAT] terminal diagnostic. */
-void Coral_GetDiagnostics(CoralDiagnostics_t *diagnostics);
 
 #endif /* CDH_CORAL_H */
