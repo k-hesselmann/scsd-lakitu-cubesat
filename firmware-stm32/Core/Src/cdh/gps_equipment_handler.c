@@ -5,8 +5,9 @@ GPS_EquipmentHandler GPS_EquipmentHandler_Init(I2C_HandleTypeDef *hi2c)
 {
   GPS_EquipmentHandler handler = {0};
   handler.gps_valid = 0;
+  handler.init_in_progress = 1U;
 
-  /* Initialize MAX-M10S GPS module */
+  /* Start cooperative MAX-M10S initialization. */
   M10S_Begin(hi2c);
 
   return handler;
@@ -16,10 +17,19 @@ GPS_EquipmentHandler GPS_EquipmentHandler_Update(GPS_EquipmentHandler handler, I
 {
   M10S_NavPVT pvt = {0};
 
-  /* Check for incoming streaming data (continuous NMEA from GPS) */
+  M10S_InitService(hi2c);
+  handler.init_in_progress = M10S_IsInitialized() ? 0U : 1U;
+
+  if (handler.init_in_progress) {
+    handler.gps_valid = 0U;
+    return handler;
+  }
+
+  /* Check for incoming UBX streaming data. */
   M10S_CheckUblox(hi2c);
 
-  /* Parse any complete NMEA sentence available (updates immediately on new message) */
+  /* A fresh NAV-PVT frame proves receiver transport health independently of
+   * its fix type. The datapool freshness window tolerates the 1 Hz stream. */
   if (M10S_Read(hi2c, &pvt))
   {
     handler.data.latitude = pvt.latitude;
@@ -31,12 +41,12 @@ GPS_EquipmentHandler GPS_EquipmentHandler_Update(GPS_EquipmentHandler handler, I
     handler.data.utc_time = pvt.utc_time;
     handler.data.num_satellites = pvt.num_satellites;
     handler.data.fix_type = pvt.fix_type;
-    handler.gps_valid = (pvt.num_satellites > 0 && pvt.fix_type > 0) ? 1 : 0;
+    handler.last_message_ms = pvt.timestamp;
   }
-  else
-  {
-    handler.gps_valid = 0;
-  }
+
+  handler.gps_valid = (handler.last_message_ms != 0U &&
+                       (uint32_t)(HAL_GetTick() - handler.last_message_ms) <=
+                       GPS_MESSAGE_FRESHNESS_MS) ? 1U : 0U;
 
   /* Send periodic poll requests to get fresh data
    * This works alongside streaming mode - GPS responds with fresh RMC and GGA sentences

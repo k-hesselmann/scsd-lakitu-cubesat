@@ -15,6 +15,11 @@
 
 #define M10S_I2C_ADDR 0x42
 
+/* UBX-NAV-PVT fixType values. MAX-M10S reports 3 for a 3D GNSS fix. */
+#define M10S_FIX_NONE 0U
+#define M10S_FIX_2D   2U
+#define M10S_FIX_3D   3U
+
 /**
  * @brief Position/Velocity/Time Data Structure
  *
@@ -23,7 +28,7 @@
  * - altitude: meters (above ellipsoid)
  * - speed: meters per second (ground speed, 2D magnitude)
  * - num_satellites: count of satellites used in solution
- * - fix_type: GNSS fix type (0=None, 1=2D, 2=3D, 3=DGPS, 4=RTK-Float, 5=RTK-Fixed)
+ * - fix_type: UBX-NAV-PVT fix type (0=None, 2=2D, 3=3D)
  * - timestamp: HAL_GetTick() at time of parsing
  */
 typedef struct {
@@ -46,13 +51,16 @@ typedef struct {
 /**
  * @brief Initialize MAX-M10S GPS module
  *
- * Checks device presence at I2C 0x42, configures output protocols,
- * enables NAV-PVT messages, and saves configuration to flash.
+ * Starts asynchronous, cooperative initialization. Call M10S_InitService()
+ * from the scheduler until M10S_IsInitialized() returns true.
  *
  * @param hi2c I2C handle
- * @return 1 if successful, 0 if device not found or init failed
+ * @return 1 when initialization was accepted for servicing
  */
 uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c);
+
+/* Advance one initialization transaction or elapsed-time step. */
+void M10S_InitService(I2C_HandleTypeDef *hi2c);
 
 /**
  * @brief Check for available data and buffer it

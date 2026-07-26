@@ -57,6 +57,12 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
         FDIR_AcknowledgeReinit(FDIR_REQUEST_I2C_BUS_RESTART);
     }
 
+    if (FDIR_GetReinitRequests() & EQUIPMENT_GPS)
+    {
+        s_gps = GPS_EquipmentHandler_Init(&hi2c1);
+        FDIR_AcknowledgeReinit(EQUIPMENT_GPS);
+    }
+
     /* ---- IMU ---- */
     s_imu = MPU6050_EquipmentHandler_Update(s_imu, &hi2c1);
     if (s_imu.imu_valid)

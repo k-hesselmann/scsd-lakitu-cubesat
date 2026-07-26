@@ -1,6 +1,7 @@
 #include "fdir/fdir.h"
 
 #include "fdir/scv.h"
+#include "cdh/m10s.h"
 #include "fsw/fsm.h"
 #include "main.h"
 #include "ttc/ttc.h"
@@ -26,6 +27,8 @@ static uint8_t  s_subsys_enabled[FDIR_SUBSYS_COUNT];
 static uint32_t s_last_bus_restart_ms;
 static uint32_t s_prev_datapool_timestamp_ms;
 static uint32_t s_stale_since_ms;       /* 0 = datapool timestamp currently advancing */
+static uint32_t s_gps_no_fix_since_ms;
+static uint32_t s_gps_last_no_fix_request_ms;
 
 /* LoRa TX outcome ring buffer (FMECA T1): tracks the last
  * FDIR_LORA_RECOVERY_WINDOW attempts to evaluate both the recovery and SCV
@@ -241,6 +244,8 @@ void FDIR_Init(SCV_t *scv)
     s_last_bus_restart_ms = 0U;
     s_prev_datapool_timestamp_ms = 0U;
     s_stale_since_ms = 0U;
+    s_gps_no_fix_since_ms = 0U;
+    s_gps_last_no_fix_request_ms = 0U;
     memset(&s_lora, 0, sizeof(s_lora));
     for (uint32_t i = 0U; i < FDIR_MONITOR_COUNT; i++)
     {
@@ -280,6 +285,28 @@ static void FDIR_RunMonitor(FDIR_Monitor_t *m, const SCV_t *scv,
     }
 }
 
+static void FDIR_RunGpsNoFixMonitor(const SensorData_t *dp, const SCV_t *scv,
+                                    uint32_t now_ms)
+{
+    if (!dp->gps_valid || dp->gps_fix_type != M10S_FIX_NONE) {
+        s_gps_no_fix_since_ms = 0U;
+        return;
+    }
+
+    if (s_gps_no_fix_since_ms == 0U) {
+        s_gps_no_fix_since_ms = (now_ms != 0U) ? now_ms : 1U;
+        return;
+    }
+
+    if ((uint32_t)(now_ms - s_gps_no_fix_since_ms) < FDIR_GPS_NO_FIX_REINIT_MS ||
+        !(scv->equipment_enabled & EQUIPMENT_GPS))
+        return;
+
+    if (FDIR_CooldownElapsed(now_ms, &s_gps_last_no_fix_request_ms,
+                             FDIR_GPS_NO_FIX_REINIT_MS))
+        s_reinit_requests |= EQUIPMENT_GPS;
+}
+
 void FDIR_Update(SensorData_t *dp, SCV_t *scv)
 {
     uint32_t now_ms = HAL_GetTick();
@@ -297,6 +324,7 @@ void FDIR_Update(SensorData_t *dp, SCV_t *scv)
     {
         for (uint32_t i = 0U; i < FDIR_MONITOR_COUNT; i++)
             FDIR_RunMonitor(&s_monitors[i], scv, now_ms);
+        FDIR_RunGpsNoFixMonitor(dp, scv, now_ms);
     }
 
     if (dp->batt_valid)

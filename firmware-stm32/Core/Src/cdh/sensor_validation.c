@@ -1,5 +1,6 @@
 #include "cdh/sensor_validation.h"
 #include "cdh/cdh.h"
+#include "cdh/m10s.h"
 #include "main.h"
 #include <math.h>
 #include <stdio.h>
@@ -11,6 +12,7 @@ extern I2C_HandleTypeDef hi2c1;
 SensorValidationState g_sensor_validation = {0};
 static uint8_t s_imu_flatline_count = 0;
 static uint32_t s_imu_last_flatline_ms = 0;
+static uint8_t s_gps_no_fix_reported = 0;
 
 void SensorValidation_Init(void)
 {
@@ -102,32 +104,26 @@ static void validateGPS(SensorData_t *dp)
 {
     uint32_t now = HAL_GetTick();
 
-    /* Update timestamp whenever GPS data changes (even if invalid) */
-    if (dp->gps_lat_deg != 0 || dp->gps_lon_deg != 0 || dp->gps_alt_m != 0) {
-        g_sensor_validation.last_gps_update_ms = now;
-    }
-
-    /* Check if GPS has a valid fix */
-    if (dp->gps_fix_type == 0) {
-        char dbg[80];
-        int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] GPS no fix\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-        dp->gps_valid = 0;
-        g_sensor_validation.gps_valid = 0;
-        g_sensor_validation.gps_fault_count++;
+    if (!dp->gps_valid) {
+        if (g_sensor_validation.gps_valid) {
+            g_sensor_validation.gps_valid = 0U;
+            g_sensor_validation.gps_fault_count++;
+        }
         return;
     }
 
-    /* Check if GPS data is stale (no update for GPS_TIMEOUT_S seconds) */
-    if ((now - g_sensor_validation.last_gps_update_ms) > (GPS_TIMEOUT_S * 1000)) {
-        char dbg[80];
-        int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] GPS timeout (%ds)\r\n", GPS_TIMEOUT_S);
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-        dp->gps_valid = 0;
-        g_sensor_validation.gps_valid = 0;
-        g_sensor_validation.gps_fault_count++;
+    g_sensor_validation.gps_valid = 1U;
+    g_sensor_validation.last_gps_update_ms = now;
+    if (dp->gps_fix_type != M10S_FIX_3D) {
+        if (!s_gps_no_fix_reported) {
+            char dbg[80];
+            int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] GPS transport healthy, no 3D fix\r\n");
+            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+            s_gps_no_fix_reported = 1U;
+        }
         return;
     }
+    s_gps_no_fix_reported = 0U;
 
     if (dp->gps_alt_m < GPS_MIN_ALTITUDE_M || dp->gps_alt_m > GPS_MAX_ALTITUDE_M) {
         char dbg[80];
@@ -150,22 +146,13 @@ static void validateGPS(SensorData_t *dp)
         return;
     }
 
-    if (!g_sensor_validation.gps_valid) {
-        char dbg[64];
-        int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] GPS recovered\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-    }
-    g_sensor_validation.gps_valid = 1;
-    dp->gps_valid = 1;  /* Set datapool valid flag when all checks pass */
-    g_sensor_validation.last_gps_update_ms = now;
 }
 
 static void handleRecovery(SCV_t *scv)
 {
     uint32_t now = HAL_GetTick();
     uint8_t fault_count = (!g_sensor_validation.imu_valid ? 1 : 0) +
-                          (!g_sensor_validation.baro_valid ? 1 : 0) +
-                          (!g_sensor_validation.gps_valid ? 1 : 0);
+                          (!g_sensor_validation.baro_valid ? 1 : 0);
 
     if (fault_count == 0) return;
 

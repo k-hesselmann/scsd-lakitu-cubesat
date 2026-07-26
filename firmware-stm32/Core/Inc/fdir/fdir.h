@@ -34,6 +34,7 @@
  * and most GPS outages are environmental (FMECA C1). */
 #define FDIR_REINIT_PERIOD_MS         10000U
 #define FDIR_GPS_REINIT_PERIOD_MS     60000U
+#define FDIR_GPS_NO_FIX_REINIT_MS      600000U
 
 /* Withhold the IWDG kick (forcing a reset) once the datapool has been stale
  * this long despite bus-restart attempts — L3 escalation of FMECA C10. */
