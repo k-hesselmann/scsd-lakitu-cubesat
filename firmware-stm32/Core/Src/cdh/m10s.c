@@ -32,6 +32,7 @@ static M10S_NavPVT s_last_pvt = {0};
 static uint8_t s_initialized = 0;
 static int32_t s_last_altitude_m = 0;
 static uint32_t s_last_altitude_update_ms = 0;
+static M10S_Diagnostics_t s_diagnostics = {0};
 
 typedef enum {
     M10S_INIT_IDLE = 0,
@@ -665,6 +666,7 @@ uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
     s_rx_index = 0U;
     memset(s_rx_buffer, 0, sizeof(s_rx_buffer));
     memset(&s_last_pvt, 0, sizeof(s_last_pvt));
+    memset(&s_diagnostics, 0, sizeof(s_diagnostics));
     s_last_altitude_update_ms = 0U;
     s_config_index = 0U;
     s_drain_count = 0U;
@@ -826,6 +828,11 @@ uint16_t M10S_CheckUblox(I2C_HandleTypeDef *hi2c)
         total_read += chunk;
     }
 
+    if (total_read > 0U) {
+        s_diagnostics.last_i2c_data_ms = HAL_GetTick();
+        s_diagnostics.i2c_bytes_received += total_read;
+    }
+
     return total_read;
 }
 
@@ -892,6 +899,7 @@ uint8_t M10S_Read(I2C_HandleTypeDef *hi2c, M10S_NavPVT *pvt)
 
             if (ck_a != s_rx_buffer[i + 6 + payload_len] ||
                 ck_b != s_rx_buffer[i + 7 + payload_len]) {
+                s_diagnostics.bad_checksum_count++;
                 len = snprintf(dbg, sizeof(dbg), "[M10S_READ] Bad checksum, dropping message\r\n");
                 HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
                 /* Drop everything through this sync so we don't rescan it forever */
@@ -948,6 +956,10 @@ uint8_t M10S_Read(I2C_HandleTypeDef *hi2c, M10S_NavPVT *pvt)
             s_last_pvt.num_satellites = numSV;
             s_last_pvt.fix_type = fixType;
             s_last_pvt.timestamp = HAL_GetTick();
+            s_diagnostics.last_nav_pvt_ms = s_last_pvt.timestamp;
+            s_diagnostics.nav_pvt_count++;
+            if (fixType > 0U && numSV > 0U && (flags & 0x01U) != 0U)
+                s_diagnostics.last_valid_fix_ms = s_last_pvt.timestamp;
 
             /* Debug output (integer formatting - %f not linked for this path).
              * Split over several lines to stay within the dbg buffer. */
@@ -1008,6 +1020,12 @@ uint8_t M10S_IsInitialized(void)
 uint16_t M10S_GetBufferFillLevel(void)
 {
     return s_rx_index;
+}
+
+void M10S_GetDiagnostics(M10S_Diagnostics_t *diagnostics)
+{
+    if (diagnostics != NULL)
+        *diagnostics = s_diagnostics;
 }
 
 void M10S_ClearBufferedData(void)

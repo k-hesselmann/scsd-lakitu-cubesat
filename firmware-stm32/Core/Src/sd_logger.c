@@ -1,13 +1,16 @@
 #include "sd_logger.h"
 
+#include "cdh/coral.h"
+#include "debug_log.h"
 #include "fatfs.h"
 #include "fdir/fdir.h"
+#include "sd_spi.h"
 #include "user_diskio.h"
 
 #include <stdio.h>
 #include <string.h>
 
-#define SD_LOG_NAME_SIZE  96U
+#define SD_LOG_NAME_SIZE  SD_LOGGER_OPEN_NAME_SIZE
 #define SD_LOG_LINE_SIZE  768U
 #define SD_LOG_BATCH_ROWS 50U
 #define SD_LOG_BUFFER_SIZE (SD_LOG_LINE_SIZE * SD_LOG_BATCH_ROWS)
@@ -27,6 +30,21 @@ static uint32_t s_last_success_ms;
 static char s_open_name[SD_LOG_NAME_SIZE];
 static char s_log_buffer[SD_LOG_BUFFER_SIZE];
 static size_t s_log_buffer_used;
+static SD_LoggerOperation_t s_last_operation;
+static SD_LoggerOperation_t s_last_fault_operation;
+static FRESULT s_last_fault_result = FR_OK;
+static uint32_t s_total_faults;
+static uint32_t s_last_fault_ms;
+static uint32_t s_total_bytes_committed;
+static uint32_t s_successful_flushes;
+static uint32_t s_last_flush_duration_ms;
+static uint32_t s_max_flush_duration_ms;
+static uint32_t s_recovery_attempts;
+static uint32_t s_last_recovery_duration_ms;
+static uint32_t s_rotation_count;
+static uint32_t s_discarded_buffer_bytes;
+static uint32_t s_last_requested_bytes;
+static uint32_t s_last_written_bytes;
 
 static const char s_csv_header[] =
     "session,record_timestamp_ms,"
@@ -42,6 +60,63 @@ static const char s_csv_header[] =
     "scv_lora_tx_fault_counter,scv_sd_fault_count,"
     "scv_watchdog_reset_count,scv_last_batt_mv,scv_baro_ground_alt_cm,scv_crc16\r\n";
 
+const char *SD_Logger_StateName(SD_LoggerState_t state)
+{
+    switch (state)
+    {
+        case SD_LOGGER_OFF: return "OFF";
+        case SD_LOGGER_ACTIVE: return "ACTIVE";
+        case SD_LOGGER_WAITING_RETRY: return "WAIT_RETRY";
+        default: return "UNKNOWN";
+    }
+}
+
+const char *SD_Logger_OperationName(SD_LoggerOperation_t operation)
+{
+    switch (operation)
+    {
+        case SD_LOG_OP_NONE: return "NONE";
+        case SD_LOG_OP_CARD_INIT: return "CARD_INIT";
+        case SD_LOG_OP_MOUNT: return "MOUNT";
+        case SD_LOG_OP_OPEN: return "OPEN";
+        case SD_LOG_OP_HEADER_WRITE: return "HEADER_WRITE";
+        case SD_LOG_OP_DATA_WRITE: return "DATA_WRITE";
+        case SD_LOG_OP_SYNC: return "SYNC";
+        case SD_LOG_OP_CLOSE: return "CLOSE";
+        case SD_LOG_OP_RENAME: return "RENAME";
+        case SD_LOG_OP_FORMAT_ROW: return "FORMAT_ROW";
+        default: return "UNKNOWN";
+    }
+}
+
+const char *SD_Logger_ResultName(FRESULT result)
+{
+    switch (result)
+    {
+        case FR_OK: return "FR_OK";
+        case FR_DISK_ERR: return "FR_DISK_ERR";
+        case FR_INT_ERR: return "FR_INT_ERR";
+        case FR_NOT_READY: return "FR_NOT_READY";
+        case FR_NO_FILE: return "FR_NO_FILE";
+        case FR_NO_PATH: return "FR_NO_PATH";
+        case FR_INVALID_NAME: return "FR_INVALID_NAME";
+        case FR_DENIED: return "FR_DENIED";
+        case FR_EXIST: return "FR_EXIST";
+        case FR_INVALID_OBJECT: return "FR_INVALID_OBJECT";
+        case FR_WRITE_PROTECTED: return "FR_WRITE_PROTECTED";
+        case FR_INVALID_DRIVE: return "FR_INVALID_DRIVE";
+        case FR_NOT_ENABLED: return "FR_NOT_ENABLED";
+        case FR_NO_FILESYSTEM: return "FR_NO_FILESYSTEM";
+        case FR_MKFS_ABORTED: return "FR_MKFS_ABORTED";
+        case FR_TIMEOUT: return "FR_TIMEOUT";
+        case FR_LOCKED: return "FR_LOCKED";
+        case FR_NOT_ENOUGH_CORE: return "FR_NOT_ENOUGH_CORE";
+        case FR_TOO_MANY_OPEN_FILES: return "FR_TOO_MANY_OPEN_FILES";
+        case FR_INVALID_PARAMETER: return "FR_INVALID_PARAMETER";
+        default: return "FR_UNKNOWN";
+    }
+}
+
 static int32_t scale_float(float value, float scale)
 {
     float scaled = value * scale;
@@ -56,11 +131,18 @@ static void sd_note_successful_sync(void)
 
 static void sd_drop_filesystem_state(void)
 {
+    /* All FatFs file objects become invalid after f_mount(NULL, ...). Coral
+     * can keep a staging file open between captures, so release it before
+     * changing the volume state. */
+    Coral_OnFilesystemUnmount();
+
     if (s_file_open)
     {
         (void)f_close(&s_file);
         s_file_open = 0U;
     }
+    if (s_log_buffer_used > 0U)
+        s_discarded_buffer_bytes += (uint32_t)s_log_buffer_used;
     s_log_buffer_used = 0U;
     (void)f_mount(NULL, USERPath, 0U);
     USER_force_reinitialize();
@@ -68,6 +150,18 @@ static void sd_drop_filesystem_state(void)
 
 static void sd_record_fault(FRESULT result)
 {
+    SD_SPIDiagnostics_t spi = {0};
+    uint32_t buffered_bytes = (uint32_t)s_log_buffer_used;
+    char line[384];
+    int length;
+
+    SD_SPI_GetDiagnostics(&spi);
+    s_last_fault_operation =
+        (s_last_operation == SD_LOG_OP_MOUNT && !spi.initialized) ?
+        SD_LOG_OP_CARD_INIT : s_last_operation;
+    s_last_fault_result = result;
+    s_last_fault_ms = HAL_GetTick();
+    s_total_faults++;
     sd_logger_last_error = result;
     sd_logger_state = SD_LOGGER_WAITING_RETRY;
 
@@ -75,6 +169,32 @@ static void sd_record_fault(FRESULT result)
         s_consecutive_faults++;
 
     sd_drop_filesystem_state();
+
+    length = snprintf(
+        line, sizeof(line),
+        "[SD_FAULT] op=%s fatfs=%s(%u) req=%lu wrote=%lu buf_drop=%lu consecutive=%u total=%lu spi_err=%lu hal_err=0x%08lX hal_state=%lu cmd=%u r1=0x%02X rx=0x%02X sector=%lu count=%lu\r\n",
+        SD_Logger_OperationName(s_last_fault_operation),
+        SD_Logger_ResultName(result),
+        (unsigned int)result,
+        (unsigned long)s_last_requested_bytes,
+        (unsigned long)s_last_written_bytes,
+        (unsigned long)buffered_bytes,
+        (unsigned int)s_consecutive_faults,
+        (unsigned long)s_total_faults,
+        (unsigned long)spi.spi_error_count,
+        (unsigned long)spi.hal_error_last,
+        (unsigned long)spi.hal_state_last,
+        (unsigned int)spi.last_command,
+        (unsigned int)spi.last_response,
+        (unsigned int)spi.last_rx,
+        (unsigned long)spi.last_sector,
+        (unsigned long)spi.last_sector_count);
+    if (length > 0)
+    {
+        if ((size_t)length >= sizeof(line))
+            length = (int)(sizeof(line) - 1U);
+        DebugLog_WriteN(line, length);
+    }
 }
 
 static void sd_set_healthy(void)
@@ -109,23 +229,43 @@ static FRESULT write_all(const void *data, UINT length)
 {
     UINT written = 0U;
     FRESULT result = f_write(&s_file, data, length, &written);
-    return (result == FR_OK && written == length) ? FR_OK : FR_DISK_ERR;
+
+    s_last_requested_bytes = length;
+    s_last_written_bytes = written;
+    if (result != FR_OK)
+        return result;
+    return (written == length) ? FR_OK : FR_DISK_ERR;
 }
 
 static FRESULT flush_buffer(void)
 {
     FRESULT result;
+    uint32_t started_ms;
+    uint32_t duration_ms;
+    uint32_t flush_bytes;
 
     if (s_log_buffer_used == 0U)
         return FR_OK;
 
+    started_ms = HAL_GetTick();
+    flush_bytes = (uint32_t)s_log_buffer_used;
+    s_last_operation = SD_LOG_OP_DATA_WRITE;
     result = write_all(s_log_buffer, (UINT)s_log_buffer_used);
     if (result == FR_OK)
+    {
+        s_last_operation = SD_LOG_OP_SYNC;
         result = f_sync(&s_file);
+    }
+    duration_ms = (uint32_t)(HAL_GetTick() - started_ms);
+    s_last_flush_duration_ms = duration_ms;
+    if (duration_ms > s_max_flush_duration_ms)
+        s_max_flush_duration_ms = duration_ms;
     if (result == FR_OK)
     {
         s_log_buffer_used = 0U;
         s_last_flush_ms = HAL_GetTick();
+        s_total_bytes_committed += flush_bytes;
+        s_successful_flushes++;
         sd_note_successful_sync();
     }
     return result;
@@ -147,6 +287,7 @@ static FRESULT open_new_file(void)
                        "LOG_%06lu_START_%010lu_OPEN.CSV",
                        (unsigned long)sd_logger_session,
                        (unsigned long)s_file_start_s);
+        s_last_operation = SD_LOG_OP_OPEN;
         result = f_open(&s_file, s_open_name, FA_CREATE_NEW | FA_WRITE);
         if (result == FR_EXIST)
             sd_logger_session++;
@@ -157,11 +298,18 @@ static FRESULT open_new_file(void)
         return result;
 
     s_file_open = 1U;
+    s_last_operation = SD_LOG_OP_HEADER_WRITE;
     result = write_all(s_csv_header, (UINT)(sizeof(s_csv_header) - 1U));
     if (result == FR_OK)
+    {
+        s_last_operation = SD_LOG_OP_SYNC;
         result = f_sync(&s_file);
+    }
     if (result == FR_OK)
+    {
+        s_total_bytes_committed += (uint32_t)(sizeof(s_csv_header) - 1U);
         sd_note_successful_sync();
+    }
     return result;
 }
 
@@ -177,9 +325,15 @@ static FRESULT close_and_name_file(void)
 
     result = flush_buffer();
     if (result == FR_OK)
+    {
+        s_last_operation = SD_LOG_OP_SYNC;
         result = f_sync(&s_file);
+    }
     if (result == FR_OK)
+    {
+        s_last_operation = SD_LOG_OP_CLOSE;
         result = f_close(&s_file);
+    }
     if (result != FR_OK)
         return result;
     s_file_open = 0U;
@@ -190,6 +344,7 @@ static FRESULT close_and_name_file(void)
                    (unsigned long)s_file_start_s,
                    (unsigned long)end_s,
                    (unsigned long)duration_s);
+    s_last_operation = SD_LOG_OP_RENAME;
     return f_rename(s_open_name, final_name);
 }
 
@@ -197,6 +352,7 @@ static FRESULT mount_and_open(void)
 {
     FRESULT result;
 
+    s_last_operation = SD_LOG_OP_MOUNT;
     result = f_mount(&USERFatFS, USERPath, 1U);
     if (result != FR_OK)
         return result;
@@ -210,7 +366,13 @@ static FRESULT mount_and_open(void)
 
 void SD_Logger_Init(SCV_t *scv)
 {
+    SD_SPIDiagnostics_t spi = {0};
     FRESULT result;
+    uint32_t started_ms = HAL_GetTick();
+    char line[320];
+    int length;
+
+    DebugLog_Write("[SD_INIT] phase=start flush_ms=5000 rotate_s=60 batch_rows=50\r\n");
 
     if (!s_fatfs_linked)
     {
@@ -223,6 +385,34 @@ void SD_Logger_Init(SCV_t *scv)
     result = mount_and_open();
     if (result != FR_OK)
         sd_record_fault(result);
+
+    SD_SPI_GetDiagnostics(&spi);
+    if (result == FR_OK && spi.sector_count == 0U)
+    {
+        uint32_t sectors;
+        (void)SD_SPI_GetSectorCount(&sectors);
+        SD_SPI_GetDiagnostics(&spi);
+    }
+    length = snprintf(
+        line, sizeof(line),
+        "[SD_INIT] result=%s fatfs=%s(%u) op=%s duration=%lums card=%s sectors=%lu capacity_mib=%lu session=%lu file=%s\r\n",
+        (result == FR_OK) ? "OK" : "FAIL",
+        SD_Logger_ResultName(result),
+        (unsigned int)result,
+        SD_Logger_OperationName((result == FR_OK) ? s_last_operation :
+                               s_last_fault_operation),
+        (unsigned long)(HAL_GetTick() - started_ms),
+        SD_SPI_GetCardTypeName(),
+        (unsigned long)spi.sector_count,
+        (unsigned long)(spi.sector_count / 2048U),
+        (unsigned long)sd_logger_session,
+        s_file_open ? s_open_name : "NONE");
+    if (length > 0)
+    {
+        if ((size_t)length >= sizeof(line))
+            length = (int)(sizeof(line) - 1U);
+        DebugLog_WriteN(line, length);
+    }
 }
 
 void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
@@ -238,10 +428,51 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
 
     if ((FDIR_GetReinitRequests() & EQUIPMENT_SD) != 0U)
     {
+        FRESULT previous_error = sd_logger_last_error;
+        SD_LoggerOperation_t previous_operation = s_last_fault_operation;
+        uint32_t recovery_started_ms = HAL_GetTick();
+        char recovery_line[320];
+        int recovery_length;
+
+        s_recovery_attempts++;
+        recovery_length = snprintf(
+            recovery_line, sizeof(recovery_line),
+            "[SD_RECOVERY] attempt=%lu phase=start previous_op=%s previous=%s(%u)\r\n",
+            (unsigned long)s_recovery_attempts,
+            SD_Logger_OperationName(previous_operation),
+            SD_Logger_ResultName(previous_error),
+            (unsigned int)previous_error);
+        if (recovery_length > 0)
+        {
+            if ((size_t)recovery_length >= sizeof(recovery_line))
+                recovery_length = (int)(sizeof(recovery_line) - 1U);
+            DebugLog_WriteN(recovery_line, recovery_length);
+        }
+
         sd_drop_filesystem_state();
         result = mount_and_open();
         if (result != FR_OK)
             sd_record_fault(result);
+        s_last_recovery_duration_ms = (uint32_t)(HAL_GetTick() - recovery_started_ms);
+
+        recovery_length = snprintf(
+            recovery_line, sizeof(recovery_line),
+            "[SD_RECOVERY] attempt=%lu result=%s fatfs=%s(%u) op=%s duration=%lums session=%lu file=%s\r\n",
+            (unsigned long)s_recovery_attempts,
+            (result == FR_OK) ? "OK" : "FAIL",
+            SD_Logger_ResultName(result),
+            (unsigned int)result,
+            SD_Logger_OperationName((result == FR_OK) ? s_last_operation :
+                                   s_last_fault_operation),
+            (unsigned long)s_last_recovery_duration_ms,
+            (unsigned long)sd_logger_session,
+            s_file_open ? s_open_name : "NONE");
+        if (recovery_length > 0)
+        {
+            if ((size_t)recovery_length >= sizeof(recovery_line))
+                recovery_length = (int)(sizeof(recovery_line) - 1U);
+            DebugLog_WriteN(recovery_line, recovery_length);
+        }
         FDIR_AcknowledgeReinit(EQUIPMENT_SD);
     }
 
@@ -263,6 +494,7 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
             sd_record_fault(result);
             return;
         }
+        s_rotation_count++;
     }
 
     for (uint32_t i = 0U; i < sizeof(dp->coral_block); i++)
@@ -326,6 +558,7 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
 
     if (length <= 0 || (size_t)length >= sizeof(line))
     {
+        s_last_operation = SD_LOG_OP_FORMAT_ROW;
         sd_record_fault(FR_INVALID_PARAMETER);
         return;
     }
@@ -357,7 +590,10 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
 
 void SD_Logger_Close(void)
 {
-    (void)close_and_name_file();
+    FRESULT result = close_and_name_file();
+    if (result != FR_OK)
+        sd_record_fault(result);
+    Coral_OnFilesystemUnmount();
     (void)f_mount(NULL, USERPath, 0U);
     sd_logger_state = SD_LOGGER_OFF;
 }
@@ -372,4 +608,38 @@ void SD_Logger_GetHealth(SD_LoggerHealth_t *health)
     health->consecutive_faults = s_consecutive_faults;
     health->last_success_ms = s_last_success_ms;
     health->file_open = s_file_open;
+}
+
+void SD_Logger_GetDiagnostics(SD_LoggerDiagnostics_t *diagnostics)
+{
+    if (diagnostics == NULL)
+        return;
+
+    diagnostics->state = sd_logger_state;
+    diagnostics->last_error = sd_logger_last_error;
+    diagnostics->last_operation = s_last_operation;
+    diagnostics->last_fault_operation = s_last_fault_operation;
+    diagnostics->last_fault_result = s_last_fault_result;
+    diagnostics->consecutive_faults = s_consecutive_faults;
+    diagnostics->file_open = s_file_open;
+    diagnostics->total_faults = s_total_faults;
+    diagnostics->last_fault_ms = s_last_fault_ms;
+    diagnostics->last_success_ms = s_last_success_ms;
+    diagnostics->session = sd_logger_session;
+    diagnostics->rows_in_file = sd_logger_rows_in_file;
+    diagnostics->buffer_used = (uint32_t)s_log_buffer_used;
+    diagnostics->buffer_capacity = SD_LOG_BUFFER_SIZE;
+    diagnostics->total_bytes_committed = s_total_bytes_committed;
+    diagnostics->successful_flushes = s_successful_flushes;
+    diagnostics->last_flush_duration_ms = s_last_flush_duration_ms;
+    diagnostics->max_flush_duration_ms = s_max_flush_duration_ms;
+    diagnostics->recovery_attempts = s_recovery_attempts;
+    diagnostics->last_recovery_duration_ms = s_last_recovery_duration_ms;
+    diagnostics->rotation_count = s_rotation_count;
+    diagnostics->discarded_buffer_bytes = s_discarded_buffer_bytes;
+    diagnostics->last_requested_bytes = s_last_requested_bytes;
+    diagnostics->last_written_bytes = s_last_written_bytes;
+    (void)strncpy(diagnostics->open_name, s_open_name,
+                  sizeof(diagnostics->open_name) - 1U);
+    diagnostics->open_name[sizeof(diagnostics->open_name) - 1U] = '\0';
 }

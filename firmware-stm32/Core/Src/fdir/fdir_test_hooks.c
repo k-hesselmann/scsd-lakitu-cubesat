@@ -3,6 +3,7 @@
 #ifdef FDIR_TEST_HOOKS
 
 #include "fdir/scv.h"
+#include "debug_log.h"
 #include "main.h"
 #include <stdio.h>
 #include <string.h>
@@ -30,7 +31,7 @@ static uint8_t  s_line_len;
 
 static void hook_print(const char *msg)
 {
-    HAL_UART_Transmit(&huart2, (uint8_t *)msg, (uint16_t)strlen(msg), 100);
+    DebugLog_WriteN((uint8_t *)msg, (uint16_t)strlen(msg));
 }
 
 static void hook_status(void)
@@ -43,7 +44,7 @@ static void hook_status(void)
         (int)s_baro_offset_m,
         (int)((s_baro_offset_m < 0 ? -s_baro_offset_m : s_baro_offset_m) * 100) % 100);
     if (len > 0)
-        HAL_UART_Transmit(&huart2, (uint8_t *)buf, (uint16_t)len, 100);
+        DebugLog_WriteN((uint8_t *)buf, (uint16_t)len);
 }
 
 static void hook_clear(void)

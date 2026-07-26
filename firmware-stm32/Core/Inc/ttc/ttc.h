@@ -4,7 +4,7 @@
 #include "datapool.h"
 #include "ttc/lora_driver.h"
 
-#define TTC_TELEMETRY_INTERVAL_MS  20000U
+#define TTC_TELEMETRY_INTERVAL_MS  10000U
 
 typedef struct
 {

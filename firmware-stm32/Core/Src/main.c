@@ -26,10 +26,12 @@
 #include "cdh/coral.h"
 #include "cdh/baro_diag.h"
 #include "datapool.h"
+#include "debug_log.h"
 #include "fdir/fdir.h"
 #include "fdir/fdir_test_hooks.h"
 #include "fdir/scv.h"
 #include "fsw/fsm.h"
+#include "observability.h"
 #include "sd_logger.h"
 #include "ttc/ttc.h"
 /* USER CODE END Includes */
@@ -144,6 +146,8 @@ int main(void)
   MX_USART3_UART_Init();
   (void)HAL_IWDG_Refresh(&hiwdg);
   MX_USART2_UART_Init();
+  DebugLog_Init(&huart2);
+  Observability_Init();
   (void)HAL_IWDG_Refresh(&hiwdg);
   MX_UART5_Init();
   (void)HAL_IWDG_Refresh(&hiwdg);
@@ -211,6 +215,9 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     uint32_t now_ms = HAL_GetTick();
+
+    DebugLog_Service();
+    Observability_Update(now_ms, &g_datapool);
 
     BoardButton_Update(now_ms);
 
