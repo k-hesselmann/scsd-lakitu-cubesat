@@ -10,16 +10,16 @@ extern UART_HandleTypeDef huart2;
 extern I2C_HandleTypeDef hi2c1;
 
 SensorValidationState g_sensor_validation = {0};
-static uint8_t s_imu_flatline_count = 0;
-static uint32_t s_imu_last_flatline_ms = 0;
 static uint8_t s_gps_no_fix_reported = 0;
 
-/* FMECA C4: stuck-value counter state (separate from the flatline check
- * above -- a device frozen at a nonzero, in-range value is a different
- * failure than a near-zero flatline). */
+/* FMECA C4: repeated bit-identical six-axis output indicates frozen
+ * registers; a stationary or free-fall payload is not a health fault. */
 static float s_imu_prev_accel_x = 0.0f;
 static float s_imu_prev_accel_y = 0.0f;
 static float s_imu_prev_accel_z = 0.0f;
+static float s_imu_prev_gyro_x = 0.0f;
+static float s_imu_prev_gyro_y = 0.0f;
+static float s_imu_prev_gyro_z = 0.0f;
 static uint8_t s_imu_stuck_count = 0;
 static uint8_t s_imu_prev_valid_for_stuck = 0;
 
@@ -47,12 +47,7 @@ static float calculateDistance(float lat1, float lon1, float lat2, float lon2)
     return R * c;
 }
 
-/* FMECA C4: implausible-magnitude and stuck-value checks. Returns 1 if a
- * fault was raised (caller must not also run the flatline check that cycle --
- * dp->imu_valid is already cleared). Resets the stuck-value tracker whenever
- * it can't validly compare against the previous sample (invalid data, or a
- * flatline fault just fired), so a real device reinit doesn't get flagged as
- * "stuck" against its pre-fault last reading. */
+/* FMECA C4: implausible-magnitude and frozen-output checks. */
 static uint8_t validateImuPlausibility(SensorData_t *dp, float accel_mag)
 {
     if (accel_mag > IMU_ACCEL_MAG_MAX_G) {
@@ -70,7 +65,10 @@ static uint8_t validateImuPlausibility(SensorData_t *dp, float accel_mag)
     if (s_imu_prev_valid_for_stuck &&
         (dp->imu_accel_x_g == s_imu_prev_accel_x) &&
         (dp->imu_accel_y_g == s_imu_prev_accel_y) &&
-        (dp->imu_accel_z_g == s_imu_prev_accel_z)) {
+        (dp->imu_accel_z_g == s_imu_prev_accel_z) &&
+        (dp->imu_gyro_x_dps == s_imu_prev_gyro_x) &&
+        (dp->imu_gyro_y_dps == s_imu_prev_gyro_y) &&
+        (dp->imu_gyro_z_dps == s_imu_prev_gyro_z)) {
         if (s_imu_stuck_count < UINT8_MAX)
             s_imu_stuck_count++;
     } else {
@@ -79,6 +77,9 @@ static uint8_t validateImuPlausibility(SensorData_t *dp, float accel_mag)
     s_imu_prev_accel_x = dp->imu_accel_x_g;
     s_imu_prev_accel_y = dp->imu_accel_y_g;
     s_imu_prev_accel_z = dp->imu_accel_z_g;
+    s_imu_prev_gyro_x = dp->imu_gyro_x_dps;
+    s_imu_prev_gyro_y = dp->imu_gyro_y_dps;
+    s_imu_prev_gyro_z = dp->imu_gyro_z_dps;
     s_imu_prev_valid_for_stuck = 1U;
 
     if (s_imu_stuck_count >= IMU_STUCK_CYCLES) {
@@ -98,7 +99,6 @@ static uint8_t validateImuPlausibility(SensorData_t *dp, float accel_mag)
 
 static void validateIMU(SensorData_t *dp)
 {
-    uint32_t now = HAL_GetTick();
     if (!dp->imu_valid) {
         s_imu_prev_valid_for_stuck = 0;
         return;
@@ -111,28 +111,12 @@ static void validateIMU(SensorData_t *dp)
     if (validateImuPlausibility(dp, accel_mag))
         return;
 
-    if (accel_mag < IMU_FLATLINE_THRESHOLD) {
-        if ((now - s_imu_last_flatline_ms) > (IMU_FLATLINE_TIMEOUT_S * 1000)) {
-            char dbg[64];
-            int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] IMU flatline\r\n");
-            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-            dp->imu_valid = 0;
-            g_sensor_validation.imu_valid = 0;
-            g_sensor_validation.imu_fault_count++;
-            s_imu_flatline_count = 0;
-        } else if (s_imu_flatline_count == 0) {
-            s_imu_last_flatline_ms = now;
-            s_imu_flatline_count = 1;
-        }
-    } else {
-        if (!g_sensor_validation.imu_valid) {
-            char dbg[64];
-            int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] IMU recovered\r\n");
-            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-        }
-        g_sensor_validation.imu_valid = 1;
-        s_imu_flatline_count = 0;
+    if (!g_sensor_validation.imu_valid) {
+        char dbg[64];
+        int len = snprintf(dbg, sizeof(dbg), "[VALIDATION] IMU recovered\r\n");
+        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
     }
+    g_sensor_validation.imu_valid = 1;
 }
 
 static void validateBaro(SensorData_t *dp)
@@ -221,16 +205,20 @@ static void validateGPS(SensorData_t *dp)
  * disagreeing with the other. Debounced independently of C5's baro-timeout
  * debounce: this is a distinct failure mode (plausible-but-wrong reading,
  * not a stopped-responding device). */
-static void validateBaroGpsCrossCheck(SensorData_t *dp)
+static void validateBaroGpsCrossCheck(SensorData_t *dp, const SCV_t *scv)
 {
     uint32_t now = HAL_GetTick();
+    float baro_pressure_alt_m;
 
-    if (!dp->baro_valid || !dp->gps_valid) {
+    if (!dp->baro_valid || !dp->gps_valid ||
+        scv->baro_ground_alt_cm == SCV_INVALID_I32) {
         s_baro_disagree_since_ms = 0;
         return;
     }
 
-    if (fabsf(dp->baro_alt_m - dp->gps_alt_m) <= BARO_GPS_ALT_DISAGREE_M) {
+    baro_pressure_alt_m =
+        dp->baro_alt_m + ((float)scv->baro_ground_alt_cm / 100.0f);
+    if (fabsf(baro_pressure_alt_m - dp->gps_alt_m) <= BARO_GPS_ALT_DISAGREE_M) {
         s_baro_disagree_since_ms = 0;
         return;
     }
@@ -289,6 +277,6 @@ void SensorValidation_Update(SensorData_t *dp, SCV_t *scv)
     validateIMU(dp);
     validateBaro(dp);
     validateGPS(dp);
-    validateBaroGpsCrossCheck(dp);
+    validateBaroGpsCrossCheck(dp, scv);
     handleRecovery(scv);
 }

@@ -4,9 +4,6 @@
 #include "datapool.h"
 #include <stdint.h>
 
-#define IMU_FLATLINE_THRESHOLD     0.001f
-#define IMU_FLATLINE_TIMEOUT_S     4
-
 /* FMECA C4: plausibility check for "frozen/garbage values while ACKing"
  * (distinct from C3's NACK/timeout case, already covered by imu_valid). */
 #define IMU_ACCEL_MAG_MAX_G        3.0f  /* MPU6050_Init configures AFS_SEL=0
@@ -17,21 +14,21 @@
                                            * once. Anything above this is
                                            * implausible, not just a hard
                                            * event. */
-#define IMU_STUCK_CYCLES           3     /* consecutive bit-identical reads
-                                           * while imu_valid=1 (ACKing) =
-                                           * frozen registers, matches the
-                                           * "3 cycles" debounce FMECA already
-                                           * uses for C3/C5. */
+#define IMU_STUCK_CYCLES           3     /* consecutive bit-identical six-axis
+                                           * repeats while imu_valid=1
+                                           * (ACKing) = frozen registers. */
 
 #define BARO_MAX_PRESSURE_PA       151987.5f
 #define BARO_MIN_TEMP_C            -100.0f
 
 /* FMECA C6: GPS/baro altitude cross-check, run only when both are already
- * individually valid. Threshold is a first pass pending flight calibration
- * (fsm_thresholds.h-style TBD) -- GPS vertical error can reach ~15 m
- * (docs/sensor_parameters.html), so this stays well clear of nominal GPS
- * noise while still catching a grossly wrong baro reading (PROM corruption,
- * stuck ADC). */
+ * individually valid and the persisted barometer launch baseline is
+ * available. The validator adds that baseline back to the flight-relative
+ * barometer value before comparing it with absolute GNSS altitude.
+ * Threshold is a first pass pending flight calibration (fsm_thresholds.h-
+ * style TBD): it includes GNSS vertical error and the normal difference
+ * between ISA pressure altitude and GNSS MSL altitude while still catching a
+ * grossly wrong barometer reading (PROM corruption, stuck ADC). */
 #define BARO_GPS_ALT_DISAGREE_M    200.0f
 #define BARO_CROSSCHECK_DEBOUNCE_MS 5000U
 
