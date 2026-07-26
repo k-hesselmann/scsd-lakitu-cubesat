@@ -252,10 +252,17 @@ static uint16_t s_crc_pos;
 static uint8_t  s_status;   /* accumulated CORAL_STATUS_* flags for this frame */
 static uint8_t  s_sd_ok;
 static FIL      s_fframe;
-static char     s_fname[32];
+static char     s_fname[32];        /* this frame's final desired name       */
+static char     s_open_name[32];    /* name actually bound to s_fframe right now */
+static uint8_t  s_using_staged_name; /* s_open_name is CORAL_STAGING_NAME, needs rename on success */
 static uint8_t  s_seen_good_frame;
 static uint8_t  s_frame_stale_reported;
 static uint32_t s_last_good_frame_ms;
+
+/* Pre-opened SD file, readied ahead of the next frame -- see coral_try_preopen(). */
+static const char CORAL_STAGING_NAME[] = "CORAL.STG";
+static uint8_t   s_preopen_ok;
+static uint32_t  s_last_preopen_attempt_ms;
 
 /* Abort the in-progress frame: close/delete any partial SD file, publish
  * the given status, log why, and return the state machine to IDLE so the
@@ -269,7 +276,7 @@ static void coral_rx_abort(uint8_t status, const char *reason)
     if (s_sd_ok)
     {
         f_close(&s_fframe);
-        f_unlink(s_fname);
+        f_unlink(s_open_name);
         s_sd_ok = 0U;
     }
 
@@ -283,6 +290,31 @@ static void coral_rx_abort(uint8_t status, const char *reason)
 
     s_rx_dp    = NULL;
     s_rx_state = CORAL_RX_IDLE;
+}
+
+/* Opens a fresh SD file under a fixed staging name ahead of the next frame
+ * and leaves it open. On this project's bench SD card, f_open() with
+ * FA_CREATE_ALWAYS has been observed taking 2+ seconds (directory-slot and
+ * first-cluster allocation) -- called synchronously from
+ * coral_header_complete() as before, that stalls the main loop for longer
+ * than the 16 KB RX ring takes to overflow (~1.4 s), on every single frame.
+ * Doing it here instead, while CORAL_RX_IDLE (no frame in flight, so a
+ * multi-second stall costs nothing), means coral_header_complete() usually
+ * finds the file already open and pays no f_open() cost on the time-critical
+ * path at all. Left open (not closed) so there is nothing left to redo when
+ * it's claimed. Reused under the same name every time, so a slow/failed
+ * attempt is retried (rate-limited, see s_last_preopen_attempt_ms) rather
+ * than accumulating stale files. */
+static void coral_try_preopen(void)
+{
+    if (s_preopen_ok)
+        return;
+
+    if (f_open(&s_fframe, CORAL_STAGING_NAME, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
+    {
+        (void)f_sync(&s_fframe);   /* durable even if power is lost before it's claimed */
+        s_preopen_ok = 1U;
+    }
 }
 
 /* 16-byte header complete: validate, open the SD file, and set up the
@@ -338,7 +370,22 @@ static void coral_header_complete(void)
              (unsigned long)s_seq, (unsigned)s_frac_pct);
 
     s_sd_ok = 0U;
-    if (f_open(&s_fframe, s_fname, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
+    s_using_staged_name = 0U;
+    strncpy(s_open_name, s_fname, sizeof(s_open_name) - 1U);
+    s_open_name[sizeof(s_open_name) - 1U] = '\0';
+
+    if (s_preopen_ok)
+    {
+        /* File is already open under the staging name -- reuse it instead of
+         * paying for another f_open() here, on the time-critical path. */
+        s_preopen_ok = 0U;
+        s_using_staged_name = 1U;
+        strncpy(s_open_name, CORAL_STAGING_NAME, sizeof(s_open_name) - 1U);
+        s_open_name[sizeof(s_open_name) - 1U] = '\0';
+        s_sd_ok = 1U;
+        dbg("[CORAL] SD file ready (pre-opened)\r\n");
+    }
+    else if (f_open(&s_fframe, s_fname, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
     {
         s_sd_ok = 1U;
         dbg("[CORAL] SD file opened OK\r\n");
@@ -416,11 +463,28 @@ static void coral_frame_complete(void)
         dbg(buf);
         s_status |= CORAL_STATUS_CRC_ERR;
         coral_crc_err_count++;
-        f_unlink(s_fname);   /* delete corrupt file */
+        f_unlink(s_open_name);   /* delete corrupt file (final or staged name) */
     }
     else
     {
         char buf[56];
+
+        /* Staged file was written under CORAL_STAGING_NAME; give it its real
+         * name now that the frame is confirmed good. The file is already
+         * closed at this point (coral_pixel_chunk_complete() closes it once
+         * the pixel stream finishes), so the rename is a quick metadata-only
+         * operation, not another slow allocation like the original open. */
+        if (s_using_staged_name)
+        {
+            if (f_rename(s_open_name, s_fname) != FR_OK)
+            {
+                dbg("[CORAL] !!! rename to final name failed -- discarding\r\n");
+                f_unlink(s_open_name);
+                s_status |= CORAL_STATUS_SD_ERR;
+                coral_sd_err_count++;
+            }
+        }
+
         snprintf(buf, sizeof(buf),
                  "[CORAL] CRC OK  frac=%u%%  file=%s\r\n",
                  (unsigned)((uint32_t)s_frac * 100UL / 65535UL), s_fname);
@@ -549,6 +613,15 @@ void Coral_Update(SensorData_t *dp)
     {
         uint8_t b0 = 0U;
         uint8_t scanned = 0U;
+
+        /* Get the next frame's file ready while nothing is time-critical.
+         * Rate-limited to at most once/second so a persistently unavailable
+         * SD card can't turn this into its own per-tick stall. */
+        if (!s_preopen_ok && (uint32_t)(now - s_last_preopen_attempt_ms) >= 1000U)
+        {
+            s_last_preopen_attempt_ms = now;
+            coral_try_preopen();
+        }
 
         while (scanned < 64U)
         {
