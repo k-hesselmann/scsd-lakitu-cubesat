@@ -41,7 +41,10 @@
 /* ICD Section 1 — SensorData_t
  * Written by CDH_Update() at the 100 ms CDH/FSW scheduler slot.
  * Read by FSW_Update() and TTC_Transmit().
- * Check *_valid flags before using any field. */
+ * Check *_valid flags before using any field. GPS is the exception by design:
+ * gps_valid means a fresh checksum-valid NAV-PVT frame was received (receiver
+ * transport is healthy), while gps_fix_type expresses the solution class that
+ * each consumer may require. */
 typedef struct __attribute__((packed)) {
 
     uint32_t timestamp_ms;

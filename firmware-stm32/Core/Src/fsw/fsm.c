@@ -1,5 +1,6 @@
 #include "fsw/fsm.h"
 #include "fsw/fsm_thresholds.h"
+#include "cdh/m10s.h"
 #include "main.h"
 #include "ttc/ttc.h"
 
@@ -30,7 +31,8 @@ static uint8_t FSW_EquipmentUsable(uint16_t equipment)
 
 static uint8_t FSW_GpsUsable(const SensorData_t *dp)
 {
-    return dp->gps_valid && FSW_EquipmentUsable(EQUIPMENT_GPS);
+    return dp->gps_valid && dp->gps_fix_type == M10S_FIX_3D &&
+           FSW_EquipmentUsable(EQUIPMENT_GPS);
 }
 
 static uint8_t FSW_ImuUsable(const SensorData_t *dp)

@@ -24,7 +24,6 @@
 /* USER CODE BEGIN Includes */
 #include "cdh/cdh.h"
 #include "cdh/coral.h"
-#include "cdh/gps_diag.h"
 #include "cdh/baro_diag.h"
 #include "datapool.h"
 #include "fdir/fdir.h"
@@ -168,8 +167,9 @@ int main(void)
   {
     CDH_Init();
     (void)HAL_IWDG_Refresh(&hiwdg);
-    GPS_Diag_Test(&hi2c1);
-    (void)HAL_IWDG_Refresh(&hiwdg);
+    /* GPS initialization is cooperative. Running the legacy diagnostic here
+     * would poll before M10S_InitService() has configured the receiver, then
+     * emit a false "not responding" result and delay boot. */
     Baro_Diag_Test(&hi2c1);
     (void)HAL_IWDG_Refresh(&hiwdg);
   }

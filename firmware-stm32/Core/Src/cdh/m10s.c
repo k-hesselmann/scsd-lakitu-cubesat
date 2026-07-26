@@ -33,6 +33,31 @@ static uint8_t s_initialized = 0;
 static int32_t s_last_altitude_m = 0;
 static uint32_t s_last_altitude_update_ms = 0;
 
+typedef enum {
+    M10S_INIT_IDLE = 0,
+    M10S_INIT_CHECK_DEVICE,
+    M10S_INIT_SEND_RESET,
+    M10S_INIT_WAIT_RESET,
+    M10S_INIT_SEND_CONFIG,
+    M10S_INIT_WAIT_CONFIG_ACK,
+    M10S_INIT_WAIT_STREAM,
+    M10S_INIT_DRAIN_STREAM,
+    M10S_INIT_READY,
+    M10S_INIT_FAILED
+} M10S_InitState_t;
+
+static M10S_InitState_t s_init_state = M10S_INIT_IDLE;
+static uint32_t s_init_deadline_ms = 0;
+static uint8_t s_config_index = 0;
+static uint8_t s_drain_count = 0;
+
+#define M10S_RESET_WAIT_MS        2000U
+#define M10S_CONFIG_PROCESS_MS     100U
+#define M10S_CONFIG_ACK_TIMEOUT_MS 300U
+#define M10S_STREAM_SETTLE_MS     2000U
+#define M10S_DRAIN_INTERVAL_MS     100U
+#define M10S_DRAIN_ITERATIONS       10U
+
 /* ========================================================================== */
 /* I2C Helper Functions                                                      */
 /* ========================================================================== */
@@ -104,7 +129,6 @@ static void M10S_QueryVersion(I2C_HandleTypeDef *hi2c)
             if (bytes_avail > 64) bytes_avail = 64;
             M10S_ReadDataStream(hi2c, flush_buf, bytes_avail);
         }
-        HAL_Delay(50);
     }
 
     /* Send request */
@@ -117,7 +141,6 @@ static void M10S_QueryVersion(I2C_HandleTypeDef *hi2c)
     }
 
     /* Wait for response */
-    HAL_Delay(500);
 
     /* Try to read response */
     if (M10S_GetBytesAvailable(hi2c, &bytes_avail) && bytes_avail > 0) {
@@ -216,7 +239,6 @@ static uint8_t M10S_WaitForACK(I2C_HandleTypeDef *hi2c, uint32_t timeout_ms)
                 }
             }
         }
-        HAL_Delay(10);
     }
     return 0;  /* Timeout */
 }
@@ -306,7 +328,6 @@ static void M10S_ConfigureNMEAViaValset(I2C_HandleTypeDef *hi2c, uint32_t key, u
     }
 
     /* Wait for ACK/NAK response */
-    HAL_Delay(100);  /* Give GPS time to process */
     uint8_t ack = M10S_WaitForACK(hi2c, 300);
 
     if (ack) {
@@ -316,7 +337,6 @@ static void M10S_ConfigureNMEAViaValset(I2C_HandleTypeDef *hi2c, uint32_t key, u
     }
     HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
 
-    HAL_Delay(100);
 }
 
 /**
@@ -366,7 +386,6 @@ static void M10S_ConfigureNMEAMessage(I2C_HandleTypeDef *hi2c, uint8_t msg_id, u
         return;
     }
 
-    HAL_Delay(200);  /* Wait for GPS to process and generate ACK */
 }
 
 /* ========================================================================== */
@@ -590,124 +609,178 @@ static uint8_t M10S_ProcessSentence(char *sentence)
 /* Public API                                                                */
 /* ========================================================================== */
 
-uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
+static uint8_t M10S_DeadlineReached(uint32_t now_ms, uint32_t deadline_ms)
 {
-    char dbg[128];
-    int len;
+    return ((int32_t)(now_ms - deadline_ms) >= 0) ? 1U : 0U;
+}
 
-    /* Initialize I2C if needed */
-    if (hi2c->State != HAL_I2C_STATE_READY) {
-        HAL_I2C_DeInit(hi2c);
-        HAL_Delay(100);
-        HAL_I2C_Init(hi2c);
-        HAL_Delay(100);
-    }
+static uint16_t M10S_BuildValset(uint32_t key, uint8_t value, uint8_t *msg)
+{
+    uint8_t ck_a = 0U;
+    uint8_t ck_b = 0U;
+    uint16_t index = 0U;
 
-    len = snprintf(dbg, sizeof(dbg), "[M10S] Initializing MAX-M10S at I2C 0x42...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    msg[index++] = 0xB5U; msg[index++] = 0x62U;
+    msg[index++] = 0x06U; msg[index++] = 0x8AU;
+    msg[index++] = 0x09U; msg[index++] = 0x00U;
+    msg[index++] = 0x00U; msg[index++] = 0x01U;
+    msg[index++] = 0x00U; msg[index++] = 0x00U;
+    msg[index++] = (uint8_t)(key >> 0); msg[index++] = (uint8_t)(key >> 8);
+    msg[index++] = (uint8_t)(key >> 16); msg[index++] = (uint8_t)(key >> 24);
+    msg[index++] = value;
 
-    /* Check device presence */
-    uint16_t bytes_avail = 0;
-    if (!M10S_GetBytesAvailable(hi2c, &bytes_avail)) {
-        len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: Device not found at I2C 0x42\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-        return 0;
-    }
-
-    len = snprintf(dbg, sizeof(dbg), "[M10S] Device found. Testing UBX communication...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-
-    /* Query version to verify GPS responds to UBX commands */
-    M10S_QueryVersion(hi2c);
-    HAL_Delay(500);
-
-    /* Perform controlled software reset to clear any stuck state */
-    len = snprintf(dbg, sizeof(dbg), "[M10S] Performing controlled software reset...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-
-    uint8_t reset_msg[10];
-    reset_msg[0] = 0xB5;           /* Sync 1 */
-    reset_msg[1] = 0x62;           /* Sync 2 */
-    reset_msg[2] = 0x06;           /* Class: CFG */
-    reset_msg[3] = 0x04;           /* ID: RST (Reset) */
-    reset_msg[4] = 0x04;           /* Length low (4 bytes payload) */
-    reset_msg[5] = 0x00;           /* Length high */
-    reset_msg[6] = 0x00;           /* navBbrMask: don't clear BBR */
-    reset_msg[7] = 0x01;           /* resetMode: 0x01 = Controlled software reset */
-    reset_msg[8] = 0x00;           /* reserved */
-    reset_msg[9] = 0x00;           /* reserved */
-
-    /* Calculate checksum */
-    uint8_t ck_a = 0, ck_b = 0;
-    for (int i = 2; i < 10; i++) {
-        ck_a += reset_msg[i];
+    for (uint16_t i = 2U; i < index; ++i) {
+        ck_a += msg[i];
         ck_b += ck_a;
     }
+    msg[index++] = ck_a;
+    msg[index++] = ck_b;
+    return index;
+}
 
-    /* Append checksum (overwrite reserved bytes) */
-    reset_msg[8] = ck_a;
-    reset_msg[9] = ck_b;
+static uint8_t M10S_ReadConfigAck(I2C_HandleTypeDef *hi2c)
+{
+    uint16_t bytes_avail = 0U;
+    uint8_t response[64];
 
-    M10S_WriteDataStream(hi2c, reset_msg, 10);
-    HAL_Delay(2000);  /* Wait for reset to complete */
+    if (!M10S_GetBytesAvailable(hi2c, &bytes_avail) || bytes_avail == 0U)
+        return 0U;
+    if (bytes_avail > sizeof(response))
+        bytes_avail = sizeof(response);
+    if (!M10S_ReadDataStream(hi2c, response, bytes_avail))
+        return 0U;
 
-    /* M10 modules do NOT support legacy UBX-CFG-PRT / UBX-CFG-MSG.
-     * All configuration must go through UBX-CFG-VALSET (configuration interface).
-     * Keys (from u-blox M10 interface description):
-     *   CFG-I2COUTPROT-UBX        0x10720001 (L)  - enable UBX output on I2C
-     *   CFG-I2COUTPROT-NMEA       0x10720002 (L)  - NMEA output on I2C
-     *   CFG-MSGOUT-UBX_NAV_PVT_I2C 0x20910006 (U1) - NAV-PVT rate on I2C
-     */
-    len = snprintf(dbg, sizeof(dbg), "[M10S] Configuring via VALSET: UBX out, NMEA off, NAV-PVT 1Hz...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    for (uint16_t i = 0U; i + 3U < bytes_avail; ++i) {
+        if (response[i] == 0xB5U && response[i + 1U] == 0x62U &&
+            response[i + 2U] == 0x05U && response[i + 3U] == 0x01U)
+            return 1U;
+    }
+    return 0U;
+}
 
-    M10S_ConfigureNMEAViaValset(hi2c, 0x10720001, 1);  /* CFG-I2COUTPROT-UBX = 1 */
-    M10S_ConfigureNMEAViaValset(hi2c, 0x10720002, 0);  /* CFG-I2COUTPROT-NMEA = 0 */
-    M10S_ConfigureNMEAViaValset(hi2c, 0x20910006, 1);  /* CFG-MSGOUT-UBX_NAV_PVT_I2C = 1 */
-    M10S_ConfigureNMEAViaValset(hi2c, 0x20110021, 6);  /* CFG-NAVSPG-DYNMODEL = 6 (Airborne <1g) */
+uint8_t M10S_Begin(I2C_HandleTypeDef *hi2c)
+{
+    (void)hi2c;
+    s_initialized = 0U;
+    s_rx_index = 0U;
+    memset(s_rx_buffer, 0, sizeof(s_rx_buffer));
+    memset(&s_last_pvt, 0, sizeof(s_last_pvt));
+    s_last_altitude_update_ms = 0U;
+    s_config_index = 0U;
+    s_drain_count = 0U;
+    s_init_state = M10S_INIT_CHECK_DEVICE;
+    return 1U;
+}
 
-    len = snprintf(dbg, sizeof(dbg), "[M10S] UBX-NAV-PVT configured. Waiting for data...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+void M10S_InitService(I2C_HandleTypeDef *hi2c)
+{
+    static const uint32_t config_keys[] = {
+        0x10720001U, 0x10720002U, 0x20910006U, 0x20110021U
+    };
+    static const uint8_t config_values[] = { 1U, 0U, 1U, 6U };
+    uint32_t now_ms = HAL_GetTick();
+    uint16_t bytes_avail;
+    uint8_t message[17];
+    char dbg[96];
+    int len;
 
-    /* Wait for GPS to start sending configured data */
-    HAL_Delay(2000);
-
-    /* Check if we're receiving data */
-    uint8_t data_detected = 0;
-    len = snprintf(dbg, sizeof(dbg), "[M10S] Checking for incoming UBX data...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-
-    /* Clear any initial buffered data and reset internal buffer pointers */
-    uint8_t flush_buf[64];
-    for (int i = 0; i < 10; i++) {
-        if (M10S_GetBytesAvailable(hi2c, &bytes_avail) && bytes_avail > 0) {
-            data_detected = 1;
-            len = snprintf(dbg, sizeof(dbg), "[M10S]   Received %u bytes\r\n", bytes_avail);
-            HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-
-            if (bytes_avail > 64) bytes_avail = 64;
-            M10S_ReadDataStream(hi2c, flush_buf, bytes_avail);
+    switch (s_init_state) {
+    case M10S_INIT_CHECK_DEVICE:
+        if (hi2c->State != HAL_I2C_STATE_READY ||
+            !M10S_GetBytesAvailable(hi2c, &bytes_avail)) {
+            s_init_state = M10S_INIT_FAILED;
+            len = snprintf(dbg, sizeof(dbg), "[M10S] ERROR: Device not found at I2C 0x42\r\n");
+            HAL_UART_Transmit(&huart2, (uint8_t *)dbg, len, 100);
+            return;
         }
-        HAL_Delay(100);
+        s_init_state = M10S_INIT_SEND_RESET;
+        return;
+
+    case M10S_INIT_SEND_RESET: {
+        uint8_t reset_message[] = {
+            0xB5U, 0x62U, 0x06U, 0x04U, 0x04U, 0x00U,
+            0x00U, 0x00U, 0x01U, 0x00U, 0x00U, 0x00U
+        };
+        uint8_t ck_a = 0U;
+        uint8_t ck_b = 0U;
+        for (uint16_t i = 2U; i < 10U; ++i) { ck_a += reset_message[i]; ck_b += ck_a; }
+        reset_message[10] = ck_a;
+        reset_message[11] = ck_b;
+        if (!M10S_WriteDataStream(hi2c, reset_message, sizeof(reset_message))) {
+            s_init_state = M10S_INIT_FAILED;
+            return;
+        }
+        s_init_deadline_ms = now_ms + M10S_RESET_WAIT_MS;
+        s_init_state = M10S_INIT_WAIT_RESET;
+        return;
     }
 
-    if (!data_detected) {
-        len = snprintf(dbg, sizeof(dbg), "[M10S] WARNING: No UBX data detected after configuration!\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-    } else {
-        len = snprintf(dbg, sizeof(dbg), "[M10S] ✓ UBX data detected successfully\r\n");
-        HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
+    case M10S_INIT_WAIT_RESET:
+        if (M10S_DeadlineReached(now_ms, s_init_deadline_ms))
+            s_init_state = M10S_INIT_SEND_CONFIG;
+        return;
+
+    case M10S_INIT_SEND_CONFIG:
+        if (s_config_index >= (sizeof(config_keys) / sizeof(config_keys[0]))) {
+            s_init_deadline_ms = now_ms + M10S_STREAM_SETTLE_MS;
+            s_init_state = M10S_INIT_WAIT_STREAM;
+            return;
+        }
+        {
+            uint16_t message_len = M10S_BuildValset(config_keys[s_config_index],
+                                                     config_values[s_config_index], message);
+            if (!M10S_WriteDataStream(hi2c, message, message_len)) {
+                len = snprintf(dbg, sizeof(dbg), "[M10S] CFG-VALSET %u: write failed\r\n",
+                               (unsigned int)s_config_index);
+                HAL_UART_Transmit(&huart2, (uint8_t *)dbg, len, 100);
+            }
+        }
+        s_init_deadline_ms = now_ms + M10S_CONFIG_PROCESS_MS + M10S_CONFIG_ACK_TIMEOUT_MS;
+        s_init_state = M10S_INIT_WAIT_CONFIG_ACK;
+        return;
+
+    case M10S_INIT_WAIT_CONFIG_ACK:
+        if (!M10S_DeadlineReached(now_ms, s_init_deadline_ms))
+            return;
+        if (!M10S_ReadConfigAck(hi2c)) {
+            len = snprintf(dbg, sizeof(dbg), "[M10S] CFG-VALSET %u: no ACK\r\n",
+                           (unsigned int)s_config_index);
+            HAL_UART_Transmit(&huart2, (uint8_t *)dbg, len, 100);
+        }
+        ++s_config_index;
+        s_init_state = M10S_INIT_SEND_CONFIG;
+        return;
+
+    case M10S_INIT_WAIT_STREAM:
+        if (M10S_DeadlineReached(now_ms, s_init_deadline_ms)) {
+            s_init_deadline_ms = now_ms;
+            s_init_state = M10S_INIT_DRAIN_STREAM;
+        }
+        return;
+
+    case M10S_INIT_DRAIN_STREAM:
+        if (!M10S_DeadlineReached(now_ms, s_init_deadline_ms))
+            return;
+        if (M10S_GetBytesAvailable(hi2c, &bytes_avail) && bytes_avail > 0U) {
+            uint8_t drain_buffer[64];
+            if (bytes_avail > sizeof(drain_buffer)) bytes_avail = sizeof(drain_buffer);
+            (void)M10S_ReadDataStream(hi2c, drain_buffer, bytes_avail);
+        }
+        s_init_deadline_ms = now_ms + M10S_DRAIN_INTERVAL_MS;
+        if (++s_drain_count >= M10S_DRAIN_ITERATIONS) {
+            s_initialized = 1U;
+            s_init_state = M10S_INIT_READY;
+            len = snprintf(dbg, sizeof(dbg), "[M10S] Initialization complete. UBX-NAV-PVT at 1Hz\r\n");
+            HAL_UART_Transmit(&huart2, (uint8_t *)dbg, len, 100);
+        }
+        return;
+
+    case M10S_INIT_IDLE:
+    case M10S_INIT_READY:
+    case M10S_INIT_FAILED:
+    default:
+        return;
     }
-
-    /* Clear the internal sentence buffer completely */
-    s_rx_index = 0;
-    memset(s_rx_buffer, 0, M10S_BUFFER_SIZE);
-
-    s_initialized = 1;
-    len = snprintf(dbg, sizeof(dbg), "[M10S] Initialization complete. UBX-NAV-PVT at 1Hz...\r\n");
-    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, len, 100);
-
-    return 1;
 }
 
 uint16_t M10S_CheckUblox(I2C_HandleTypeDef *hi2c)
@@ -782,7 +855,10 @@ uint8_t M10S_Read(I2C_HandleTypeDef *hi2c, M10S_NavPVT *pvt)
     }
 
     /* Look for UBX-NAV-PVT message: B5 62 01 07 */
-    for (uint16_t i = 0; i < s_rx_index - 100; i++) {
+    /* A UBX-NAV-PVT frame is exactly 100 bytes. Accept a buffer containing
+     * one complete frame; the previous strict inequality deferred parsing
+     * until a later byte arrived, which made fresh no-fix reports look stale. */
+    for (uint16_t i = 0U; i + 100U <= s_rx_index; ++i) {
         if (s_rx_buffer[i] == 0xB5 && s_rx_buffer[i+1] == 0x62 &&
             s_rx_buffer[i+2] == 0x01 && s_rx_buffer[i+3] == 0x07) {
 
@@ -945,4 +1021,3 @@ void M10S_RequestPVT(I2C_HandleTypeDef *hi2c)
     /* Polling disabled - using NMEA streaming mode only */
     (void)hi2c;
 }
-
