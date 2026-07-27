@@ -23,6 +23,17 @@ static float s_imu_prev_gyro_y = 0.0f;
 static float s_imu_prev_gyro_z = 0.0f;
 static uint8_t s_imu_stuck_count = 0;
 static uint8_t s_imu_prev_valid_for_stuck = 0;
+/* A successful I2C read only proves bus communication. Keep a frozen-output
+ * fault latched until FDIR has reinitialised the IMU and fresh output differs
+ * from the tuple that was frozen. */
+static float s_imu_frozen_accel_x = 0.0f;
+static float s_imu_frozen_accel_y = 0.0f;
+static float s_imu_frozen_accel_z = 0.0f;
+static float s_imu_frozen_gyro_x = 0.0f;
+static float s_imu_frozen_gyro_y = 0.0f;
+static float s_imu_frozen_gyro_z = 0.0f;
+static uint8_t s_imu_frozen_latched = 0U;
+static uint8_t s_imu_reinit_observed = 0U;
 
 /* FMECA C6: cross-check debounce state. */
 static uint32_t s_baro_disagree_since_ms = 0;
@@ -73,6 +84,66 @@ void SensorValidation_Init(void)
     g_sensor_validation.last_recovery_attempt_ms = HAL_GetTick();
     memset(s_validation_last_log_ms, 0, sizeof(s_validation_last_log_ms));
     memset(s_validation_log_seen, 0, sizeof(s_validation_log_seen));
+    s_imu_stuck_count = 0U;
+    s_imu_prev_valid_for_stuck = 0U;
+    s_imu_frozen_latched = 0U;
+    s_imu_reinit_observed = 0U;
+}
+
+void SensorValidation_NotifyImuReinitialized(void)
+{
+    /* Do not clear the fault here: an IMU whose registers are still frozen can
+     * ACK a reinitialisation and return the same stale values. */
+    if (s_imu_frozen_latched)
+        s_imu_reinit_observed = 1U;
+    s_imu_stuck_count = 0U;
+    s_imu_prev_valid_for_stuck = 0U;
+}
+
+static uint8_t imuSampleMatchesFrozenTuple(const SensorData_t *dp)
+{
+    return (dp->imu_accel_x_g == s_imu_frozen_accel_x) &&
+           (dp->imu_accel_y_g == s_imu_frozen_accel_y) &&
+           (dp->imu_accel_z_g == s_imu_frozen_accel_z) &&
+           (dp->imu_gyro_x_dps == s_imu_frozen_gyro_x) &&
+           (dp->imu_gyro_y_dps == s_imu_frozen_gyro_y) &&
+           (dp->imu_gyro_z_dps == s_imu_frozen_gyro_z);
+}
+
+static void latchFrozenImuSample(const SensorData_t *dp)
+{
+    s_imu_frozen_accel_x = dp->imu_accel_x_g;
+    s_imu_frozen_accel_y = dp->imu_accel_y_g;
+    s_imu_frozen_accel_z = dp->imu_accel_z_g;
+    s_imu_frozen_gyro_x = dp->imu_gyro_x_dps;
+    s_imu_frozen_gyro_y = dp->imu_gyro_y_dps;
+    s_imu_frozen_gyro_z = dp->imu_gyro_z_dps;
+    s_imu_frozen_latched = 1U;
+    s_imu_reinit_observed = 0U;
+}
+
+/* Returns 1 while the latched freeze fault must keep the datapool invalid. */
+static uint8_t validateFrozenImuLatch(SensorData_t *dp)
+{
+    if (!s_imu_frozen_latched)
+        return 0U;
+
+    if (s_imu_reinit_observed && dp->imu_valid &&
+        !imuSampleMatchesFrozenTuple(dp))
+    {
+        s_imu_frozen_latched = 0U;
+        s_imu_reinit_observed = 0U;
+        s_imu_stuck_count = 0U;
+        s_imu_prev_valid_for_stuck = 0U;
+        g_sensor_validation.imu_valid = 1U;
+        g_sensor_validation.recovery_in_progress = 0U;
+        DebugLog_Write("[VALIDATION] IMU recovered after reinitialisation\r\n");
+        return 0U;
+    }
+
+    dp->imu_valid = 0U;
+    g_sensor_validation.imu_valid = 0U;
+    return 1U;
 }
 
 static float calculateDistance(float lat1, float lon1, float lat2, float lon2)
@@ -132,6 +203,7 @@ static uint8_t validateImuPlausibility(SensorData_t *dp, float accel_mag)
         dp->imu_valid = 0;
         g_sensor_validation.imu_valid = 0;
         g_sensor_validation.imu_plausibility_fault_count++;
+        latchFrozenImuSample(dp);
         s_imu_stuck_count = 0;
         s_imu_prev_valid_for_stuck = 0;
         return 1U;
@@ -142,6 +214,9 @@ static uint8_t validateImuPlausibility(SensorData_t *dp, float accel_mag)
 
 static void validateIMU(SensorData_t *dp)
 {
+    if (validateFrozenImuLatch(dp))
+        return;
+
     if (!dp->imu_valid) {
         s_imu_prev_valid_for_stuck = 0;
         return;

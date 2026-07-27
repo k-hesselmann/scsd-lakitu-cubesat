@@ -20,7 +20,7 @@ timestamp. Intentional blank separator lines remain blank.
 Every 10 seconds the terminal reports a line like:
 
 ```text
-[t=0000020000ms] [SYS_STAT] t=20000 win=10000 loop_max=2 dbg_q=0 dbg_high=740 dbg_drop=0/0 dbg_start_err=0 coral_q=0 coral_high=512 coral_ovf=0(+0) coral_ok=2 coral_to=0 coral_crc=0 gps_bytes=1000 gps_nav=10 gps_msg_age=250 gps_fix_age=4294967295 fix=0 sv=0
+[t=0000020000ms] [SYS_STAT] t=20000 win=10000 loop_max=2 dbg_q=0 dbg_high=740 dbg_drop=0/0 dbg_start_err=0 coral_q=0 coral_high=512 coral_ovf=0(+0) coral_ok=2 coral_to=0 coral_crc=0 gps_bytes=1000 gps_nav=10 gps_msg_age=250 gps_3d_age=4294967295 fix=0 sv=0
 ```
 
 Interpretation:
@@ -39,7 +39,7 @@ Interpretation:
 - `gps_bytes`, `gps_nav`: cumulative I2C stream bytes and valid NAV-PVT frames.
 - `gps_msg_age`: milliseconds since the last valid NAV-PVT frame. With healthy
   communication at 1 Hz this stays near 0-2000 even with no satellite fix.
-- `gps_fix_age`: milliseconds since the last fix-valid NAV-PVT frame.
+- `gps_3d_age`: milliseconds since the last NAV-PVT frame with `fix=3`.
 - `fix`, `sv`: current fix type and satellites from the datapool.
 
 An age of `4294967295` means that event has never been observed since boot.

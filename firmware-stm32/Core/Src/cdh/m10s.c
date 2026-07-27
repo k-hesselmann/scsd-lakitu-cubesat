@@ -940,7 +940,6 @@ uint8_t M10S_Read(I2C_HandleTypeDef *hi2c, M10S_NavPVT *pvt)
             int32_t  nano   = LE_I32(16);       /* fraction of second (ns) */
 #endif
             uint8_t  fixType = payload[20];
-            uint8_t  flags  = payload[21];      /* gnssFixOK, diffSoln, ... */
             uint8_t  numSV  = payload[23];
             int32_t  lon    = LE_I32(24);       /* deg 1e-7 */
             int32_t  lat    = LE_I32(28);       /* deg 1e-7 */
@@ -976,8 +975,8 @@ uint8_t M10S_Read(I2C_HandleTypeDef *hi2c, M10S_NavPVT *pvt)
             s_last_pvt.timestamp = HAL_GetTick();
             s_diagnostics.last_nav_pvt_ms = s_last_pvt.timestamp;
             s_diagnostics.nav_pvt_count++;
-            if (fixType >= M10S_FIX_2D && numSV > 0U && (flags & 0x01U) != 0U)
-                s_diagnostics.last_valid_fix_ms = s_last_pvt.timestamp;
+            if (fixType == M10S_FIX_3D)
+                s_diagnostics.last_3d_fix_ms = s_last_pvt.timestamp;
 
 #if M10S_VERBOSE_RUNTIME_LOGS
             /* Debug output (integer formatting - %f not linked for this path).
@@ -989,10 +988,10 @@ uint8_t M10S_Read(I2C_HandleTypeDef *hi2c, M10S_NavPVT *pvt)
             DebugLog_WriteN(dbg, len);
 
             len = snprintf(dbg, sizeof(dbg),
-                "[M10S]   Lat=%ld.%07ld Lon=%ld.%07ld hMSL=%ldmm hEll=%ldmm Fix=%d flags=0x%02X SV=%d\r\n",
+                "[M10S]   Lat=%ld.%07ld Lon=%ld.%07ld hMSL=%ldmm hEll=%ldmm Fix=%d SV=%d\r\n",
                 (long)(lat / 10000000), (long)labs(lat % 10000000),
                 (long)(lon / 10000000), (long)labs(lon % 10000000),
-                (long)hMSL, (long)height, fixType, flags, numSV);
+                (long)hMSL, (long)height, fixType, numSV);
             DebugLog_WriteN(dbg, len);
 
             len = snprintf(dbg, sizeof(dbg),
@@ -1015,11 +1014,10 @@ uint8_t M10S_Read(I2C_HandleTypeDef *hi2c, M10S_NavPVT *pvt)
                 if ((uint32_t)(s_last_pvt.timestamp - last_pvt_log_ms) >= 10000U)
                 {
                     len = snprintf(dbg, sizeof(dbg),
-                        "[GPS_PVT] t=%lu iTOW=%lu fix=%u flags=0x%02X sv=%u lat_e7=%ld lon_e7=%ld hmsl_mm=%ld\r\n",
+                        "[GPS_PVT] t=%lu iTOW=%lu fix=%u sv=%u lat_e7=%ld lon_e7=%ld hmsl_mm=%ld\r\n",
                         (unsigned long)s_last_pvt.timestamp,
                         (unsigned long)iTOW,
                         (unsigned int)fixType,
-                        (unsigned int)flags,
                         (unsigned int)numSV,
                         (long)lat,
                         (long)lon,

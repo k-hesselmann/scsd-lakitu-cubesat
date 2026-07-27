@@ -59,6 +59,10 @@ typedef struct {
 extern SensorValidationState g_sensor_validation;
 
 void SensorValidation_Init(void);
+/* Called immediately after FDIR has attempted the physical IMU reinitialisation.
+ * A frozen-output fault remains latched until a subsequent raw sample differs
+ * from the frozen six-axis tuple. */
+void SensorValidation_NotifyImuReinitialized(void);
 void SensorValidation_Update(SensorData_t *dp, SCV_t *scv);
 
 #endif

@@ -47,7 +47,7 @@ typedef struct {
 typedef struct {
     uint32_t last_i2c_data_ms;
     uint32_t last_nav_pvt_ms;
-    uint32_t last_valid_fix_ms;
+    uint32_t last_3d_fix_ms;
     uint32_t i2c_bytes_received;
     uint32_t nav_pvt_count;
     uint32_t bad_checksum_count;

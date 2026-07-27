@@ -67,7 +67,7 @@ void Observability_Update(uint32_t now_ms, const SensorData_t *datapool)
 
     length = snprintf(
         line, sizeof(line),
-        "[SYS_STAT] t=%lu win=%lu loop_max=%lu dbg_q=%u dbg_high=%u dbg_drop=%lu/%lu dbg_start_err=%lu coral_q=%u coral_high=%u coral_ovf=%lu(+%lu) coral_ok=%lu coral_to=%lu coral_crc=%lu gps_bytes=%lu gps_nav=%lu gps_msg_age=%lu gps_fix_age=%lu fix=%u sv=%u\r\n",
+        "[SYS_STAT] t=%lu win=%lu loop_max=%lu dbg_q=%u dbg_high=%u dbg_drop=%lu/%lu dbg_start_err=%lu coral_q=%u coral_high=%u coral_ovf=%lu(+%lu) coral_ok=%lu coral_to=%lu coral_crc=%lu gps_bytes=%lu gps_nav=%lu gps_msg_age=%lu gps_3d_age=%lu fix=%u sv=%u\r\n",
         (unsigned long)now_ms,
         (unsigned long)window_ms,
         (unsigned long)s_max_loop_gap_ms,
@@ -86,7 +86,7 @@ void Observability_Update(uint32_t now_ms, const SensorData_t *datapool)
         (unsigned long)gps.i2c_bytes_received,
         (unsigned long)gps.nav_pvt_count,
         (unsigned long)Observability_AgeMs(now_ms, gps.last_nav_pvt_ms),
-        (unsigned long)Observability_AgeMs(now_ms, gps.last_valid_fix_ms),
+        (unsigned long)Observability_AgeMs(now_ms, gps.last_3d_fix_ms),
         (unsigned int)((datapool != NULL) ? datapool->gps_fix_type : 0U),
         (unsigned int)((datapool != NULL) ? datapool->gps_num_satellites : 0U));
     if (length > 0)

@@ -51,7 +51,7 @@ def test_system_stat_exposes_loop_debug_coral_and_gps_pressure():
         "coral_high=",
         "coral_ovf=",
         "gps_msg_age=",
-        "gps_fix_age=",
+        "gps_3d_age=",
     ):
         assert field in source
 

@@ -95,6 +95,7 @@ void CDH_Update(SensorData_t *dp, SCV_t *scv)
         if (device_requests & EQUIPMENT_IMU)
         {
             CDH_FDIR_RecoverIMU(&hi2c1);
+            SensorValidation_NotifyImuReinitialized();
             FDIR_AcknowledgeReinit(EQUIPMENT_IMU);
         }
         if (device_requests & EQUIPMENT_BARO)
