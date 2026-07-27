@@ -129,6 +129,12 @@
     }
 }
 
+.map-dashboard {
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
+}
+
 .map-dashboard .leaflet-container {
   background: hsl(var(--muted));
   font-family: inherit;

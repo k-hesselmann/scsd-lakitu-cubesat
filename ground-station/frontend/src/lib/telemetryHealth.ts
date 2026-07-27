@@ -24,6 +24,10 @@ export function rawFlagIsValid(value: unknown) {
   return value === 1 || value === true
 }
 
+export function gnssFixIsValid(row: TelemetryRow | null | undefined) {
+  return rawFlagIsValid(row?.gnss_fix_valid_raw ?? row?.gps_valid_raw)
+}
+
 export function parseEquipmentMask(value: unknown) {
   if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xffff) return value
   if (typeof value === "string") {
@@ -61,6 +65,35 @@ export function formatEquipmentMask(value: unknown) {
   const names = decodeEquipmentMask(mask) ?? []
   const hex = `0x${mask.toString(16).toUpperCase().padStart(4, "0")}`
   return `${hex} (${names.length > 0 ? names.join(", ") : "none"})`
+}
+
+const CORAL_STATUS_BITS = [
+  [0x01, "TIMEOUT"],
+  [0x02, "CRC_ERROR"],
+  [0x04, "SD_ERROR"],
+  [0x80, "UART_NOT_INITIALIZED"],
+] as const
+
+export function formatCoralStatusMask(value: unknown) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 0xff) {
+    return value === null || value === undefined ? "\u2014" : `Unknown (${String(value)})`
+  }
+
+  const names: string[] = []
+  let knownMask = 0
+  for (const [bitMask, name] of CORAL_STATUS_BITS) {
+    knownMask |= bitMask
+    if ((value & bitMask) !== 0) names.push(name)
+  }
+  for (let bit = 0; bit < 8; bit += 1) {
+    const bitMask = 1 << bit
+    if ((value & bitMask) !== 0 && (knownMask & bitMask) === 0) {
+      names.push(`UNKNOWN_BIT_${bit}`)
+    }
+  }
+
+  const hex = `0x${value.toString(16).toUpperCase().padStart(2, "0")}`
+  return `${hex} (${names.length > 0 ? names.join(", ") : "OK"})`
 }
 
 export function equipmentEnabledMask(row: TelemetryRow | null) {

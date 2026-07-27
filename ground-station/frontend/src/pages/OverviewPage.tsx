@@ -1,6 +1,7 @@
 import { MetricCard } from "@/components/MetricCard"
 import { TelemetryCharts } from "@/components/TelemetryCharts"
 import { fmt, formatGnssUtc } from "@/lib/format"
+import { gnssFixIsValid } from "@/lib/telemetryHealth"
 import type { DashboardPageProps } from "@/pages/pageTypes"
 
 const GNSS_FIX_NAMES: Record<number, string> = {
@@ -17,6 +18,7 @@ export function OverviewPage({ latest, history }: DashboardPageProps) {
   const fixName = typeof fixType === "number"
     ? (GNSS_FIX_NAMES[fixType] ?? `TYPE ${fixType}`)
     : "\u2014"
+  const gnssFixValid = gnssFixIsValid(latest)
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden p-3">
@@ -35,18 +37,18 @@ export function OverviewPage({ latest, history }: DashboardPageProps) {
         <MetricCard
           title="GNSS Fix"
           value={fixName}
-          subtitle={`${fmt(latest?.gnss_satellites_used)} satellites`}
-          variant={!latest ? "default" : fixType === 2 || fixType === 3 || fixType === 4 ? "good" : "warning"}
+          subtitle={`${fmt(latest?.gnss_satellites_used)} satellites \u00B7 ${gnssFixValid ? "3D solution usable" : "no usable 3D solution"}`}
+          variant={!latest ? "default" : gnssFixValid ? "good" : "warning"}
         />
         <MetricCard
           title="GNSS UTC"
-          value={formatGnssUtc(latest?.gnss_utc_sod)}
-          subtitle="Seconds-of-day field"
+          value={gnssFixValid ? formatGnssUtc(latest?.gnss_utc_sod) : "\u2014"}
+          subtitle="Shown only for a current 3D fix"
         />
         <MetricCard
           title="GNSS Course"
-          value={fmt(latest?.course_deg, "\u00B0", 2)}
-          subtitle="Course over ground"
+          value={gnssFixValid ? fmt(latest?.course_deg, "\u00B0", 2) : "\u2014"}
+          subtitle="Current 3D-fix course over ground"
         />
         <MetricCard
           title="Coral Cloud Fraction"

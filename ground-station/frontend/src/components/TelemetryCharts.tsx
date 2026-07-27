@@ -11,9 +11,11 @@ import {
   YAxis,
 } from "recharts"
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { ExpandableChartCard } from "@/components/ExpandableChartCard"
+import { adaptiveAxisDomain } from "@/lib/chartAxis"
+import { gnssFixIsValid } from "@/lib/telemetryHealth"
 import type { TelemetryRow } from "@/types/telemetry"
-import { sampleEvenly } from "@/lib/telemetrySeries"
+import { latestValues } from "@/lib/telemetrySeries"
 
 function formatTime(value: unknown): string {
   if (typeof value !== "string") return ""
@@ -35,16 +37,9 @@ function ChartCard({
   compact?: boolean
 }) {
   return (
-    <Card className="min-h-0 overflow-hidden">
-      <CardHeader className={compact ? "px-3 py-2" : undefined}>
-        <CardTitle className={compact ? "text-sm" : "text-base"}>
-          {title}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className={compact ? "h-[calc(100%-40px)] px-2 pb-2" : "h-[280px]"}>
-        {children}
-      </CardContent>
-    </Card>
+    <ExpandableChartCard title={title} compact={compact}>
+      {children}
+    </ExpandableChartCard>
   )
 }
 
@@ -67,7 +62,7 @@ function EmptyChart({
 function commonChartProps(history: TelemetryRow[]) {
   return {
     data: history,
-    margin: { top: 5, right: 8, bottom: 5, left: 0 },
+    margin: { top: 2, right: 4, bottom: 0, left: 0 },
   }
 }
 
@@ -79,6 +74,34 @@ function pressureTick(value: number) {
   return `${(Number(value) / 1000).toFixed(0)} kPa`
 }
 
+function truncateToDecimals(
+  value: number | undefined,
+  decimals: number,
+): number | undefined
+function truncateToDecimals(
+  value: number | null | undefined,
+  decimals: number,
+): number | null | undefined
+function truncateToDecimals(
+  value: number | null | undefined,
+  decimals: number,
+) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return value
+
+  const factor = 10 ** decimals
+  return Math.trunc(value * factor) / factor
+}
+
+function decimalTooltip(unit: string, decimals: number) {
+  return (value: unknown) => {
+    const numericValue = Number(value)
+
+    return Number.isFinite(numericValue)
+      ? `${numericValue.toFixed(decimals)} ${unit}`
+      : "—"
+  }
+}
+
 export function TelemetryCharts({
   history,
   compact = false,
@@ -87,11 +110,29 @@ export function TelemetryCharts({
   compact?: boolean
 }) {
   const chartHistory = useMemo(
-    () => sampleEvenly(history, 180),
+    () => latestValues(history).map((row) => {
+      const chartRow = gnssFixIsValid(row) ? row : {
+        ...row,
+        gnss_altitude_m: undefined,
+        ground_speed_ms: undefined,
+        vertical_speed_ms: undefined,
+      }
+
+      return {
+        ...chartRow,
+        accel_x_ms2: truncateToDecimals(chartRow.accel_x_ms2, 3),
+        accel_y_ms2: truncateToDecimals(chartRow.accel_y_ms2, 3),
+        accel_z_ms2: truncateToDecimals(chartRow.accel_z_ms2, 3),
+        coral_fraction_percent: truncateToDecimals(
+          chartRow.coral_fraction_percent,
+          3,
+        ),
+      }
+    }),
     [history],
   )
   const gridClass = compact
-    ? "grid h-full min-h-0 grid-cols-1 grid-rows-6 gap-3 lg:grid-cols-2 lg:grid-rows-3 2xl:grid-cols-3 2xl:grid-rows-2"
+    ? "grid h-full min-h-0 grid-cols-1 grid-rows-6 gap-2 p-px lg:grid-cols-2 lg:grid-rows-3 2xl:grid-cols-3 2xl:grid-rows-2"
     : "grid gap-4 xl:grid-cols-2"
 
   if (history.length === 0) {
@@ -114,7 +155,12 @@ export function TelemetryCharts({
           <LineChart {...commonChartProps(chartHistory)}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="pc_receive_time_iso" tickFormatter={formatTime} />
-            <YAxis width={54} tickFormatter={unitTick("V", 1)} tick={{ fontSize: 10 }} />
+            <YAxis
+              width={62}
+              domain={adaptiveAxisDomain(0.05)}
+              tickFormatter={unitTick("V", 2)}
+              tick={{ fontSize: 10 }}
+            />
             <Tooltip labelFormatter={(label) => formatTime(label)} />
             <Legend />
             <Line
@@ -134,13 +180,13 @@ export function TelemetryCharts({
           <LineChart {...commonChartProps(chartHistory)}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="pc_receive_time_iso" tickFormatter={formatTime} />
-            <YAxis width={56} tickFormatter={unitTick("m")} tick={{ fontSize: 10 }} />
+            <YAxis domain={adaptiveAxisDomain(5)} width={56} tickFormatter={unitTick("m")} tick={{ fontSize: 10 }} />
             <Tooltip labelFormatter={(label) => formatTime(label)} />
             <Legend />
             <Line
               type="monotone"
               dataKey="gnss_altitude_m"
-              name="GNSS [m]"
+              name="GNSS MSL [m]"
               dot={false}
               isAnimationActive={false}
               stroke="#16a34a"
@@ -148,7 +194,7 @@ export function TelemetryCharts({
             <Line
               type="monotone"
               dataKey="baro_altitude_m"
-              name="Baro [m]"
+              name="Baro relative [m]"
               dot={false}
               isAnimationActive={false}
               stroke="#ea580c"
@@ -162,8 +208,8 @@ export function TelemetryCharts({
           <LineChart {...commonChartProps(chartHistory)}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="pc_receive_time_iso" tickFormatter={formatTime} />
-            <YAxis yAxisId="pressure" orientation="left" width={62} tickFormatter={pressureTick} tick={{ fontSize: 10, fill: "#7c3aed" }} axisLine={{ stroke: "#7c3aed" }} tickLine={{ stroke: "#7c3aed" }} />
-            <YAxis yAxisId="temperature" orientation="right" width={58} tickFormatter={unitTick("deg C")} tick={{ fontSize: 10, fill: "#dc2626" }} axisLine={{ stroke: "#dc2626" }} tickLine={{ stroke: "#dc2626" }} />
+            <YAxis yAxisId="pressure" orientation="left" domain={adaptiveAxisDomain(1000)} width={62} tickFormatter={pressureTick} tick={{ fontSize: 10, fill: "#7c3aed" }} axisLine={{ stroke: "#7c3aed" }} tickLine={{ stroke: "#7c3aed" }} />
+            <YAxis yAxisId="temperature" orientation="right" domain={adaptiveAxisDomain(1)} width={58} tickFormatter={unitTick("deg C")} tick={{ fontSize: 10, fill: "#dc2626" }} axisLine={{ stroke: "#dc2626" }} tickLine={{ stroke: "#dc2626" }} />
             <Tooltip labelFormatter={(label) => formatTime(label)} />
             <Legend />
             <Line
@@ -193,8 +239,11 @@ export function TelemetryCharts({
           <LineChart {...commonChartProps(chartHistory)}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="pc_receive_time_iso" tickFormatter={formatTime} />
-            <YAxis width={64} tickFormatter={unitTick("m/s^2", 1)} tick={{ fontSize: 10 }} />
-            <Tooltip labelFormatter={(label) => formatTime(label)} />
+            <YAxis domain={adaptiveAxisDomain(0.1)} width={82} tickFormatter={unitTick("m/s^2", 3)} tick={{ fontSize: 10 }} />
+            <Tooltip
+              labelFormatter={(label) => formatTime(label)}
+              formatter={decimalTooltip("m/s^2", 3)}
+            />
             <Legend />
             <Line
               type="monotone"
@@ -229,8 +278,16 @@ export function TelemetryCharts({
           <LineChart {...commonChartProps(chartHistory)}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="pc_receive_time_iso" tickFormatter={formatTime} />
-            <YAxis width={48} domain={[0, 100]} tickFormatter={unitTick("%")} tick={{ fontSize: 10 }} />
-            <Tooltip labelFormatter={(label) => formatTime(label)} />
+            <YAxis
+              width={64}
+              domain={adaptiveAxisDomain(1, 0, 100)}
+              tickFormatter={unitTick("%", 3)}
+              tick={{ fontSize: 10 }}
+            />
+            <Tooltip
+              labelFormatter={(label) => formatTime(label)}
+              formatter={decimalTooltip("%", 3)}
+            />
             <Legend />
             <Line
               type="monotone"
@@ -249,7 +306,7 @@ export function TelemetryCharts({
           <LineChart {...commonChartProps(chartHistory)}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="pc_receive_time_iso" tickFormatter={formatTime} />
-            <YAxis width={60} tickFormatter={unitTick("m/s", 1)} tick={{ fontSize: 10 }} />
+            <YAxis domain={adaptiveAxisDomain(0.5)} width={60} tickFormatter={unitTick("m/s", 1)} tick={{ fontSize: 10 }} />
             <Tooltip labelFormatter={(label) => formatTime(label)} />
             <Legend />
             <Line

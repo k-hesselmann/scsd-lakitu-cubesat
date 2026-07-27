@@ -12,8 +12,9 @@ import {
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { MetricCard } from "@/components/MetricCard"
+import { adaptiveAxisDomain } from "@/lib/chartAxis"
 import { fmt } from "@/lib/format"
-import { sampleEvenly } from "@/lib/telemetrySeries"
+import { latestValues } from "@/lib/telemetrySeries"
 import type { DashboardPageProps } from "@/pages/pageTypes"
 
 function formatTime(value: unknown) {
@@ -45,7 +46,7 @@ export function LinkAnalyticsPage({
   const totalExpected = packets + lost
   const lossPercent = totalExpected > 0 ? (lost / totalExpected) * 100 : null
   const rate = packetRatePerMinute(history)
-  const chartHistory = useMemo(() => sampleEvenly(history, 200), [history])
+  const chartHistory = useMemo(() => latestValues(history), [history])
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden p-3">
@@ -103,10 +104,30 @@ export function LinkAnalyticsPage({
               <LineChart data={chartHistory}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="pc_receive_time_iso" tickFormatter={formatTime} />
-                <YAxis />
+                <YAxis
+                  yAxisId="rssi"
+                  orientation="left"
+                  domain={adaptiveAxisDomain(2)}
+                  width={62}
+                  tickFormatter={(value) => `${Number(value).toFixed(0)} dBm`}
+                  tick={{ fill: "#9333ea" }}
+                  axisLine={{ stroke: "#9333ea" }}
+                  tickLine={{ stroke: "#9333ea" }}
+                />
+                <YAxis
+                  yAxisId="snr"
+                  orientation="right"
+                  domain={adaptiveAxisDomain(1)}
+                  width={54}
+                  tickFormatter={(value) => `${Number(value).toFixed(1)} dB`}
+                  tick={{ fill: "#0f766e" }}
+                  axisLine={{ stroke: "#0f766e" }}
+                  tickLine={{ stroke: "#0f766e" }}
+                />
                 <Tooltip labelFormatter={(label) => formatTime(label)} />
                 <Line
                   type="monotone"
+                  yAxisId="rssi"
                   dataKey="lora_downlink_rssi_dbm"
                   name="Downlink RSSI [dBm]"
                   dot={false}
@@ -115,6 +136,7 @@ export function LinkAnalyticsPage({
                 />
                 <Line
                   type="monotone"
+                  yAxisId="snr"
                   dataKey="lora_downlink_snr_db"
                   name="Downlink SNR [dB]"
                   dot={false}
@@ -135,7 +157,7 @@ export function LinkAnalyticsPage({
               <LineChart data={chartHistory}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="pc_receive_time_iso" tickFormatter={formatTime} />
-                <YAxis />
+                <YAxis domain={adaptiveAxisDomain(1, 0)} />
                 <Tooltip labelFormatter={(label) => formatTime(label)} />
                 <Line
                   type="stepAfter"

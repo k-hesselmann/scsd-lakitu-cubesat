@@ -9,6 +9,7 @@ import {
   EQUIPMENT_LORA,
   EQUIPMENT_SD,
   LORA_EVENT_CONFIG_FAIL,
+  gnssFixIsValid,
   hasEquipmentFault,
   isLoraFailureEvent,
   rawFlagIsValid,
@@ -128,12 +129,12 @@ export function buildMissionAlerts({
     })
   }
 
-  if (!rawFlagIsValid(latest.gps_valid_raw)) {
+  if (!gnssFixIsValid(latest)) {
     alerts.push({
-      id: "gps-invalid",
+      id: "gnss-no-3d-fix",
       level: "warning",
-      title: "GPS data invalid",
-      message: "The v8 GNSS validity flag is not set.",
+      title: "No usable GNSS 3D fix",
+      message: `Receiver reports fix type ${latest.gnss_fix_type ?? "unknown"} with ${latest.gnss_satellites_used ?? "unknown"} satellites; retained position fields are not current.`,
     })
   }
 
@@ -154,19 +155,31 @@ export function buildMissionAlerts({
   }
 
   if (typeof latest.battery_v === "number") {
-    if (latest.battery_v < thresholds.batteryCriticalV) {
+    if (
+      latest.battery_v < thresholds.batteryCriticalV ||
+      latest.battery_v > thresholds.batteryHighCriticalV
+    ) {
+      const direction = latest.battery_v < thresholds.batteryCriticalV
+        ? "low"
+        : "high"
       alerts.push({
-        id: "battery-critical",
+        id: `battery-critical-${direction}`,
         level: "critical",
-        title: "Battery critical",
-        message: `Battery voltage is ${latest.battery_v.toFixed(2)} V.`,
+        title: `Battery critically ${direction}`,
+        message: `Battery voltage is ${latest.battery_v.toFixed(2)} V; critical limits are ${thresholds.batteryCriticalV.toFixed(2)}–${thresholds.batteryHighCriticalV.toFixed(2)} V.`,
       })
-    } else if (latest.battery_v < thresholds.batteryWarningV) {
+    } else if (
+      latest.battery_v < thresholds.batteryWarningV ||
+      latest.battery_v > thresholds.batteryHighWarningV
+    ) {
+      const direction = latest.battery_v < thresholds.batteryWarningV
+        ? "low"
+        : "high"
       alerts.push({
-        id: "battery-low",
+        id: `battery-warning-${direction}`,
         level: "warning",
-        title: "Battery low",
-        message: `Battery voltage is ${latest.battery_v.toFixed(2)} V.`,
+        title: `Battery ${direction}`,
+        message: `Battery voltage is ${latest.battery_v.toFixed(2)} V; normal range is ${thresholds.batteryWarningV.toFixed(2)}–${thresholds.batteryHighWarningV.toFixed(2)} V.`,
       })
     }
   }
@@ -217,12 +230,15 @@ export function buildMissionAlerts({
     })
   }
 
-  if (typeof latest.lora_ack_timeout_count === "number" && latest.lora_ack_timeout_count > 0) {
+  if (
+    typeof latest.lora_ack_timeout_count === "number" &&
+    latest.lora_ack_timeout_count >= thresholds.packetLossWarningCount
+  ) {
     alerts.push({
       id: "telemetry-ack-timeouts",
       level: "warning",
       title: "Telemetry acknowledgements missed",
-      message: `Flight received no matching ground ACK within five seconds ${latest.lora_ack_timeout_count} time(s) since boot.`,
+      message: `Flight received no matching ground ACK within five seconds ${latest.lora_ack_timeout_count} time(s) since boot (warning threshold: ${thresholds.packetLossWarningCount}).`,
     })
   }
 
@@ -300,7 +316,7 @@ export function buildMissionAlerts({
       id: "packet-loss",
       level: "warning",
       title: "Packet loss detected",
-      message: `${latest.lost_packets_since_previous} packet(s) were missed before the latest packet.`,
+      message: `${latest.lost_packets_since_previous} packet(s) were missed before the latest packet (warning threshold: ${thresholds.packetLossWarningCount}).`,
     })
   }
 

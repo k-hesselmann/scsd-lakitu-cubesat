@@ -6,10 +6,17 @@ export function fmt(value: unknown, suffix = "", decimals?: number) {
   }
 
   if (typeof value === "boolean") {
-    return value ? "YES" : "NO"
+    return value ? "Yes" : "No"
   }
 
   return `${value}${suffix}`
+}
+
+export function fmtBoolean(value: unknown) {
+  if (value === null || value === undefined) return "\u2014"
+  if (value === true || value === 1) return "Yes"
+  if (value === false || value === 0) return "No"
+  return `Unknown (${String(value)})`
 }
 
 export function formatGnssUtc(secondsOfDay?: number | null) {

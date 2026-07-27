@@ -10,7 +10,9 @@ import {
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { MetricCard } from "@/components/MetricCard"
+import { adaptiveAxisDomain } from "@/lib/chartAxis"
 import { fmt } from "@/lib/format"
+import { latestValues } from "@/lib/telemetrySeries"
 import type { DashboardPageProps } from "@/pages/pageTypes"
 import type { TelemetryRow } from "@/types/telemetry"
 
@@ -76,9 +78,9 @@ export function FlightPhasePage({ latest, history }: DashboardPageProps) {
         />
 
         <MetricCard
-          title="GNSS Altitude"
+          title="GNSS Altitude MSL"
           value={fmt(latest?.gnss_altitude_m, " m", 1)}
-          subtitle="Current"
+          subtitle="Current 3D fix"
         />
 
         <MetricCard
@@ -88,7 +90,7 @@ export function FlightPhasePage({ latest, history }: DashboardPageProps) {
         />
 
         <MetricCard
-          title="Maximum Altitude"
+          title="Maximum GNSS Altitude MSL"
           value={fmt(peak?.gnss_altitude_m, " m", 1)}
           subtitle={`Seq ${fmt(peak?.sequence_number)}`}
         />
@@ -97,26 +99,26 @@ export function FlightPhasePage({ latest, history }: DashboardPageProps) {
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[2fr_1fr]">
         <Card className="min-h-0 overflow-hidden">
           <CardHeader className="px-4 py-3">
-            <CardTitle className="text-base">Altitude [m] / Vertical Speed [m/s]</CardTitle>
+            <CardTitle className="text-base">GNSS Altitude MSL [m] / Baro Relative Altitude [m]</CardTitle>
           </CardHeader>
           <CardContent className="h-[calc(100%-56px)] px-4 pb-4">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={history}>
+              <LineChart data={latestValues(history)}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="pc_receive_time_iso" tickFormatter={formatTime} />
-                <YAxis />
+                <YAxis domain={adaptiveAxisDomain(5)} />
                 <Tooltip labelFormatter={(label) => formatTime(label)} />
                 <Line
                   type="monotone"
                   dataKey="gnss_altitude_m"
-                  name="GNSS altitude [m]"
+                  name="GNSS MSL [m]"
                   dot={false}
                   stroke="#2563eb"
                 />
                 <Line
                   type="monotone"
                   dataKey="baro_altitude_m"
-                  name="Baro altitude [m]"
+                  name="Baro relative [m]"
                   dot={false}
                   stroke="#ea580c"
                 />

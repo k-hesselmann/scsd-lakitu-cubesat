@@ -64,6 +64,8 @@ export type TelemetryRow = {
   gyro_z_ddeg_s?: number | null
   baro_altitude_dm?: number | null
   baro_temperature_cdeg?: number | null
+  gnss_fix_valid_raw?: number
+  /** Legacy alias retained by the backend for existing logs and clients. */
   gps_valid_raw?: number
   imu_accel_x_g?: number
   imu_accel_y_g?: number

@@ -1,6 +1,5 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import {
-  Activity,
   AlertTriangle,
   Home,
   MapPinned,
@@ -17,6 +16,8 @@ import {
   Routes,
 } from "react-router-dom"
 
+import lakituAudio from "@/assets/lakitu-audio.m4a"
+import lakituLogo from "@/assets/lakitu-logo.png"
 import { MissionStrip } from "@/components/MissionStrip"
 import { SettingsDialog } from "@/components/SettingsDialog"
 import { useTelemetryWebSocket } from "@/hooks/useTelemetryWebSocket"
@@ -44,15 +45,29 @@ function iconButtonClass() {
 export default function App() {
   const dashboardData = useTelemetryWebSocket(500)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const lakituAudioRef = useRef<HTMLAudioElement>(null)
 
   return (
     <BrowserRouter>
       <main className="h-screen w-screen overflow-hidden bg-background">
         <div className="grid h-full w-full grid-cols-[72px_minmax(0,1fr)]">
           <aside className="flex h-full flex-col items-center border-r bg-card py-4">
-            <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-              <Activity className="h-6 w-6" />
-            </div>
+            <button
+              type="button"
+              className="mb-6 flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-xl border bg-background transition hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              aria-label="Play the Lakitu audio"
+              title="Play the Lakitu audio"
+              onClick={() => {
+                const audio = lakituAudioRef.current
+                if (!audio) return
+
+                audio.currentTime = 0
+                void audio.play().catch(() => {})
+              }}
+            >
+              <img src={lakituLogo} alt="Lakitu" className="h-11 w-11 object-contain" />
+            </button>
+            <audio ref={lakituAudioRef} src={lakituAudio} preload="none" />
 
             <nav className="flex flex-1 flex-col items-center gap-2">
               <NavLink to="/overview" className={navClass} title="Overview">

@@ -8,7 +8,7 @@ import { useCurrentTime } from "@/hooks/useCurrentTime"
 import { useGroundEventLogger } from "@/hooks/useGroundEventLogger"
 import { buildMissionAlerts } from "@/lib/alerts"
 import { fmt, packetAgeSeconds } from "@/lib/format"
-import { rawFlagIsValid } from "@/lib/telemetryHealth"
+import { gnssFixIsValid } from "@/lib/telemetryHealth"
 import type { BackendStatus, TelemetryRow } from "@/types/telemetry"
 
 type SpokenAlert = { level: "warning" | "critical"; title: string }
@@ -110,7 +110,7 @@ export function MissionStrip({
   const linkText = !connected ? "DISCONNECTED" : latest && age !== null && age < thresholds.staleTelemetryWarningS ? "LIVE" : "STALE"
   const linkVariant = linkText === "LIVE" ? "default" : linkText === "STALE" ? "secondary" : "destructive"
   const criticalClass = criticalAlerts.length > 0 ? "border-red-500 bg-red-50 animate-pulse" : "bg-card"
-  const gpsValid = rawFlagIsValid(latest?.gps_valid_raw)
+  const gnssFixValid = gnssFixIsValid(latest)
 
   return (
     <div className={`flex h-auto min-h-14 shrink-0 items-center gap-3 border-b px-3 py-2 ${criticalClass}`}>
@@ -124,7 +124,7 @@ export function MissionStrip({
         <div><div className="text-muted-foreground">Seq</div><div className="font-semibold">{fmt(latest?.sequence_number)}</div></div>
         <div><div className="text-muted-foreground">Phase</div><div className="font-semibold">{fmt(latest?.flight_state_name)}</div></div>
         <div><div className="text-muted-foreground">Battery</div><div className="font-semibold">{fmt(latest?.battery_v, " V", 2)}</div></div>
-        <div><div className="text-muted-foreground">GPS</div><div className="font-semibold"><Satellite className="mr-1 inline h-3 w-3" />{latest ? (gpsValid ? "VALID" : "INVALID") : "—"}</div></div>
+        <div><div className="text-muted-foreground">GNSS</div><div className="font-semibold"><Satellite className="mr-1 inline h-3 w-3" />{latest ? (gnssFixValid ? "3D FIX" : "NO 3D FIX") : "—"}</div></div>
         <div><div className="text-muted-foreground">Sensor sample age</div><div className="font-semibold">{fmt(latest?.sample_age_ms, " ms")}</div></div>
         <div><div className="text-muted-foreground">Ground RX RSSI</div><div className="font-semibold">{fmt(latest?.lora_downlink_rssi_dbm, " dBm")}</div></div>
         <div><div className="text-muted-foreground">Ground RX SNR</div><div className="font-semibold">{fmt(latest?.lora_downlink_snr_db, " dB", 1)}</div></div>
@@ -145,6 +145,7 @@ export function MissionStrip({
         </Button>
         {criticalAlerts.length > 0 ? <Zap className="h-5 w-5 text-red-600" /> : null}
       </div>
+
     </div>
   )
 }

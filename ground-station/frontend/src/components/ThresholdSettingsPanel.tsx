@@ -16,8 +16,10 @@ export function ThresholdSettingsPanel() {
   const rows: [keyof AlertThresholds, string, string][] = [
     ["staleTelemetryWarningS", "Stale telemetry warning", "s"],
     ["staleTelemetryCriticalS", "Stale telemetry critical", "s"],
-    ["batteryWarningV", "Battery warning", "V"],
-    ["batteryCriticalV", "Battery critical", "V"],
+    ["batteryCriticalV", "Battery low critical", "V"],
+    ["batteryWarningV", "Battery low warning", "V"],
+    ["batteryHighWarningV", "Battery high warning", "V"],
+    ["batteryHighCriticalV", "Battery high critical", "V"],
     ["rssiWarningDbm", "RSSI warning", "dBm"],
     ["rssiCriticalDbm", "RSSI critical", "dBm"],
     ["snrWarningDb", "SNR warning", "dB"],

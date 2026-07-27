@@ -30,7 +30,7 @@ export function TelemetryPacketModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-5xl overflow-hidden">
+      <DialogContent className="max-h-[90vh] w-[96vw] max-w-[1400px] overflow-hidden sm:max-w-[1400px]">
         <DialogHeader>
           <DialogTitle>
             Telemetry Packet — Seq {row.sequence_number ?? "—"}

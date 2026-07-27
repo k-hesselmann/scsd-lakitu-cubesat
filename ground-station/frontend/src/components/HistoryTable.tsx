@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 
 import { Button } from "@/components/ui/button"
+import { TelemetryColumnHeader } from "@/components/TelemetryColumnHeader"
 import {
   Table,
   TableBody,
@@ -85,7 +86,7 @@ export function HistoryTable({
                   key={column.key}
                   className="whitespace-nowrap border-r px-2 py-2"
                 >
-                  {column.label}
+                  <TelemetryColumnHeader column={column} />
                 </TableHead>
               ))}
             </TableRow>

@@ -1,5 +1,13 @@
 import type { TelemetryRow, TimelineEvent } from "@/types/telemetry"
 
+export const CHART_POINT_LIMIT = 180
+
+export function latestValues<T>(values: T[], limit = CHART_POINT_LIMIT) {
+  if (limit < 1) return []
+
+  return values.slice(-limit)
+}
+
 export function telemetryRowId(row: TelemetryRow) {
   return `${row.pc_receive_time_unix ?? "unknown"}-${row.sequence_number ?? "radio-error"}`
 }
