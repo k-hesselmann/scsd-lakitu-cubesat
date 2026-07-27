@@ -74,7 +74,7 @@ validity bits, operational FDIR masks, compact Coral results, and CRC-16/CCITT.
 The ground station accepts only this 92-byte v8 frame and converts its wire
 values back to engineering units.
 
-TTC normally transmits every 20 seconds, but queues an immediate packet after a
+TTC normally transmits every 10 seconds, but queues an immediate packet after a
 flight-state transition or valid ground command. It accepts reliable
 `CMD,<id>,REQ_TELEMETRY` commands and `ACK,<sequence>` telemetry
 acknowledgements. Flight retries an unacknowledged packet up to three times

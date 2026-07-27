@@ -124,6 +124,26 @@ def test_ttc_tracks_rx_availability_after_tx_done() -> None:
     assert "LORA_EVENT_ACK_RX_UNAVAILABLE" in ttc
 
 
+def test_default_development_image_emits_timestamped_lora_trace() -> None:
+    ttc = read("ttc.c")
+    platformio = (FIRMWARE / "platformio.ini").read_text(encoding="utf-8")
+
+    assert "default_envs = nucleo_l476rg_lora_trace" in platformio
+    assert "[env:nucleo_l476rg_lora_trace]" in platformio
+    assert "-DTTC_LORA_TRACE_LOGS=1" in platformio
+    for marker in (
+        "[LORA_TRACE]",
+        "[LORA_INIT]",
+        "[LORA_TX]",
+        "[LORA_FAULT]",
+        "[LORA_STAT]",
+    ):
+        assert marker in ttc
+    assert "#if TTC_CDC_DEBUG_LOGS || TTC_UART_DEBUG_LOGS || TTC_LORA_TRACE_LOGS" in ttc
+    assert "DebugLog_WriteN" in ttc
+    assert "TTC_LogLoRaStats(now);" in ttc
+
+
 def test_flight_radio_profile_is_869525_sf8_17_dbm() -> None:
     source = read("lora_driver.c")
     for declaration in (
@@ -166,13 +186,43 @@ def test_coral_silent_link_ages_out_last_good_frame() -> None:
     fdir_header = (CORE_INC / "fdir" / "fdir.h").read_text(encoding="utf-8")
 
     assert "FRAME_STALE_TIMEOUT_MS" in coral
-    assert "#define FRAME_STALE_TIMEOUT_MS CORAL_DEFAULT_INTERVAL_MS" in coral
+    assert "#define CORAL_WORK_BUDGET_MS" in coral
+    assert "#define CORAL_FRESHNESS_MARGIN_MS" in coral
+    assert "(CORAL_DEFAULT_INTERVAL_MS + CORAL_WORK_BUDGET_MS +" in coral
     assert "#define FDIR_CORAL_TIMEOUT_MS         5000U" in fdir_header
     assert "s_last_good_frame_ms = now" in coral
     assert "s_seen_good_frame = 1U" in coral
     assert "dp->coral_valid = 0U;" in coral
     assert "dp->coral_block[7] = CORAL_STATUS_TIMEOUT" in coral
     assert "[CORAL] !!! Frame freshness timeout" in coral
+
+    sof_handler = coral[
+        coral.index("case CORAL_RX_SOF1:") : coral.index("case CORAL_RX_HEADER:")
+    ]
+    assert "coral_valid = 0U" not in sof_handler
+
+
+def test_sd_metadata_work_stays_in_bounded_directories() -> None:
+    coral = (CORE_SRC / "cdh" / "coral.c").read_text(encoding="utf-8")
+    sd_logger = (CORE_SRC / "sd_logger.c").read_text(encoding="utf-8")
+    main = (CORE_SRC / "main.c").read_text(encoding="utf-8")
+
+    assert "#define CORAL_FILES_PER_DIRECTORY 32U" in coral
+    assert "#define SD_LOG_FILES_PER_DIRECTORY 32U" in sd_logger
+    assert 'CORAL_ROOT_DIRECTORY "CORAL"' in coral
+    assert 'SD_LOG_ROOT_DIRECTORY "LOGS"' in sd_logger
+    assert "f_rename(" not in sd_logger
+    assert "result = mount_and_open(0U);" in sd_logger
+    header_handler = coral[
+        coral.index("static void coral_header_complete(void)") :
+        coral.index("static void coral_pixel_chunk_complete(void)")
+    ]
+    assert "f_open(&" not in header_handler
+    assert "f_mkdir(" not in header_handler
+    assert main.index("SD_Logger_Init(&g_scv)") < main.index("Coral_Init(g_scv.boot_count)")
+
+    ttc_header = (TTC_INC / "ttc.h").read_text(encoding="utf-8")
+    assert "#define TTC_TELEMETRY_INTERVAL_MS  10000U" in ttc_header
 
 if __name__ == "__main__":
     test_driver_has_no_blocking_delay_or_tx_done_wait_loop()
@@ -183,4 +233,5 @@ if __name__ == "__main__":
     test_flight_radio_profile_is_869525_sf8_17_dbm()
     test_sd_recovery_policy_is_owned_by_fdir()
     test_coral_silent_link_ages_out_last_good_frame()
+    test_sd_metadata_work_stays_in_bounded_directories()
     print("TTC source-contract checks passed")

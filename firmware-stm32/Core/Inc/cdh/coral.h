@@ -53,10 +53,22 @@
 #define CORAL_STATUS_SD_ERR      0x04U   /* FatFS write error                  */
 #define CORAL_STATUS_NO_UART     0x80U   /* Coral_Init() not yet called        */
 
+typedef struct
+{
+    uint16_t rx_queued_bytes;
+    uint16_t rx_high_water;
+    uint32_t rx_overflow_count;
+    uint32_t good_frame_count;
+    uint32_t timeout_count;
+    uint32_t crc_error_count;
+    uint32_t sd_error_count;
+} CoralDiagnostics_t;
+
 /* ---- Public API --------------------------------------------------------- */
 
-/* Call once after MX_USART3_UART_Init() -- before the superloop. */
-void Coral_Init(void);
+/* Call once after MX_USART3_UART_Init() and SD initialization -- before the
+ * superloop. boot_count keeps frame files in a bounded per-boot directory. */
+void Coral_Init(uint32_t boot_count);
 
 /* Call once every superloop iteration (main.c calls this unconditionally,
  * not gated to the 100 ms CDH/FSW slot). Always non-blocking / bounded: each
@@ -88,5 +100,7 @@ void Coral_SendSleep(void);
 
 /* Resume the Coral's inference (WAKE); triggers one immediate capture. */
 void Coral_SendWake(void);
+
+void Coral_GetDiagnostics(CoralDiagnostics_t *diagnostics);
 
 #endif /* CDH_CORAL_H */

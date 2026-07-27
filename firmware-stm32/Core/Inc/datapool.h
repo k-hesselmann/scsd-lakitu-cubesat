@@ -56,7 +56,7 @@ typedef struct __attribute__((packed)) {
     uint32_t gps_utc_time;       /* HHMMSS format from GPRMC */
     uint8_t  gps_num_satellites;
     uint8_t  gps_fix_type;
-    uint8_t  gps_valid;
+    uint8_t  gps_valid;          /* Fresh/accepted NAV-PVT; no-fix stays 1, fix_type gates use */
 
     /* IMU (MPU-6050) */
     float    imu_accel_x_g;
@@ -205,7 +205,7 @@ typedef struct __attribute__((packed)) {
 #define TELEMETRY_PROTOCOL_VERSION          0x08U
 #define TELEMETRY_PACKET_V8_SIZE            92U
 
-#define TELEMETRY_VALID_GPS                 (1U << 0)
+#define TELEMETRY_VALID_GPS                 (1U << 0) /* Current usable 3D fix */
 #define TELEMETRY_VALID_IMU                 (1U << 1)
 #define TELEMETRY_VALID_BARO                (1U << 2)
 #define TELEMETRY_VALID_BATTERY             (1U << 3)

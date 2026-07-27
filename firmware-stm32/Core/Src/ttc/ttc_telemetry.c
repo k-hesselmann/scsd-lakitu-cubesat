@@ -4,6 +4,8 @@
  * wire-format concern, split out of ttc.c to keep that file to link/state
  * management. */
 
+#include "cdh/m10s.h"
+
 #include "ttc/ttc.h"
 #include "fdir/crc16.h"
 #include "main.h"
@@ -13,7 +15,7 @@
 #include <string.h>
 
 static uint16_t s_telemetry_sequence = 0U;
-static uint8_t s_gps_seen_valid = 0U;
+static uint8_t s_gnss_solution_seen_valid = 0U;
 static uint8_t s_imu_seen_valid = 0U;
 static uint8_t s_baro_seen_valid = 0U;
 static uint8_t s_batt_seen_valid = 0U;
@@ -139,6 +141,8 @@ void TTC_BuildTelemetryPacket(const SensorData_t *dp, const SCV_t *scv,
     const UplinkState_t *uplink;
     const LoRaHealth_t *lora;
     uint32_t now_ms;
+    uint8_t gps_transport_fresh;
+    uint8_t gps_fix_usable;
 
     if (dp == NULL || scv == NULL || pkt == NULL)
         return;
@@ -165,7 +169,11 @@ void TTC_BuildTelemetryPacket(const SensorData_t *dp, const SCV_t *scv,
     pkt->watchdog_reset_count = scv->watchdog_reset_count;
     pkt->sd_fault_count = scv->sd_fault_count;
 
-    if (dp->gps_valid)
+    gps_transport_fresh = dp->gps_valid ? 1U : 0U;
+    gps_fix_usable = (gps_transport_fresh &&
+                      dp->gps_fix_type == M10S_FIX_3D) ? 1U : 0U;
+
+    if (gps_fix_usable)
     {
         pkt->validity_flags |= TELEMETRY_VALID_GPS;
         pkt->latitude_e7 = TTC_ScaleI32(dp->gps_lat_deg, 10000000.0f);
@@ -187,9 +195,9 @@ void TTC_BuildTelemetryPacket(const SensorData_t *dp, const SCV_t *scv,
         s_last_measurements.gnss_utc_sod = pkt->gnss_utc_sod;
         s_last_measurements.gnss_satellites = pkt->gnss_satellites;
         s_last_measurements.gnss_fix_type = pkt->gnss_fix_type;
-        s_gps_seen_valid = 1U;
+        s_gnss_solution_seen_valid = 1U;
     }
-    else if (s_gps_seen_valid)
+    else if (s_gnss_solution_seen_valid)
     {
         pkt->latitude_e7 = s_last_measurements.latitude_e7;
         pkt->longitude_e7 = s_last_measurements.longitude_e7;
@@ -200,6 +208,15 @@ void TTC_BuildTelemetryPacket(const SensorData_t *dp, const SCV_t *scv,
         pkt->gnss_utc_sod = s_last_measurements.gnss_utc_sod;
         pkt->gnss_satellites = s_last_measurements.gnss_satellites;
         pkt->gnss_fix_type = s_last_measurements.gnss_fix_type;
+    }
+
+    /* A fresh NAV-PVT message can report NO FIX. Preserve its fix type and
+     * satellite count for diagnosis without presenting retained position data
+     * as a currently usable GNSS solution. */
+    if (gps_transport_fresh && !gps_fix_usable)
+    {
+        pkt->gnss_satellites = dp->gps_num_satellites;
+        pkt->gnss_fix_type = dp->gps_fix_type;
     }
 
     if (dp->imu_valid)

@@ -217,8 +217,14 @@ last valid encoded measurement.
 | 81-89 | LoRa health, TX/ACK counters, command ID and packed CMD/ACK statuses |
 | 90-91 | CRC-16/CCITT-FALSE |
 
-Validity bits: bit 0 GNSS, bit 1 IMU, bit 2 barometer, bit 3 battery,
-bit 4 Coral. `lora_rx_state` uses bits 0-2 for `LoRaRxHealthStatus_t` and
+Validity bits: bit 0 current usable GNSS 3D fix, bit 1 IMU, bit 2 barometer,
+bit 3 battery, bit 4 Coral. The CDH datapool's `gps_valid` field means a fresh
+NAV-PVT transport message was received; it is not itself proof of a usable
+navigation solution. With fresh transport but no 3D fix, bit 0 is clear while
+the current fix type and satellite count are still sent for diagnosis. Other
+GNSS fields remain invalid or retain the last valid encoded solution and must
+not be displayed as current while bit 0 is clear. `lora_rx_state` uses bits
+0-2 for `LoRaRxHealthStatus_t` and
 bit 3 for RX-continuous active. `uplink_state` uses bits 0-2 for the last CMD
 status and bits 3-5 for the last telemetry-ACK status.
 

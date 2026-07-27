@@ -1,7 +1,6 @@
 #include "cdh/cdh_debug.h"
+#include "debug_log.h"
 #include <stdio.h>
-
-extern UART_HandleTypeDef huart2;
 
 void CDH_Debug_PrintGPS(GPS_EquipmentHandler *gps)
 {
@@ -30,7 +29,7 @@ void CDH_Debug_PrintGPS(GPS_EquipmentHandler *gps)
 
     if (len > 0)
     {
-      HAL_UART_Transmit(&huart2, debug_buffer, len, 100);
+      DebugLog_WriteN(debug_buffer, len);
     }
 
     /* Signal Status Check */
@@ -40,19 +39,19 @@ void CDH_Debug_PrintGPS(GPS_EquipmentHandler *gps)
     {
       int status_len = snprintf((char*)status_buffer, sizeof(status_buffer),
         "   ✗ GPS: NOT COMMUNICATING (check wiring/baudrate)\r\n");
-      HAL_UART_Transmit(&huart2, status_buffer, status_len, 100);
+      DebugLog_WriteN(status_buffer, status_len);
     }
     else if (gps->data.num_satellites == 0)
     {
       int status_len = snprintf((char*)status_buffer, sizeof(status_buffer),
         "   ✓ GPS: COMMUNICATING but NO SIGNAL (move outdoors)\r\n");
-      HAL_UART_Transmit(&huart2, status_buffer, status_len, 100);
+      DebugLog_WriteN(status_buffer, status_len);
     }
     else if (gps->gps_valid)
     {
       int status_len = snprintf((char*)status_buffer, sizeof(status_buffer),
         "   ✓✓ GPS: FIX ACQUIRED! (%d satellites)\r\n", gps->data.num_satellites);
-      HAL_UART_Transmit(&huart2, status_buffer, status_len, 100);
+      DebugLog_WriteN(status_buffer, status_len);
     }
   }
 }
@@ -80,7 +79,7 @@ void CDH_Debug_PrintBaro(MS5607_EquipmentHandler *baro)
 
     if (len > 0)
     {
-      HAL_UART_Transmit(&huart2, debug_buffer, len, 100);
+      DebugLog_WriteN(debug_buffer, len);
     }
   }
 }
@@ -117,7 +116,7 @@ void CDH_Debug_PrintDatapool(SensorData_t *dp)
 
     if (len > 0)
     {
-      HAL_UART_Transmit(&huart2, debug_buffer, len, 100);
+      DebugLog_WriteN(debug_buffer, len);
     }
 
     /* IMU Debug Output */
@@ -140,7 +139,7 @@ void CDH_Debug_PrintDatapool(SensorData_t *dp)
 
     if (len > 0)
     {
-      HAL_UART_Transmit(&huart2, debug_buffer, len, 100);
+      DebugLog_WriteN(debug_buffer, len);
     }
   }
 }

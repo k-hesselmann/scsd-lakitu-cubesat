@@ -38,7 +38,8 @@
  * ========================================================================== */
 
 #include "cdh/coral.h"
-#include "main.h"        /* huart3, huart2, Error_Handler */
+#include "debug_log.h"
+#include "main.h"        /* huart3, Error_Handler */
 #include "fatfs.h"       /* f_open, f_write, f_close, f_unlink, FIL, FR_OK */
 #include <stdio.h>       /* snprintf */
 #include <string.h>      /* strlen */
@@ -49,15 +50,12 @@
  * 1.8 V rail (3.3 V/1.8 V level shift) -- see interface_docs/UART_PROTOCOL.md 1.1.
  * Pins configured by MX_USART3_UART_Init() / HAL_UART_MspInit().  */
 extern UART_HandleTypeDef huart3;   /* Coral UART (USART3)                   */
-extern UART_HandleTypeDef huart2;   /* debug console (USART2, ST-LINK)       */
-
 #define CORAL_HUART  huart3
 
 /* ---- Debug helpers ------------------------------------------------------- */
 static void dbg(const char *msg)
 {
-    HAL_UART_Transmit(&huart2, (const uint8_t *)msg,
-                      (uint16_t)strlen(msg), 100U);
+    DebugLog_Write(msg);
 }
 
 static void dbg_hex(const char *label, uint8_t val)
@@ -106,6 +104,7 @@ static volatile uint16_t s_rx_tail = 0U;
  * s_rx_state == CORAL_RX_IDLE alone doesn't rule out a byte already sitting
  * unread in the ring (see coral_try_preopen()/Coral_IsQuiescent()). */
 static volatile uint32_t s_rx_last_byte_ms = 0U;
+static volatile uint16_t s_rx_high_water = 0U;
 
 /* Live-expression debug counters (add to STM32CubeIDE Live Expressions) */
 volatile uint32_t coral_sof_count     = 0;  /* incremented on each confirmed SOF   */
@@ -153,6 +152,7 @@ static void coral_rx_ring_reset(void)
     __disable_irq();
     s_rx_head = 0U;
     s_rx_tail = 0U;
+    s_rx_high_water = 0U;
     __enable_irq();
 }
 
@@ -169,6 +169,13 @@ static void coral_rx_ring_push(uint8_t byte)
     s_rx_ring[s_rx_head] = byte;
     s_rx_head = next;
     s_rx_last_byte_ms = HAL_GetTick();
+
+    {
+        uint16_t queued =
+            (uint16_t)((s_rx_head - s_rx_tail) & CORAL_RX_RING_MASK);
+        if (queued > s_rx_high_water)
+            s_rx_high_water = queued;
+    }
 }
 
 static uint8_t coral_rx_ring_pop(uint8_t *byte)
@@ -276,17 +283,39 @@ static uint16_t s_crc_pos;
 static uint8_t  s_status;   /* accumulated CORAL_STATUS_* flags for this frame */
 static uint8_t  s_sd_ok;
 static FIL      s_fframe;
-static char     s_fname[32];        /* this frame's final desired name       */
-static char     s_open_name[32];    /* name actually bound to s_fframe right now */
-static uint8_t  s_using_staged_name; /* s_open_name is CORAL_STAGING_NAME, needs rename on success */
+#define CORAL_PATH_SIZE 80U
+#define CORAL_FILES_PER_DIRECTORY 32U
+#define CORAL_ROOT_DIRECTORY "CORAL"
+static char     s_boot_directory[CORAL_PATH_SIZE];
+static char     s_file_directory[CORAL_PATH_SIZE];
+static char     s_staging_name[CORAL_PATH_SIZE];
+static char     s_fname[CORAL_PATH_SIZE]; /* this frame's final desired name */
+static char     s_open_name[CORAL_PATH_SIZE]; /* name bound to s_fframe */
+static uint8_t  s_using_staged_name;
 static uint8_t  s_seen_good_frame;
 static uint8_t  s_frame_stale_reported;
 static uint32_t s_last_good_frame_ms;
 
 /* Pre-opened SD file, readied ahead of the next frame -- see coral_try_preopen(). */
-static const char CORAL_STAGING_NAME[] = "CORAL.STG";
 static uint8_t   s_preopen_ok;
 static uint32_t  s_last_preopen_attempt_ms;
+
+static FRESULT coral_ensure_directory(const char *path)
+{
+    FRESULT result = f_mkdir(path);
+    return (result == FR_EXIST) ? FR_OK : result;
+}
+
+static FRESULT coral_select_file_directory(void)
+{
+    uint32_t batch = (uint32_t)s_frame_count / CORAL_FILES_PER_DIRECTORY;
+    int length = snprintf(s_file_directory, sizeof(s_file_directory),
+                          "%s/D%04lu", s_boot_directory,
+                          (unsigned long)batch);
+    if (length < 0 || (size_t)length >= sizeof(s_file_directory))
+        return FR_INVALID_NAME;
+    return coral_ensure_directory(s_file_directory);
+}
 
 /* Abort the in-progress frame: close/delete any partial SD file, publish
  * the given status, log why, and return the state machine to IDLE so the
@@ -316,25 +345,25 @@ static void coral_rx_abort(uint8_t status, const char *reason)
     s_rx_state = CORAL_RX_IDLE;
 }
 
-/* Opens a fresh SD file under a fixed staging name ahead of the next frame
- * and leaves it open. On this project's bench SD card, f_open() with
- * FA_CREATE_ALWAYS has been observed taking 2+ seconds (directory-slot and
- * first-cluster allocation) -- called synchronously from
- * coral_header_complete() as before, that stalls the main loop for longer
- * than the 16 KB RX ring takes to overflow (~1.4 s), on every single frame.
- * Doing it here instead, while CORAL_RX_IDLE (no frame in flight, so a
- * multi-second stall costs nothing), means coral_header_complete() usually
- * finds the file already open and pays no f_open() cost on the time-critical
- * path at all. Left open (not closed) so there is nothing left to redo when
- * it's claimed. Reused under the same name every time, so a slow/failed
- * attempt is retried (rate-limited, see s_last_preopen_attempt_ms) rather
- * than accumulating stale files. */
+/* Opens a fresh staging file ahead of the next frame and leaves it open.
+ * Files are grouped into directories of at most 32 entries so allocation and
+ * the final metadata rename do not degrade as the card accumulates frames. */
 static void coral_try_preopen(void)
 {
+    int length;
+
     if (s_preopen_ok)
         return;
 
-    if (f_open(&s_fframe, CORAL_STAGING_NAME, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
+    if (coral_select_file_directory() != FR_OK)
+        return;
+
+    length = snprintf(s_staging_name, sizeof(s_staging_name),
+                      "%s/CORAL.STG", s_file_directory);
+    if (length < 0 || (size_t)length >= sizeof(s_staging_name))
+        return;
+
+    if (f_open(&s_fframe, s_staging_name, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
     {
         (void)f_sync(&s_fframe);   /* durable even if power is lost before it's claimed */
         s_preopen_ok = 1U;
@@ -387,36 +416,51 @@ static void coral_header_complete(void)
         dbg(buf);
     }
 
-    /* Cloud percentage folded into the filename (UART_PROTOCOL.md section 6's
-     * OBC-side naming convention) so it's visible without cross-referencing
-     * the SD-logger CSV by SEQ. */
-    snprintf(s_fname, sizeof(s_fname), "F%08lu_cloud%u.RAW",
-             (unsigned long)s_seq, (unsigned)s_frac_pct);
-
     s_sd_ok = 0U;
     s_using_staged_name = 0U;
-    strncpy(s_open_name, s_fname, sizeof(s_open_name) - 1U);
-    s_open_name[sizeof(s_open_name) - 1U] = '\0';
 
     if (s_preopen_ok)
     {
+        int length;
+
+        /* Cloud percentage is visible in the final name without consulting
+         * the CSV. The directory was selected during the idle-time pre-open. */
+        length = snprintf(s_fname, sizeof(s_fname),
+                          "%s/F%08lu_cloud%u.RAW",
+                          s_file_directory,
+                          (unsigned long)s_seq,
+                          (unsigned)s_frac_pct);
+
         /* File is already open under the staging name -- reuse it instead of
          * paying for another f_open() here, on the time-critical path. */
         s_preopen_ok = 0U;
-        s_using_staged_name = 1U;
-        strncpy(s_open_name, CORAL_STAGING_NAME, sizeof(s_open_name) - 1U);
+        strncpy(s_open_name, s_staging_name, sizeof(s_open_name) - 1U);
         s_open_name[sizeof(s_open_name) - 1U] = '\0';
-        s_sd_ok = 1U;
-        dbg("[CORAL] SD file ready (pre-opened)\r\n");
-    }
-    else if (f_open(&s_fframe, s_fname, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
-    {
-        s_sd_ok = 1U;
-        dbg("[CORAL] SD file opened OK\r\n");
+
+        if (length >= 0 && (size_t)length < sizeof(s_fname))
+        {
+            s_using_staged_name = 1U;
+            s_sd_ok = 1U;
+            dbg("[CORAL] SD file ready (pre-opened)\r\n");
+        }
+        else
+        {
+            (void)f_close(&s_fframe);
+            (void)f_unlink(s_open_name);
+            strncpy(s_fname, "UNSAVED", sizeof(s_fname));
+            s_status |= CORAL_STATUS_SD_ERR;
+            coral_sd_err_count++;
+        }
     }
     else
     {
-        dbg("[CORAL] !!! SD f_open FAILED -- draining UART without saving\r\n");
+        /* Never allocate/open after SOF: a slow FatFs call here can overflow
+         * the RX ring. Idle-time pre-open will retry for the next frame. */
+        strncpy(s_fname, "UNSAVED", sizeof(s_fname));
+        s_fname[sizeof(s_fname) - 1U] = '\0';
+        s_status |= CORAL_STATUS_SD_ERR;
+        coral_sd_err_count++;
+        dbg("[CORAL] !!! SD staging unavailable -- draining UART without saving\r\n");
     }
 
     s_pixels_remaining = (uint32_t)width * height;  /* 50 176 */
@@ -491,13 +535,10 @@ static void coral_frame_complete(void)
     }
     else
     {
-        char buf[56];
+        char buf[120];
 
-        /* Staged file was written under CORAL_STAGING_NAME; give it its real
-         * name now that the frame is confirmed good. The file is already
-         * closed at this point (coral_pixel_chunk_complete() closes it once
-         * the pixel stream finishes), so the rename is a quick metadata-only
-         * operation, not another slow allocation like the original open. */
+        /* The file is already closed. Both names live in the same small
+         * batch directory, keeping the final metadata rename bounded. */
         if (s_using_staged_name)
         {
             if (f_rename(s_open_name, s_fname) != FR_OK)
@@ -573,17 +614,38 @@ static void coral_frame_complete(void)
  * Public API
  * ========================================================================== */
 
-void Coral_Init(void)
+void Coral_Init(uint32_t boot_count)
 {
     /* huart3 must already be initialised by MX_USART3_UART_Init() in main.c. */
-    s_uart_ready  = 1U;
+    int directory_length;
+
+    s_uart_ready  = 0U;
     s_frame_count = 0U;
     s_seen_good_frame = 0U;
     s_frame_stale_reported = 0U;
     s_last_good_frame_ms = HAL_GetTick();
+    s_preopen_ok = 0U;
+    s_last_preopen_attempt_ms = HAL_GetTick();
     coral_rx_ring_reset();
 
     dbg("\r\n[CORAL] ===== Init start =====\r\n");
+
+    directory_length = snprintf(s_boot_directory,
+                                sizeof(s_boot_directory),
+                                "%s/B%08lu",
+                                CORAL_ROOT_DIRECTORY,
+                                (unsigned long)boot_count);
+    if (directory_length >= 0 &&
+        (size_t)directory_length < sizeof(s_boot_directory) &&
+        coral_ensure_directory(CORAL_ROOT_DIRECTORY) == FR_OK &&
+        coral_ensure_directory(s_boot_directory) == FR_OK)
+    {
+        /* Do potentially slow initial allocation before UART reception starts,
+         * so it cannot fill or overflow the RX ring. */
+        coral_try_preopen();
+    }
+
+    s_uart_ready = 1U;
     coral_rx_start_it();
 
     /* Brief pause so the Coral has time to boot before we send a command.    */
@@ -594,6 +656,8 @@ void Coral_Init(void)
 
 void Coral_Update(SensorData_t *dp)
 {
+    uint32_t now = HAL_GetTick();
+
     if (!s_uart_ready)
     {
         dp->coral_block[7] = CORAL_STATUS_NO_UART;
@@ -607,16 +671,21 @@ void Coral_Update(SensorData_t *dp)
      * where doing blocking UART debug I/O would be unsafe; surface/log the
      * condition here instead, in normal main-loop context. */
     static uint32_t s_last_reported_overflow = 0U;
-    if (coral_rx_overflow_count != s_last_reported_overflow)
+    static uint32_t s_last_overflow_report_ms = 0U;
+    if (coral_rx_overflow_count != s_last_reported_overflow &&
+        (s_last_reported_overflow == 0U ||
+         (uint32_t)(now - s_last_overflow_report_ms) >= 10000U))
     {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "[CORAL] !!! RX ring overflow (total=%lu)\r\n",
-                 (unsigned long)coral_rx_overflow_count);
+        char buf[96];
+        snprintf(buf, sizeof(buf),
+                 "[CORAL] RX ring overflow total=%lu delta=%lu\r\n",
+                 (unsigned long)coral_rx_overflow_count,
+                 (unsigned long)(coral_rx_overflow_count -
+                                 s_last_reported_overflow));
         dbg(buf);
         s_last_reported_overflow = coral_rx_overflow_count;
+        s_last_overflow_report_ms = now;
     }
-
-    uint32_t now = HAL_GetTick();
 
     if (dp->coral_valid &&
         s_seen_good_frame &&
@@ -681,7 +750,8 @@ void Coral_Update(SensorData_t *dp)
                 dbg("[CORAL] SOF 0xAA55 confirmed -- receiving frame...\r\n");
 
                 s_rx_dp    = dp;
-                dp->coral_valid = 0U;   /* set to 1 only on a clean frame */
+                /* Keep the last clean result valid while its successor is in
+                 * flight. Freshness timeout below is the sole invalidation. */
                 s_hdr_pos  = 0U;
                 s_rx_crc   = 0xFFFFU;
                 s_status   = 0U;
@@ -870,4 +940,25 @@ void Coral_SendWake(void)
 {
     coral_send_simple_cmd(CORAL_CMD_WAKE);
     dbg("[CORAL] WAKE sent\r\n");
+}
+
+void Coral_GetDiagnostics(CoralDiagnostics_t *diagnostics)
+{
+    uint32_t primask;
+
+    if (diagnostics == NULL)
+        return;
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+    diagnostics->rx_queued_bytes =
+        (uint16_t)((s_rx_head - s_rx_tail) & CORAL_RX_RING_MASK);
+    diagnostics->rx_high_water = s_rx_high_water;
+    diagnostics->rx_overflow_count = coral_rx_overflow_count;
+    diagnostics->good_frame_count = coral_good_frames;
+    diagnostics->timeout_count = coral_timeout_count;
+    diagnostics->crc_error_count = coral_crc_err_count;
+    diagnostics->sd_error_count = coral_sd_err_count;
+    if (primask == 0U)
+        __enable_irq();
 }

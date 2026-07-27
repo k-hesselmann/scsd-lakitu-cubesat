@@ -7,7 +7,7 @@ from the same bench session.
 
 Produces the evidence numbers for:
   - PR-002 / FR-017: SD sample-rate completeness (>=1 Hz, >=99% capture)
-  - FR-022: telemetry packet rate (~1 per 20 s)
+  - Telemetry packet rate (~1 per 10 s)
   - CRC-fail rate on the downlink
   - A cross-check of overlapping timestamps between the two logs, to catch
     silent data corruption that neither side's own CRC would show (a value
@@ -16,7 +16,7 @@ Produces the evidence numbers for:
 
 Usage:
     python3 bench_log_check.py --ground telemetry_20260714_143447.csv \\
-        --sd LOG_000001_START_..._END_..._DUR_....CSV [LOG_...CSV ...]
+        --sd LOGS/B00000001/D0000/LOG_000001_START_....CSV [LOG_...CSV ...]
 
 No third-party dependencies (stdlib csv only), so it runs on a bare bench
 laptop without setting up the ground-station's Python environment.
@@ -117,10 +117,10 @@ def check_ground_stats(ground_rows):
     first_t = float(ground_rows[0]["pc_receive_time_unix"])
     last_t = float(ground_rows[-1]["pc_receive_time_unix"])
     span_s = last_t - first_t
-    expected_packets = int(span_s / 20.0) + 1 if span_s > 0 else n
+    expected_packets = int(span_s / 10.0) + 1 if span_s > 0 else n
 
     print(f"Ground: {n} packets received over {span_s:.0f} s "
-          f"(~{expected_packets} expected at FR-022's 1/20s rate)")
+          f"(~{expected_packets} expected at the configured 1/10s rate)")
     print(f"Ground: CRC failures = {crc_fail}/{n} "
           f"({'PASS' if crc_fail == 0 else 'CHECK'} -- any CRC failure on the "
           f"downlink is worth investigating, not just counting)")

@@ -2,6 +2,7 @@
 #include "ttc/lora_driver.h"
 #include "fdir/fdir.h"
 
+#include "debug_log.h"
 #include "main.h"
 #include "usbd_cdc_if.h"
 
@@ -79,10 +80,6 @@ static uint16_t s_command_high_water;
 static uint16_t s_command_seen_mask;
 static uint8_t s_has_command_high_water;
 static TTC_State_t s_state;
-
-#if TTC_UART_DEBUG_LOGS || TTC_LORA_TRACE_LOGS
-extern UART_HandleTypeDef huart2;
-#endif
 
 #if TTC_DEBUG_FIXED_PAYLOAD
 static const uint8_t s_fixed_payload[] = {
@@ -292,18 +289,26 @@ static void TTC_LogLoRaFaults(void)
 static void TTC_LogLoRaStats(uint32_t now)
 {
     LoRaRuntimeStats_t stats;
-    char line[224];
+    LoRaDebugStatus_t debug = {0};
+    char line[320];
     int len;
 
     if ((uint32_t)(now - s_last_lora_stats_ms) < TTC_LORA_STATS_INTERVAL_MS)
         return;
 
     LoRa_GetRuntimeStats(&stats);
+    LoRa_GetDebugStatus(&debug);
     len = snprintf(
         line, sizeof(line),
-        "[LORA_STAT] t=%lu window_ms=%lu spi=%lu complete=%lu irqerr=%lu timeout=%lu abort=%lu txpoll=%lu rxpoll=%lu dropped=%lu\r\n",
+        "[LORA_STAT] t=%lu window_ms=%lu state=%u busy=%u rx=%u ready=%u last=%u irq=0x%02X spi=%lu complete=%lu irqerr=%lu timeout=%lu abort=%lu txpoll=%lu rxpoll=%lu dropped=%lu\r\n",
         (unsigned long)now,
         (unsigned long)(now - s_last_lora_stats_ms),
+        (unsigned int)LoRa_GetState(),
+        (unsigned int)LoRa_IsBusy(),
+        (unsigned int)LoRa_IsRxActive(),
+        (unsigned int)s_radio_ready,
+        (unsigned int)LoRa_GetLastStatus(),
+        (unsigned int)debug.irq_flags,
         (unsigned long)(stats.spi_transfer_count - s_previous_lora_stats.spi_transfer_count),
         (unsigned long)(stats.spi_completion_count - s_previous_lora_stats.spi_completion_count),
         (unsigned long)(stats.spi_irq_error_count - s_previous_lora_stats.spi_irq_error_count),
@@ -329,13 +334,12 @@ static void TTC_LogLoRaDiagnostics(uint32_t now)
     }
 #endif
     TTC_LogLoRaFaults();
-    /* Periodic logging is intentionally deferred until normal RX is active,
-     * so the bench trace cannot delay the TX-to-RX turnaround. */
-    if (!LoRa_IsBusy() && LoRa_IsRxActive())
-        TTC_LogLoRaStats(now);
+    /* Cached getters only: this remains non-blocking and intentionally runs
+     * even during init/fault states so a missing RX path is observable. */
+    TTC_LogLoRaStats(now);
 }
 
-#if TTC_CDC_DEBUG_LOGS || TTC_UART_DEBUG_LOGS
+#if TTC_CDC_DEBUG_LOGS || TTC_UART_DEBUG_LOGS || TTC_LORA_TRACE_LOGS
 static void TTC_LogInitStatus(void)
 {
     char line[160];
@@ -344,7 +348,7 @@ static void TTC_LogInitStatus(void)
 
     LoRa_GetDebugStatus(&lora);
     len = snprintf(line, sizeof(line),
-                   "LORA_INIT status=%u ready=%u version=0x%02X op=0x%02X irq=0x%02X fail_reg=0x%02X fail_op=%u hal=%lu spierr=%lu\r\n",
+                   "[LORA_INIT] status=%u ready=%u version=0x%02X op=0x%02X irq=0x%02X fail_reg=0x%02X fail_op=%u hal=%lu spierr=%lu\r\n",
                    (unsigned int)s_debug.last_init_status,
                    (unsigned int)s_debug.radio_ready,
                    (unsigned int)lora.version,
@@ -366,7 +370,7 @@ static void TTC_LogTxStatus(void)
 
     LoRa_GetDebugStatus(&lora);
     len = snprintf(line, sizeof(line),
-                   "TTC_TX seq=%u len=%u crc=0x%04X status=%u ready=%u version=0x%02X irq=0x%02X op=0x%02X tx_ok=%lu tx_timeout=%lu tx_error=%lu fail_reg=0x%02X fail_op=%u hal=%lu spierr=%lu\r\n",
+                   "[LORA_TX] seq=%u len=%u crc=0x%04X status=%u ready=%u version=0x%02X irq=0x%02X op=0x%02X tx_ok=%lu tx_timeout=%lu tx_error=%lu fail_reg=0x%02X fail_op=%u hal=%lu spierr=%lu\r\n",
                    (unsigned int)s_debug.last_sequence_number,
                    (unsigned int)s_debug.last_payload_length,
                    (unsigned int)s_debug.last_crc16,

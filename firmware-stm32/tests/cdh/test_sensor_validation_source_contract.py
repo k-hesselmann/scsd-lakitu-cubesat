@@ -42,6 +42,7 @@ def test_frozen_imu_detection_requires_bit_identical_six_axis_output():
 
 def test_baro_gnss_crosscheck_restores_absolute_baro_altitude():
     assert 'scv->baro_ground_alt_cm == SCV_INVALID_I32' in VALIDATION_SOURCE
+    assert 'dp->gps_fix_type != M10S_FIX_3D' in VALIDATION_SOURCE
     assert (
         'dp->baro_alt_m + ((float)scv->baro_ground_alt_cm / 100.0f)'
         in VALIDATION_SOURCE

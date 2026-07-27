@@ -26,10 +26,12 @@
 #include "cdh/coral.h"
 #include "cdh/baro_diag.h"
 #include "datapool.h"
+#include "debug_log.h"
 #include "fdir/fdir.h"
 #include "fdir/fdir_test_hooks.h"
 #include "fdir/scv.h"
 #include "fsw/fsm.h"
+#include "observability.h"
 #include "sd_logger.h"
 #include "ttc/ttc.h"
 /* USER CODE END Includes */
@@ -144,6 +146,8 @@ int main(void)
   MX_USART3_UART_Init();
   (void)HAL_IWDG_Refresh(&hiwdg);
   MX_USART2_UART_Init();
+  DebugLog_Init(&huart2);
+  Observability_Init();
   (void)HAL_IWDG_Refresh(&hiwdg);
   MX_UART5_Init();
   (void)HAL_IWDG_Refresh(&hiwdg);
@@ -188,6 +192,14 @@ int main(void)
     SD_Logger_Init(&g_scv);
     (void)HAL_IWDG_Refresh(&hiwdg);
   }
+  if (FDIR_SubsystemEnabled(FDIR_SUBSYS_CDH))
+  {
+    /* Start Coral RX only after SD initialization. Otherwise a multi-second
+     * mount/open can fill its UART ring before the superloop begins. */
+    (void)HAL_IWDG_Refresh(&hiwdg);
+    Coral_Init(g_scv.boot_count);
+    (void)HAL_IWDG_Refresh(&hiwdg);
+  }
 
   /* Bench-only fault-injection console (docs/FMECA.md Section 5); compiles
    * to nothing unless FDIR_TEST_HOOKS is defined (testhooks build env). */
@@ -211,6 +223,9 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     uint32_t now_ms = HAL_GetTick();
+
+    DebugLog_Service();
+    Observability_Update(now_ms, &g_datapool);
 
     BoardButton_Update(now_ms);
 

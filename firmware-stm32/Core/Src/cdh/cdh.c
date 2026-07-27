@@ -67,8 +67,6 @@ void CDH_Init(void)
         g_scv.baro_ground_alt_cm = (int32_t)(s_ground_baro_alt_m * 100.0f);
     }
 
-    Coral_Init();   /* USART3 already init by MX_USART3_UART_Init() in main.c */
-
     DatapoolNVM_Init();   /* internal-flash backup of the SD housekeeping log */
 }
 
