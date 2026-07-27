@@ -14,6 +14,9 @@ VALIDATION_SOURCE = (
 VALIDATION_HEADER = (
     FIRMWARE_ROOT / 'Core' / 'Inc' / 'cdh' / 'sensor_validation.h'
 ).read_text(encoding='utf-8')
+CDH_SOURCE = (
+    FIRMWARE_ROOT / 'Core' / 'Src' / 'cdh' / 'cdh.c'
+).read_text(encoding='utf-8')
 
 
 def test_stationary_or_zero_g_state_is_not_an_imu_health_fault():
@@ -38,6 +41,21 @@ def test_frozen_imu_detection_requires_bit_identical_six_axis_output():
 
     for field in compared_fields:
         assert f'dp->{field} ==' in VALIDATION_SOURCE
+
+
+def test_frozen_imu_stays_invalid_until_reinit_produces_changed_output():
+    assert 's_imu_frozen_latched' in VALIDATION_SOURCE
+    assert 'latchFrozenImuSample(dp);' in VALIDATION_SOURCE
+    assert 'if (validateFrozenImuLatch(dp))' in VALIDATION_SOURCE
+    assert 's_imu_reinit_observed && dp->imu_valid' in VALIDATION_SOURCE
+    assert '!imuSampleMatchesFrozenTuple(dp)' in VALIDATION_SOURCE
+    assert 'dp->imu_valid = 0U;' in VALIDATION_SOURCE
+    assert 'SensorValidation_NotifyImuReinitialized(void)' in VALIDATION_SOURCE
+    assert 'SensorValidation_NotifyImuReinitialized();' in CDH_SOURCE
+    assert (
+        CDH_SOURCE.index('SensorValidation_NotifyImuReinitialized();')
+        < CDH_SOURCE.index('FDIR_AcknowledgeReinit(EQUIPMENT_IMU);')
+    )
 
 
 def test_baro_gnss_crosscheck_restores_absolute_baro_altitude():

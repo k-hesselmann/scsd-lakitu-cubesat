@@ -37,3 +37,15 @@ def test_parser_accepts_one_complete_nav_pvt_frame() -> None:
     source = (ROOT / "Core/Src/cdh/m10s.c").read_text(encoding="utf-8")
 
     assert "i + 100U <= s_rx_index" in source
+
+
+def test_gnss_diagnostics_follow_the_project_3d_fix_rule() -> None:
+    source = (ROOT / "Core/Src/cdh/m10s.c").read_text(encoding="utf-8")
+    header = (ROOT / "Core/Inc/cdh/m10s.h").read_text(encoding="utf-8")
+    observability = (ROOT / "Core/Src/observability.c").read_text(encoding="utf-8")
+
+    assert "last_3d_fix_ms" in header
+    assert "if (fixType == M10S_FIX_3D)" in source
+    assert "gnssFixOK" not in source
+    assert "flags & 0x01U" not in source
+    assert "gps_3d_age=" in observability
