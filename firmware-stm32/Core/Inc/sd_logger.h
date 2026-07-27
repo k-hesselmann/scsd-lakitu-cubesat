@@ -7,6 +7,12 @@
 
 #define SD_LOG_ROTATE_SECONDS       60U
 #define SD_LOG_FLUSH_PERIOD_MS    5000U
+/* Rotation (close/rename/open) is deferred to Coral_IsQuiescent() so it
+ * doesn't stall the loop through an in-flight Coral transfer -- but if Coral
+ * is disconnected/faulted and never goes idle, that deferral must not become
+ * indefinite. Bounded fallback: rotate anyway once a pending rotation has
+ * waited this long, regardless of Coral's state. */
+#define SD_LOG_ROTATE_MAX_DEFER_MS 300000U   /* 5 min */
 
 typedef enum
 {

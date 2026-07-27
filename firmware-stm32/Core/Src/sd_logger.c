@@ -1,5 +1,6 @@
 #include "sd_logger.h"
 
+#include "cdh/coral.h"
 #include "fatfs.h"
 #include "fdir/fdir.h"
 #include "user_diskio.h"
@@ -27,6 +28,12 @@ static uint32_t s_last_success_ms;
 static char s_open_name[SD_LOG_NAME_SIZE];
 static char s_log_buffer[SD_LOG_BUFFER_SIZE];
 static size_t s_log_buffer_used;
+
+/* Rotation is due (SD_LOG_ROTATE_SECONDS elapsed) but deferred until either
+ * Coral_IsQuiescent() or the SD_LOG_ROTATE_MAX_DEFER_MS bounded fallback --
+ * see SD_Logger_Update(). */
+static uint8_t  s_rotation_pending;
+static uint32_t s_rotation_due_ms;
 
 static const char s_csv_header[] =
     "session,record_timestamp_ms,"
@@ -140,6 +147,7 @@ static FRESULT open_new_file(void)
     s_last_flush_ms = HAL_GetTick();
     s_log_buffer_used = 0U;
     sd_logger_rows_in_file = 0U;
+    s_rotation_pending = 0U;   /* this file is fresh; any prior pending rotation is moot */
 
     do
     {
@@ -248,8 +256,26 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
     if (sd_logger_state != SD_LOGGER_ACTIVE)
         return;
 
-    if ((now_ms / 1000U) - s_file_start_s >= SD_LOG_ROTATE_SECONDS)
+    /* Rotation (close/rename/open) is a multi-second run of slow FatFs calls
+     * on this hardware -- doing it unconditionally here can stall the loop
+     * long enough to overflow Coral's RX ring mid-transfer (same class of
+     * bug as the per-frame f_open() this module's Coral side already works
+     * around). Defer to Coral_IsQuiescent(), with a bounded fallback so a
+     * disconnected/faulted Coral -- which never goes idle in the way this
+     * checks for -- can't defer rotation forever. */
+    if (!s_rotation_pending &&
+        (now_ms / 1000U) - s_file_start_s >= SD_LOG_ROTATE_SECONDS)
     {
+        s_rotation_pending = 1U;
+        s_rotation_due_ms  = now_ms;
+    }
+
+    if (s_rotation_pending &&
+        (Coral_IsQuiescent() ||
+         (uint32_t)(now_ms - s_rotation_due_ms) >= SD_LOG_ROTATE_MAX_DEFER_MS))
+    {
+        s_rotation_pending = 0U;
+
         result = close_and_name_file();
         if (result != FR_OK)
         {

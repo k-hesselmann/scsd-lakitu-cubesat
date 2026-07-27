@@ -101,6 +101,11 @@ static uint8_t s_rx_irq_byte;
 static volatile uint8_t s_rx_ring[CORAL_RX_RING_SIZE];
 static volatile uint16_t s_rx_head = 0U;
 static volatile uint16_t s_rx_tail = 0U;
+/* Tick of the last byte pushed by the UART ISR, regardless of parse state --
+ * used to tell whether the wire has actually been silent for a while, since
+ * s_rx_state == CORAL_RX_IDLE alone doesn't rule out a byte already sitting
+ * unread in the ring (see coral_try_preopen()/Coral_IsQuiescent()). */
+static volatile uint32_t s_rx_last_byte_ms = 0U;
 
 /* Live-expression debug counters (add to STM32CubeIDE Live Expressions) */
 volatile uint32_t coral_sof_count     = 0;  /* incremented on each confirmed SOF   */
@@ -121,9 +126,27 @@ static uint8_t s_chunk[512];
 #define HDR_TIMEOUT_MS    500U   /* 16-byte header                             */
 #define CHUNK_TIMEOUT_MS  200U   /* 512-byte chunk (44 ms + 4.5x margin)       */
 #define CRC_TIMEOUT_MS    100U   /* 2-byte CRC trailer                         */
+/* Minimum RX silence, on top of s_rx_state == CORAL_RX_IDLE, before treating
+ * the link as quiet enough for a slow SD operation (this module's own
+ * pre-open, or another module's deferred maintenance -- see
+ * Coral_IsQuiescent()). IDLE alone isn't enough: a byte can already be
+ * sitting unread in the ring the instant IDLE is checked, since Coral starts
+ * a new frame on its own schedule, asynchronously to this loop. */
+#define CORAL_QUIET_MS    100U
 /* Clear coral_valid at the expected frame cadence; FDIR adds its 5 s invalid
- * debounce before setting the Coral equipment fault. */
-#define FRAME_STALE_TIMEOUT_MS CORAL_DEFAULT_INTERVAL_MS
+ * debounce before setting the Coral equipment fault.
+ *
+ * CORAL_DEFAULT_INTERVAL_MS alone is NOT the result-to-result period: per
+ * cloud_regressor.cc's main loop, that interval is slept AFTER capture +
+ * inference + UART transfer + local backup finish, not on a fixed clock.
+ * That work (dominated by the ~4.4 s blocking UART transfer of the 50 KB
+ * frame) measures ~6.5-7.5 s, so completed frames are actually
+ * ~16.5-17.5 s apart. A bare CORAL_DEFAULT_INTERVAL_MS timeout was firing a
+ * false "Frame freshness timeout" almost every cycle. */
+#define CORAL_WORK_BUDGET_MS       8000UL  /* capture+inference+transfer+backup, with margin */
+#define CORAL_FRESHNESS_MARGIN_MS  2000UL  /* extra slack against jitter                     */
+#define FRAME_STALE_TIMEOUT_MS \
+    (CORAL_DEFAULT_INTERVAL_MS + CORAL_WORK_BUDGET_MS + CORAL_FRESHNESS_MARGIN_MS)
 
 static void coral_rx_ring_reset(void)
 {
@@ -145,6 +168,7 @@ static void coral_rx_ring_push(uint8_t byte)
 
     s_rx_ring[s_rx_head] = byte;
     s_rx_head = next;
+    s_rx_last_byte_ms = HAL_GetTick();
 }
 
 static uint8_t coral_rx_ring_pop(uint8_t *byte)
@@ -616,8 +640,12 @@ void Coral_Update(SensorData_t *dp)
 
         /* Get the next frame's file ready while nothing is time-critical.
          * Rate-limited to at most once/second so a persistently unavailable
-         * SD card can't turn this into its own per-tick stall. */
-        if (!s_preopen_ok && (uint32_t)(now - s_last_preopen_attempt_ms) >= 1000U)
+         * SD card can't turn this into its own per-tick stall, and gated on
+         * CORAL_QUIET_MS of RX silence so it can't start right in front of a
+         * SOF that's already arrived but not yet popped this call. */
+        if (!s_preopen_ok &&
+            (uint32_t)(now - s_last_preopen_attempt_ms) >= 1000U &&
+            (uint32_t)(now - s_rx_last_byte_ms) >= CORAL_QUIET_MS)
         {
             s_last_preopen_attempt_ms = now;
             coral_try_preopen();
@@ -751,6 +779,21 @@ void Coral_Update(SensorData_t *dp)
         s_rx_state = CORAL_RX_IDLE;
         break;
     }
+}
+
+/* True when no frame is in flight and the wire has been silent for at least
+ * CORAL_QUIET_MS -- the same condition this module uses to gate its own
+ * pre-open. Exposed so another owner of slow SD operations (currently
+ * sd_logger.c's periodic CSV rotation) can defer its own work to the same
+ * safe window instead of colliding with an in-flight Coral transfer. This is
+ * a best-effort signal, not a lock: a SOF can still land immediately after
+ * a caller checks it, same as it always could for coral_try_preopen(). */
+uint8_t Coral_IsQuiescent(void)
+{
+    uint32_t now = HAL_GetTick();
+
+    return (s_rx_state == CORAL_RX_IDLE &&
+            (uint32_t)(now - s_rx_last_byte_ms) >= CORAL_QUIET_MS) ? 1U : 0U;
 }
 
 void Coral_SendTrigger(void)

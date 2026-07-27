@@ -69,6 +69,13 @@ void Coral_Init(void);
  * ring doesn't overflow (see coral_rx_overflow_count). */
 void Coral_Update(SensorData_t *dp);
 
+/* 1 if no frame is currently in flight and the wire has been silent for a
+ * short margin -- a safe window for another module to do its own slow SD
+ * work (e.g. sd_logger.c deferring its CSV rotation) without colliding with
+ * an in-flight Coral transfer. Best-effort, not a lock/reservation -- see
+ * the implementation for why. */
+uint8_t Coral_IsQuiescent(void);
+
 /* Send an immediate-inference trigger command to the Coral. */
 void Coral_SendTrigger(void);
 
