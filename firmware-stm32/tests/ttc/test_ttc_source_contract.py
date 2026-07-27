@@ -181,6 +181,17 @@ def test_sd_recovery_policy_is_owned_by_fdir() -> None:
     assert "FDIR_SD_REINIT_PERIOD_MS" in fdir
 
 
+def test_sd_recovery_waits_for_a_coral_quiet_window() -> None:
+    sd_logger = (CORE_SRC / "sd_logger.c").read_text(encoding="utf-8")
+    recovery = sd_logger[
+        sd_logger.index("if ((FDIR_GetReinitRequests() & EQUIPMENT_SD) != 0U)"):
+        sd_logger.index("if (sd_logger_state != SD_LOGGER_ACTIVE)")
+    ]
+
+    assert "if (!Coral_IsQuiescent())" in recovery
+    assert recovery.index("if (!Coral_IsQuiescent())") < recovery.index("sd_drop_filesystem_state();")
+
+
 def test_coral_silent_link_ages_out_last_good_frame() -> None:
     coral = (CORE_SRC / "cdh" / "coral.c").read_text(encoding="utf-8")
     fdir_header = (CORE_INC / "fdir" / "fdir.h").read_text(encoding="utf-8")
@@ -232,6 +243,7 @@ if __name__ == "__main__":
     test_ttc_tracks_rx_availability_after_tx_done()
     test_flight_radio_profile_is_869525_sf8_17_dbm()
     test_sd_recovery_policy_is_owned_by_fdir()
+    test_sd_recovery_waits_for_a_coral_quiet_window()
     test_coral_silent_link_ages_out_last_good_frame()
     test_sd_metadata_work_stays_in_bounded_directories()
     print("TTC source-contract checks passed")

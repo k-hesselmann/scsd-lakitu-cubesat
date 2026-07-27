@@ -504,6 +504,13 @@ void SD_Logger_Update(const SensorData_t *dp, SCV_t *scv)
         char recovery_line[320];
         int recovery_length;
 
+        /* SD recovery can mount the card, create directories and allocate a
+         * new file. Those operations may block long enough to overrun the
+         * Coral UART ring, so leave FDIR's request pending until the same
+         * quiet window used for CSV rotation is available. */
+        if (!Coral_IsQuiescent())
+            return;
+
         s_recovery_attempts++;
         recovery_length = snprintf(
             recovery_line, sizeof(recovery_line),
