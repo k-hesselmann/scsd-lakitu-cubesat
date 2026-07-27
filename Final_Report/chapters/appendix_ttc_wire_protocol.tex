@@ -25,7 +25,7 @@ byte-group summary.
 12 & 2 & \ttcfield{boot_count_sat} & Boot count, saturated at 65,535 \\
 14 & 1 & \ttcfield{flight_phase} & Six-state flight-phase enum \\
 15 & 1 & \ttcfield{reset_reason} & Unknown, power-on, watchdog or software reset \\
-16 & 1 & \ttcfield{validity_flags} & Bits 0--4: GNSS, IMU, baro, battery, Coral \\
+16 & 1 & \ttcfield{validity_flags} & Bits 0--4: current GNSS 3D fix, IMU, baro, battery, Coral \\
 17 & 1 & \ttcfield{i2c_bus_state} & 0 idle, 1 restart, 2 hold \\
 18 & 2 & \ttcfield{equipment_enabled} & Policy mask for enabled equipment \\
 20 & 2 & \ttcfield{equipment_faults} & Debounced FDIR fault mask \\
