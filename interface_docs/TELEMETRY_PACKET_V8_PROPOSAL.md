@@ -132,12 +132,17 @@ The proposed C definition should use only fixed-width integer members and
 
 | Bit | Meaning |
 |---:|---|
-| 0 | GNSS solution valid |
+| 0 | current GNSS 3D solution valid (fresh NAV-PVT transport and fix type 3) |
 | 1 | IMU sample valid |
 | 2 | barometer sample valid |
 | 3 | battery ADC sample valid |
 | 4 | Coral result valid |
 | 5..7 | reserved; transmit as zero |
+
+The flight datapool's `gps_valid` member represents fresh receiver transport,
+not solution validity. A fresh no-fix message therefore clears bit 0 but still
+reports the current fix type and satellite count. Retained navigation fields
+are historical whenever bit 0 is clear.
 
 `lora_rx_state`:
 

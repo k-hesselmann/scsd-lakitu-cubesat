@@ -198,6 +198,7 @@ class TelemetryStore:
             # Uplink quality reported by OBC
 
             # V8 validity, engineering, and spacecraft-health values
+            "gnss_fix_valid_raw",
             "gps_valid_raw",
             "imu_accel_x_g",
             "imu_accel_y_g",
@@ -477,6 +478,7 @@ class TelemetryStore:
             "coral_payload_hex": telemetry_packet.coral_payload_raw.hex(" "),
 
             # V8 raw wire and spacecraft-health values.
+            "gnss_fix_valid_raw": telemetry_packet.gnss_fix_valid_raw,
             "gps_valid_raw": telemetry_packet.gps_valid_raw,
             "imu_accel_x_g": telemetry_packet.imu_accel_x_g,
             "imu_accel_y_g": telemetry_packet.imu_accel_y_g,

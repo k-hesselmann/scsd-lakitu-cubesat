@@ -31,7 +31,9 @@ EQUIPMENT_BITS = (
     (EQUIPMENT_CDH, "CDH"),
 )
 
-VALID_GPS = 1 << 0
+VALID_GNSS_3D_FIX = 1 << 0
+# Legacy exported name; bit 0 means a current usable 3D solution.
+VALID_GPS = VALID_GNSS_3D_FIX
 VALID_IMU = 1 << 1
 VALID_BARO = 1 << 2
 VALID_BATTERY = 1 << 3
@@ -115,6 +117,8 @@ class TelemetryPacket:
     protocol_version_ok: bool = False
     length_ok: bool = False
 
+    gnss_fix_valid_raw: int = 0
+    # Backwards-compatible alias for existing CSV/API consumers.
     gps_valid_raw: int = 0
     imu_accel_x_g: Optional[float] = None
     imu_accel_y_g: Optional[float] = None
@@ -219,12 +223,14 @@ def format_equipment_mask(mask: int) -> str:
     return ", ".join(names) if names else "NONE"
 
 
-def decode_status_flags(gps_valid: int, imu_valid: int, baro_valid: int,
+def decode_status_flags(gnss_fix_valid: int, imu_valid: int, baro_valid: int,
                         batt_valid: int, coral_valid: int, faults: int,
-                        gnss_time_valid: bool = False) -> dict:
+                        gnss_time_present: bool = False) -> dict:
     return {
-        "GNSS_FIX_VALID": bool(gps_valid),
-        "GNSS_TIME_VALID": bool(gnss_time_valid),
+        "GNSS_FIX_VALID": bool(gnss_fix_valid),
+        # V8 has no independent GNSS-time validity bit. A retained UTC value
+        # must not be advertised as current when the solution bit is clear.
+        "GNSS_TIME_VALID": bool(gnss_fix_valid and gnss_time_present),
         "IMU_VALID": bool(imu_valid),
         "BARO_VALID": bool(baro_valid),
         "BARO_RANGE_VALID": bool(baro_valid),
@@ -268,7 +274,7 @@ def _decode_v8(raw: bytes) -> TelemetryPacket:
         last_command_id, uplink_state, received_crc16,
     ) = values
 
-    gps_valid = int(bool(validity_flags & VALID_GPS))
+    gnss_fix_valid = int(bool(validity_flags & VALID_GNSS_3D_FIX))
     imu_valid = int(bool(validity_flags & VALID_IMU))
     baro_valid = int(bool(validity_flags & VALID_BARO))
     batt_valid = int(bool(validity_flags & VALID_BATTERY))
@@ -309,7 +315,7 @@ def _decode_v8(raw: bytes) -> TelemetryPacket:
     ack_status = (uplink_state >> UPLINK_ACK_STATUS_SHIFT) & UPLINK_STATUS_MASK
     calculated_crc16 = crc16_ccitt(raw[:-2])
     status_flags = decode_status_flags(
-        gps_valid, imu_valid, baro_valid, batt_valid, coral_valid,
+        gnss_fix_valid, imu_valid, baro_valid, batt_valid, coral_valid,
         equipment_faults, gnss_utc_sod is not None,
     )
     coral_raw = struct.pack("<HHBH", coral_sequence_raw, coral_fraction_raw,
@@ -363,7 +369,8 @@ def _decode_v8(raw: bytes) -> TelemetryPacket:
         packet_type_ok=packet_type == TELEMETRY_PACKET_TYPE,
         protocol_version_ok=protocol_version == TELEMETRY_PROTOCOL_VERSION,
         length_ok=True,
-        gps_valid_raw=gps_valid,
+        gnss_fix_valid_raw=gnss_fix_valid,
+        gps_valid_raw=gnss_fix_valid,
         imu_accel_x_g=accel_x_g,
         imu_accel_y_g=accel_y_g,
         imu_accel_z_g=accel_z_g,

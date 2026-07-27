@@ -38,7 +38,7 @@ def build_v8_packet(**overrides):
         "course_cdeg": 27050,
         "gnss_utc_sod": 45296,
         "satellites": 11,
-        "fix_type": 2,
+        "fix_type": 3,
         "accel_x_mg": 100,
         "accel_y_mg": -200,
         "accel_z_mg": 980,
@@ -129,7 +129,9 @@ class TelemetryV8DecoderTests(unittest.TestCase):
         self.assertAlmostEqual(packet.vertical_speed_ms, 6.78)
         self.assertAlmostEqual(packet.course_deg, 270.5)
         self.assertEqual(packet.gnss_satellites_used, 11)
-        self.assertEqual(packet.gnss_fix_type, 2)
+        self.assertEqual(packet.gnss_fix_type, 3)
+        self.assertEqual(packet.gnss_fix_valid_raw, 1)
+        self.assertEqual(packet.gps_valid_raw, 1)
         self.assertAlmostEqual(packet.imu_accel_mag_g, math.sqrt(1.0104), places=6)
         self.assertAlmostEqual(packet.baro_temperature_c, -12.5)
         self.assertAlmostEqual(packet.battery_v, 3.712)
@@ -178,6 +180,39 @@ class TelemetryV8DecoderTests(unittest.TestCase):
         self.assertIsNone(packet.battery_v)
         self.assertIsNone(packet.coral_result_age_s)
         self.assertFalse(packet.status_flags["GNSS_FIX_VALID"])
+
+    def test_no_fix_keeps_diagnostics_without_claiming_position_validity(self):
+        packet = decode_telemetry_packet(
+            build_v8_packet(
+                validity_flags=0x1E,
+                latitude_e7=-(1 << 31),
+                longitude_e7=-(1 << 31),
+                gnss_altitude_dm=-(1 << 31),
+                vertical_speed_cms=-(1 << 15),
+                ground_speed_cms=0xFFFF,
+                course_cdeg=0xFFFF,
+                gnss_utc_sod=0xFFFFFFFF,
+                satellites=0,
+                fix_type=0,
+            )
+        )
+
+        self.assertEqual(packet.gnss_fix_valid_raw, 0)
+        self.assertEqual(packet.gps_valid_raw, 0)
+        self.assertFalse(packet.status_flags["GNSS_FIX_VALID"])
+        self.assertEqual(packet.gnss_fix_type, 0)
+        self.assertEqual(packet.gnss_satellites_used, 0)
+        self.assertIsNone(packet.latitude_deg)
+        self.assertIsNone(packet.gnss_altitude_m)
+
+    def test_no_fix_does_not_mark_retained_gnss_time_as_current(self):
+        packet = decode_telemetry_packet(
+            build_v8_packet(validity_flags=0x1E, satellites=0, fix_type=0)
+        )
+
+        self.assertIsNotNone(packet.gnss_utc_sod)
+        self.assertFalse(packet.status_flags["GNSS_FIX_VALID"])
+        self.assertFalse(packet.status_flags["GNSS_TIME_VALID"])
 
 
 if __name__ == "__main__":
