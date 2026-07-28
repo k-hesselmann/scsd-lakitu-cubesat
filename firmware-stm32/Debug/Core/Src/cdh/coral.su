@@ -1,9 +1,0 @@
-../Core/Src/cdh/coral.c:53:13:dbg	16	static
-../Core/Src/cdh/coral.c:59:13:dbg_hex	96	static
-../Core/Src/cdh/coral.c:98:17:crc16_update	24	static
-../Core/Src/cdh/coral.c:110:17:crc16_buf	32	static
-../Core/Src/cdh/coral.c:122:16:coral_receive_frame	744	static
-../Core/Src/cdh/coral.c:328:6:Coral_Init	8	static
-../Core/Src/cdh/coral.c:342:6:Coral_Update	24	static
-../Core/Src/cdh/coral.c:382:6:Coral_SendTrigger	16	static
-../Core/Src/cdh/coral.c:396:6:Coral_SendSetInterval	32	static

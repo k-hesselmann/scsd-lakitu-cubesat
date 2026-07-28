@@ -42,3 +42,27 @@ Final_Report/*.fdb_latexmk
 Final_Report/*.synctex.gz
 Final_Report/*.pdf
 Final_Report/chapters/*.aux
+
+# local operating-system metadata
+.DS_Store
+
+# generated firmware builds and captured test artifacts (archived separately)
+firmware-stm32/Debug/
+output/flash_dumps/
+output/test_campaign/
+logs/
+
+# operational and bench datasets (archived separately)
+flight-data/
+
+# developer tooling and tests (archived separately)
+tools/
+test/
+firmware-stm32/tools/
+firmware-stm32/tests/
+payload/coral/tools/
+payload/training/
+ground-station/test_*.py
+plot_baro_final.py
+plot_gps_final.py
+read_datapool_nvm.py
