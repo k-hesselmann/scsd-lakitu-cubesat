@@ -681,7 +681,10 @@ void M10S_InitService(I2C_HandleTypeDef *hi2c)
     static const uint32_t config_keys[] = {
         0x10720001U, 0x10720002U, 0x20910006U, 0x20110021U
     };
-    static const uint8_t config_values[] = { 1U, 0U, 1U, 6U };
+    /* CFG-NAVSPG-DYNMODEL = AIR2 (Airborne <2g). AIR1 (<1g) was too
+     * restrictive for deployment and flight transients; AIR4 is reserved by
+     * u-blox for extremely dynamic platforms and has noisier positions. */
+    static const uint8_t config_values[] = { 1U, 0U, 1U, 7U };
     uint32_t now_ms = HAL_GetTick();
     uint16_t bytes_avail;
     uint8_t message[17];

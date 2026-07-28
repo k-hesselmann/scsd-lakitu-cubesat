@@ -30,7 +30,7 @@ void MPU6050_Init(I2C_HandleTypeDef *hi2c)
 
   MPU6050_WriteReg(hi2c, MPU6050_GYRO_CONFIG, 0x00);
   HAL_Delay(50);
-  MPU6050_WriteReg(hi2c, MPU6050_ACCEL_CONFIG, 0x00);
+  MPU6050_WriteReg(hi2c, MPU6050_ACCEL_CONFIG, MPU6050_ACCEL_CONFIG_4G);
   HAL_Delay(500);
 }
 
@@ -60,9 +60,9 @@ MPU6050_Data MPU6050_Read(I2C_HandleTypeDef *hi2c)
   int16_t raw_gyro_y = (int16_t)((buf[10] << 8) | buf[11]);
   int16_t raw_gyro_z = (int16_t)((buf[12] << 8) | buf[13]);
 
-  data.accel_x = raw_accel_x / 16384.0f;
-  data.accel_y = raw_accel_y / 16384.0f;
-  data.accel_z = raw_accel_z / 16384.0f;
+  data.accel_x = raw_accel_x / MPU6050_ACCEL_LSB_PER_G;
+  data.accel_y = raw_accel_y / MPU6050_ACCEL_LSB_PER_G;
+  data.accel_z = raw_accel_z / MPU6050_ACCEL_LSB_PER_G;
 
   data.gyro_x = raw_gyro_x / 131.0f;
   data.gyro_y = raw_gyro_y / 131.0f;

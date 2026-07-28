@@ -12,6 +12,12 @@ def test_gps_initialization_is_cooperative() -> None:
     assert "HAL_Delay" not in source
 
 
+def test_gnss_uses_the_typical_airborne_two_g_dynamic_model() -> None:
+    source = (ROOT / "Core/Src/cdh/m10s.c").read_text(encoding="utf-8")
+
+    assert "static const uint8_t config_values[] = { 1U, 0U, 1U, 7U };" in source
+
+
 def test_flight_software_requires_a_3d_fix() -> None:
     source = (ROOT / "Core/Src/fsw/fsm.c").read_text(encoding="utf-8")
 

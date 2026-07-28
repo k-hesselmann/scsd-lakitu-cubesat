@@ -12,6 +12,12 @@
 #define MPU6050_GYRO_XOUT_H 0x43
 #define MPU6050_WHO_AM_I 0x75
 
+/* ACCEL_CONFIG.AFS_SEL = 1: ±4 g full scale, 8192 LSB/g. Keep the register
+ * value and conversion scale together so a future range change cannot leave
+ * the decoded units inconsistent with the hardware configuration. */
+#define MPU6050_ACCEL_CONFIG_4G 0x08U
+#define MPU6050_ACCEL_LSB_PER_G 8192.0f
+
 typedef struct {
   float accel_x;
   float accel_y;

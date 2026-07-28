@@ -2,6 +2,7 @@
 #include "cdh/cdh.h"
 #include "cdh/m10s.h"
 #include "debug_log.h"
+#include "fsw/fsm.h"
 #include "main.h"
 #include <math.h>
 #include <stdio.h>
@@ -318,11 +319,10 @@ static void validateGPS(SensorData_t *dp)
 }
 
 /* FMECA C6: only meaningful once each sensor has already passed its own
- * checks above (dp->baro_valid / dp->gps_valid still true) -- a device
- * already flagged invalid for its own reasons shouldn't also get blamed for
- * disagreeing with the other. Debounced independently of C5's baro-timeout
- * debounce: this is a distinct failure mode (plausible-but-wrong reading,
- * not a stopped-responding device). dp->baro_alt_m is height above the
+ * checks above (dp->baro_valid / dp->gps_valid still true). It is a
+ * pre-flight static diagnostic: during flight GNSS and barometric altitude
+ * differ legitimately because of update latency, dynamic pressure, and the
+ * ISA-vs-actual atmosphere model. dp->baro_alt_m is height above the
  * persisted launch baseline, whereas dp->gps_alt_m is absolute GNSS altitude.
  * Add the pressure-altitude baseline back before comparing the two absolute
  * readings, and only run the comparison once the baseline is available. */
@@ -331,7 +331,8 @@ static void validateBaroGpsCrossCheck(SensorData_t *dp, const SCV_t *scv)
     uint32_t now = HAL_GetTick();
     float baro_pressure_alt_m;
 
-    if (!dp->baro_valid || !dp->gps_valid ||
+    if (scv->flight_phase != (uint8_t)PHASE_STANDBY ||
+        !dp->baro_valid || !dp->gps_valid ||
         dp->gps_fix_type != M10S_FIX_3D ||
         scv->baro_ground_alt_cm == SCV_INVALID_I32) {
         s_baro_disagree_since_ms = 0;

@@ -59,6 +59,7 @@ def test_frozen_imu_stays_invalid_until_reinit_produces_changed_output():
 
 
 def test_baro_gnss_crosscheck_restores_absolute_baro_altitude():
+    assert 'scv->flight_phase != (uint8_t)PHASE_STANDBY' in VALIDATION_SOURCE
     assert 'scv->baro_ground_alt_cm == SCV_INVALID_I32' in VALIDATION_SOURCE
     assert 'dp->gps_fix_type != M10S_FIX_3D' in VALIDATION_SOURCE
     assert (
@@ -67,3 +68,17 @@ def test_baro_gnss_crosscheck_restores_absolute_baro_altitude():
     )
     assert 'fabsf(baro_pressure_alt_m - dp->gps_alt_m)' in VALIDATION_SOURCE
     assert 'validateBaroGpsCrossCheck(dp, scv);' in VALIDATION_SOURCE
+
+
+def test_imu_uses_four_g_range_without_a_real_motion_ceiling():
+    mpu_source = (
+        FIRMWARE_ROOT / 'Core' / 'Src' / 'cdh' / 'mpu6050.c'
+    ).read_text(encoding='utf-8')
+    mpu_header = (
+        FIRMWARE_ROOT / 'Core' / 'Inc' / 'cdh' / 'mpu6050.h'
+    ).read_text(encoding='utf-8')
+
+    assert 'MPU6050_ACCEL_CONFIG_4G' in mpu_source
+    assert 'MPU6050_ACCEL_LSB_PER_G' in mpu_source
+    assert '#define MPU6050_ACCEL_LSB_PER_G 8192.0f' in mpu_header
+    assert '#define IMU_ACCEL_MAG_MAX_G        7.0f' in VALIDATION_HEADER
