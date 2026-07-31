@@ -1,0 +1,45 @@
+\documentclass[tikz,border=4pt]{standalone}
+\input{figure_style.tex}
+\input{../report_values.tex}
+\begin{document}
+\pgfmathsetmacro{\ResetBandStart}{\ResetMinute-0.8}
+\pgfmathsetmacro{\ResetBandEnd}{\ResetMinute+0.8}
+\begin{tikzpicture}
+\begin{axis}[
+  title={Battery rail},
+  xlabel={Time since 14:29 CEST (min)},
+  ylabel={Battery voltage (V)},
+  xmin=0,xmax=183,ymin=3.0,ymax=4.8,
+  legend style={at={(0.02,0.98)},anchor=north west},
+]
+\path[fill=lakitugreen!8] (axis cs:0,3.2) rectangle (axis cs:183,4.2);
+\path[fill=lakitured!12] (axis cs:\ResetBandStart,3.0) rectangle (axis cs:\ResetBandEnd,4.8);
+\addlegendimage{area legend,draw=none,fill=lakitugreen!8}
+\addlegendentry{3.2--4.2 V review band}
+\addplot[name path=bmin,draw=none,forget plot] table[x=elapsed_min,y=battery_min_v,col sep=comma]{../processed/power_health.csv};
+\addplot[name path=bmax,draw=none,forget plot] table[x=elapsed_min,y=battery_max_v,col sep=comma]{../processed/power_health.csv};
+\addplot[fill=lakitublue!16,draw=none,forget plot] fill between[of=bmin and bmax];
+\addlegendimage{area legend,draw=none,fill=lakitublue!16}
+\addlegendentry{2 s min--max envelope}
+\addplot[very thick,lakitublue] table[x=elapsed_min,y=battery_v,col sep=comma]{../processed/power_health.csv};
+\addlegendentry{2 s median}
+\addplot[only marks,mark=*,mark size=2pt,lakitured] table[x=elapsed_min,y=battery_v,col sep=comma]{../processed/battery_outliers.csv};
+\addlegendentry{Isolated outlier samples}
+\draw[line width=1.35pt,lakitured,dash pattern=on 4pt off 2pt]
+  (axis cs:\ResetMinute,3.0) -- (axis cs:\ResetMinute,4.8);
+\addplot[
+  only marks,mark=diamond*,mark size=3.4pt,color=lakitured,
+  mark options={draw=white,fill=lakitured,line width=0.8pt},
+] coordinates {(\ResetMinute,4.66)};
+\node[
+  anchor=north east,
+  fill=white,
+  draw=lakitured,
+  rounded corners=1pt,
+  inner sep=2.5pt,
+  font=\scriptsize\bfseries,
+  align=center,
+] at (axis cs:\ResetMinute,4.72) {Power-on reset\\16:51:39 CEST};
+\end{axis}
+\end{tikzpicture}
+\end{document}

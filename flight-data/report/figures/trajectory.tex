@@ -1,0 +1,73 @@
+\documentclass[tikz,border=4pt]{standalone}
+\input{figure_style.tex}
+\input{../report_values.tex}
+\begin{document}
+\begin{tikzpicture}
+\begin{axis}[
+  title={GNSS ground track},
+  xlabel={Longitude ($^\circ$E)},
+  ylabel={Latitude ($^\circ$N)},
+  width=15cm,height=10cm,
+  xmin=1088.113778,xmax=1091.470222,
+  ymin=-713.102980,ymax=-710.978114,
+  xtick={1088.284444,1088.853333,1089.422222,1089.991111,1090.560000,1091.128889},
+  xticklabels={11.3,11.4,11.5,11.6,11.7,11.8},
+  ytick={-712.763692,-711.914323,-711.063307},
+  yticklabels={47.9,48.0,48.1},
+  axis equal image,
+  axis on top,
+  grid=none,
+  enlargelimits=false,
+  colorbar,
+  colorbar style={ylabel={Altitude (km)}},
+  colormap/viridis,
+  legend style={at={(0.02,0.02)},anchor=south west},
+]
+\addplot graphics[xmin=1088,xmax=1089,ymin=-711,ymax=-710] {map_tiles/11/1088/710.png};
+\addplot graphics[xmin=1089,xmax=1090,ymin=-711,ymax=-710] {map_tiles/11/1089/710.png};
+\addplot graphics[xmin=1090,xmax=1091,ymin=-711,ymax=-710] {map_tiles/11/1090/710.png};
+\addplot graphics[xmin=1091,xmax=1092,ymin=-711,ymax=-710] {map_tiles/11/1091/710.png};
+\addplot graphics[xmin=1088,xmax=1089,ymin=-712,ymax=-711] {map_tiles/11/1088/711.png};
+\addplot graphics[xmin=1089,xmax=1090,ymin=-712,ymax=-711] {map_tiles/11/1089/711.png};
+\addplot graphics[xmin=1090,xmax=1091,ymin=-712,ymax=-711] {map_tiles/11/1090/711.png};
+\addplot graphics[xmin=1091,xmax=1092,ymin=-712,ymax=-711] {map_tiles/11/1091/711.png};
+\addplot graphics[xmin=1088,xmax=1089,ymin=-713,ymax=-712] {map_tiles/11/1088/712.png};
+\addplot graphics[xmin=1089,xmax=1090,ymin=-713,ymax=-712] {map_tiles/11/1089/712.png};
+\addplot graphics[xmin=1090,xmax=1091,ymin=-713,ymax=-712] {map_tiles/11/1090/712.png};
+\addplot graphics[xmin=1091,xmax=1092,ymin=-713,ymax=-712] {map_tiles/11/1091/712.png};
+\addplot graphics[xmin=1088,xmax=1089,ymin=-714,ymax=-713] {map_tiles/11/1088/713.png};
+\addplot graphics[xmin=1089,xmax=1090,ymin=-714,ymax=-713] {map_tiles/11/1089/713.png};
+\addplot graphics[xmin=1090,xmax=1091,ymin=-714,ymax=-713] {map_tiles/11/1090/713.png};
+\addplot graphics[xmin=1091,xmax=1092,ymin=-714,ymax=-713] {map_tiles/11/1091/713.png};
+\addplot[white,line width=2.2pt,forget plot] table[x=map_x,y=map_y,col sep=comma]{../processed/trajectory.csv};
+\addplot[line width=0.85pt,lakitugray,forget plot] table[x=map_x,y=map_y,col sep=comma]{../processed/trajectory.csv};
+\addplot[
+  scatter,only marks,mark=*,mark size=1.1pt,
+  scatter src=explicit,point meta=explicit,forget plot,
+] table[x=map_x,y=map_y,meta=altitude_km,col sep=comma]{../processed/trajectory.csv};
+\addplot[
+  only marks,mark=square*,mark size=3.2pt,color=lakitugreen,
+  mark options={draw=white,fill=lakitugreen,line width=0.8pt},
+] coordinates {(\LaunchMapX,\LaunchMapY)};
+\addlegendentry{Launch}
+\addplot[
+  only marks,mark=triangle*,mark size=3.7pt,color=lakituorange,
+  mark options={draw=white,fill=lakituorange,line width=0.8pt},
+] coordinates {(\ApexMapX,\ApexMapY)};
+\addlegendentry{Apex}
+\addplot[
+  only marks,mark=*,mark size=3.2pt,color=lakitured,
+  mark options={draw=white,fill=lakitured,line width=0.8pt},
+] coordinates {(\LandingMapX,\LandingMapY)};
+\addlegendentry{Landing}
+\node[
+  anchor=south east,
+  fill=white,
+  fill opacity=0.88,
+  text opacity=1,
+  inner sep=1.5pt,
+  font=\scriptsize,
+] at (rel axis cs:0.995,0.005) {\copyright\ OpenStreetMap contributors -- openstreetmap.org/copyright};
+\end{axis}
+\end{tikzpicture}
+\end{document}

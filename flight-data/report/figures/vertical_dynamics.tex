@@ -1,0 +1,35 @@
+\documentclass[tikz,border=4pt]{standalone}
+\input{figure_style.tex}
+\input{../report_values.tex}
+\begin{document}
+\begin{tikzpicture}
+\begin{groupplot}[
+  group style={group size=1 by 2,vertical sep=1.2cm},
+  width=16cm,height=5.6cm,
+  xmin=0,xmax=183,
+]
+\nextgroupplot[
+  title={Flight dynamics},
+  ylabel={Speed (m/s)},
+  ymin=-105,ymax=45,
+  legend style={at={(0.02,0.05)},anchor=south west},
+  xticklabels=\empty,
+]
+\addplot[very thick,lakitublue] table[x=elapsed_min,y=vertical_up_mps,col sep=comma]{../processed/vertical_dynamics.csv};
+\addlegendentry{Vertical speed (+ upward)}
+\addplot[thick,lakituorange] table[x=elapsed_min,y=ground_speed_mps,col sep=comma]{../processed/vertical_dynamics.csv};
+\addlegendentry{Horizontal ground speed}
+\draw[lakitured,dashed] (axis cs:\DescentMinute,-105) -- (axis cs:\DescentMinute,45);
+\nextgroupplot[
+  xlabel={Time since 14:29 CEST (min)},
+  ylabel={Acceleration magnitude (g)},
+  ymin=0,ymax=5,
+  legend style={at={(0.02,0.95)},anchor=north west},
+]
+\addplot[thick,lakitugreen] table[x=elapsed_min,y=accel_mag_g,col sep=comma]{../processed/vertical_dynamics.csv};
+\addlegendentry{5 s median}
+\addplot[thin,lakitured,opacity=0.65] table[x=elapsed_min,y=accel_mag_max_g,col sep=comma]{../processed/vertical_dynamics.csv};
+\addlegendentry{5 s maximum}
+\end{groupplot}
+\end{tikzpicture}
+\end{document}

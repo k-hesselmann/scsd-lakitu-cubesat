@@ -1,0 +1,62 @@
+\documentclass[tikz,border=4pt]{standalone}
+\input{figure_style.tex}
+\input{../report_values.tex}
+\begin{document}
+\pgfmathsetmacro{\StandbyMid}{\LaunchMinute/2}
+\pgfmathsetmacro{\LaunchMid}{(\LaunchMinute+\AscentMinute)/2}
+\pgfmathsetmacro{\AscentMid}{(\AscentMinute+\DescentMinute)/2}
+\pgfmathsetmacro{\DescentMid}{(\DescentMinute+\LandingMinute)/2}
+\pgfmathsetmacro{\LandingMid}{(\LandingMinute+\FlightEndMinute)/2}
+\begin{tikzpicture}
+\begin{groupplot}[
+  group style={group size=1 by 2,vertical sep=0.8cm},
+  width=16cm,
+  xmin=0,xmax=\FlightEndMinute,
+]
+\nextgroupplot[
+  title={Flight profile},
+  ylabel={Altitude (km)},
+  ymin=-1,ymax=41,
+  height=8cm,
+  xticklabels=\empty,
+  legend style={at={(0.02,0.98)},anchor=north west},
+]
+\addplot[very thick,lakitublue] table[x=elapsed_min,y=gps_alt_km,col sep=comma]{../processed/flight_profile.csv};
+\addlegendentry{GNSS altitude}
+\addplot[thick,lakituorange] table[x=elapsed_min,y=baro_alt_km,col sep=comma]{../processed/flight_profile.csv};
+\addlegendentry{Barometric altitude (relative)}
+\addplot[only marks,mark=*,mark size=2.4pt,lakitured] coordinates {(\ApexMinute,\ApexGpsKm)};
+\draw[lakitugray,dashed] (axis cs:\LaunchMinute,-1) -- (axis cs:\LaunchMinute,41);
+\draw[lakitugray,dashed] (axis cs:\AscentMinute,-1) -- (axis cs:\AscentMinute,41);
+\draw[lakitured,dashed] (axis cs:\DescentMinute,-1) -- (axis cs:\DescentMinute,41);
+\draw[lakitugreen,dashed] (axis cs:\LandingMinute,-1) -- (axis cs:\LandingMinute,41);
+
+\nextgroupplot[
+  xlabel={Time since 14:29 CEST (min)},
+  ylabel={Flight state},
+  ymin=-0.9,ymax=0.9,
+  height=3.1cm,
+  ytick=\empty,
+  grid=none,
+  axis y line=none,
+  axis x line*=bottom,
+]
+\path[fill=lakitugray!55] (axis cs:0,-0.18) rectangle (axis cs:\LaunchMinute,0.18);
+\path[fill=lakituorange!75] (axis cs:\LaunchMinute,-0.18) rectangle (axis cs:\AscentMinute,0.18);
+\path[fill=lakitublue!65] (axis cs:\AscentMinute,-0.18) rectangle (axis cs:\DescentMinute,0.18);
+\path[fill=lakitured!65] (axis cs:\DescentMinute,-0.18) rectangle (axis cs:\LandingMinute,0.18);
+\path[fill=lakitugreen!65] (axis cs:\LandingMinute,-0.18) rectangle (axis cs:\FlightEndMinute,0.18);
+\addplot[
+  only marks,mark=diamond*,mark size=3.6pt,color=lakituorange,
+  mark options={draw=white,fill=lakituorange,line width=0.7pt},
+] coordinates {(\LaunchMid,0)};
+\node[font=\scriptsize\bfseries,anchor=west,text=lakitugray] at (axis cs:1,-0.58) {Standby \StandbyDurationMin\ min};
+\node[font=\scriptsize\bfseries,text=white] at (axis cs:\AscentMid,0) {Ascent \AscentDurationMin\ min};
+\node[font=\scriptsize\bfseries,text=white] at (axis cs:\DescentMid,0) {Descent \DescentDurationMin\ min};
+\node[font=\scriptsize\bfseries,text=white] at (axis cs:\LandingMid,0) {Landing \LandingDurationMin\ min};
+\node[font=\scriptsize,anchor=west,text=lakituorange] at (axis cs:13,0.58) {Launch (\LaunchDurationS\ s)};
+\draw[->,thick,lakituorange] (axis cs:13,0.48) -- (axis cs:\LaunchMid,0.2);
+\node[font=\scriptsize,anchor=east,text=lakitugray] at (axis cs:{\FlightEndMinute-1},-0.62) {Cruise not entered};
+\end{groupplot}
+\end{tikzpicture}
+\end{document}

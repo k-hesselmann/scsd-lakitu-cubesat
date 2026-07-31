@@ -1,0 +1,35 @@
+\documentclass[tikz,border=4pt]{standalone}
+\input{figure_style.tex}
+\input{../report_values.tex}
+\begin{document}
+\begin{tikzpicture}
+\begin{groupplot}[
+  group style={group size=1 by 2,vertical sep=1.2cm},
+  width=16cm,height=5.6cm,
+  xmin=0,xmax=183,
+]
+\nextgroupplot[
+  title={Coral payload results},
+  ylabel={Cloud fraction (\%)},
+  ymin=0,ymax=100,
+  xticklabels=\empty,
+]
+\addplot[
+  only marks,mark=*,mark size=1.25pt,lakitublue,
+  restrict expr to domain={\thisrow{status}}{0:0},
+  restrict expr to domain={\thisrow{valid}}{1:1},
+] table[x=elapsed_min,y=cloud_fraction_percent,col sep=comma]{../processed/payload_frames.csv};
+\nextgroupplot[
+  xlabel={Time since 14:29 CEST (min)},
+  ylabel={Link event},
+  ymin=0.75,ymax=1.25,
+  ytick={1},yticklabels={timeout},
+]
+\addplot[
+  only marks,mark=square*,mark size=2.5pt,lakitured,
+  restrict expr to domain={\thisrow{status}}{1:1},
+] table[x=elapsed_min,y=status,col sep=comma]{../processed/payload_frames.csv};
+\draw[lakitured,dashed] (axis cs:\ResetMinute,0.75) -- (axis cs:\ResetMinute,1.25);
+\end{groupplot}
+\end{tikzpicture}
+\end{document}

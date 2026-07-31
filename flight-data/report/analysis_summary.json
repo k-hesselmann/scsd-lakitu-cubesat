@@ -1,0 +1,213 @@
+{
+  "generatedAt": "2026-07-30T06:00:03.775Z",
+  "scope": {
+    "primaryFile": "flight-data/flight_data_2026-07-28_1429-1732_CEST.csv",
+    "publicRows": 103510,
+    "fullArchiveRows": 186918,
+    "startCest": "2026-07-28 14:29:00 CEST",
+    "endCest": "2026-07-28 17:32:00 CEST",
+    "durationS": 10980.447999999997,
+    "sha256": {
+      "publicFlightCsv": "0cbe579b5d2ecc1186afbdbc2a8ac285f2cfefe9db8a2e221402e52489cc7ea0",
+      "fullArchiveCsv": "ebad4569d5744696ed02636cfecc19c88a1d810e2ea28003309a15cdf56aeb3d",
+      "telemetrySession1": "e734fff42dad4bd7825452d655f964e40afc276da179c462f246623c29bff3cd",
+      "telemetrySession2": "c85d80ade6346218438a46a059148746bfbfb9ff5eed71634be2f6826bbf8e31"
+    }
+  },
+  "timeline": {
+    "transitions": [
+      {
+        "timeCest": "14:38:56",
+        "elapsedS": 596.9,
+        "from": "Standby",
+        "to": "Launch",
+        "gpsAltitudeM": 580,
+        "baroAltitudeM": 10.5,
+        "verticalDownMps": -3.82
+      },
+      {
+        "timeCest": "14:39:08",
+        "elapsedS": 608.1,
+        "from": "Launch",
+        "to": "Ascent",
+        "gpsAltitudeM": 652,
+        "baroAltitudeM": 65.82,
+        "verticalDownMps": -7.55
+      },
+      {
+        "timeCest": "16:15:22",
+        "elapsedS": 6382.099,
+        "from": "Ascent",
+        "to": "Descent",
+        "gpsAltitudeM": 37935,
+        "baroAltitudeM": 28668.28,
+        "verticalDownMps": 80.5
+      },
+      {
+        "timeCest": "16:51:18",
+        "elapsedS": 8538.8,
+        "from": "Descent",
+        "to": "Landing",
+        "gpsAltitudeM": 753,
+        "baroAltitudeM": 170.28,
+        "verticalDownMps": 5.18
+      }
+    ],
+    "phaseDurationsS": {
+      "Standby": 596.9,
+      "Launch": 11.2,
+      "Ascent": 5773.999,
+      "Cruise": 0,
+      "Descent": 2156.701,
+      "Landing": 2441.648
+    },
+    "bootTransitions": [
+      {
+        "elapsedS": 8559,
+        "priorElapsedS": 8546.413,
+        "gapS": 12.587,
+        "from": 5,
+        "to": 6,
+        "resetReason": 1,
+        "timeCest": "16:51:39"
+      }
+    ]
+  },
+  "flightPerformance": {
+    "first3dFixTimeCest": "14:37:35",
+    "first3dFixElapsedS": 515.5,
+    "apexGpsAltitudeM": 38480,
+    "apexTimeCest": "16:15:11",
+    "apexElapsedS": 6371,
+    "apexLatitudeDeg": 47.9566112,
+    "apexLongitudeDeg": 11.4497968,
+    "apexBaroAltitudeM": 28873.01,
+    "maximumBaroAltitudeM": 28881.45,
+    "maximumBaroTimeCest": "16:15:07",
+    "altitudeDisagreementAtGpsApexM": 9606.99,
+    "maximumClimbMps": 16.14,
+    "maximumClimbTimeCest": "15:34:04",
+    "maximumDescentMps": 95.23,
+    "maximumDescentTimeCest": "16:15:37",
+    "maximumGroundSpeedMps": 38.89,
+    "meanAscentRateMps": 6.564,
+    "meanDescentRateMps": 17.403,
+    "launchLatitudeDeg": 48.0879328,
+    "launchLongitudeDeg": 11.2960224,
+    "landingLatitudeDeg": 47.879632,
+    "landingLongitudeDeg": 11.692252,
+    "launchToLandingDistanceKm": 37.499,
+    "maximumRangeFromLaunchKm": 43.389
+  },
+  "environment": {
+    "minimumPressureHpa": 3.37,
+    "minimumPressureTimeCest": "16:15:07",
+    "temperatureMinimumC": 14.74,
+    "temperatureMaximumC": 35.72
+  },
+  "powerAndImu": {
+    "batteryMedianV": 3.856,
+    "batteryP05V": 3.718,
+    "batteryP95V": 3.945,
+    "batteryMinimumV": 3.088,
+    "batteryMaximumV": 4.668,
+    "batteryOutlierRows": 8,
+    "maximumAccelerationG": 4.675,
+    "maximumAccelerationTimeCest": "14:35:24",
+    "maximumAccelerationComponentsG": [
+      1.548,
+      -2.045,
+      -3.909
+    ]
+  },
+  "payload": {
+    "uniqueCoralRecords": 645,
+    "goodFrames": 630,
+    "cloudFractionMeanPercent": 12.704,
+    "cloudFractionMedianPercent": 8.006,
+    "cloudFractionP90Percent": 33.202,
+    "cloudFractionZeroOrLessPercent": 1.905,
+    "coralInvalidRows": 1620,
+    "coralInvalidPercent": 1.565,
+    "coralTimeoutRows": 1552,
+    "faultIntervals": 15,
+    "longestFaultS": 21.636,
+    "totalFaultTelemetryDurationS": 97.054
+  },
+  "health": {
+    "equipmentEnabledValues": [
+      127
+    ],
+    "equipmentFaultValues": [
+      0,
+      8
+    ],
+    "nonCoralFaultRows": 0,
+    "gpsTimeoutMax": 0,
+    "imuTimeoutMax": 0,
+    "baroTimeoutMax": 0,
+    "loraTimeoutMax": 0,
+    "loraTxFaultMax": 0,
+    "sdFaultMax": 0,
+    "watchdogResetMax": 0,
+    "i2cStateValues": [
+      0
+    ]
+  },
+  "quality": {
+    "medianSampleIntervalS": 0.1,
+    "meanSampleIntervalS": 0.1059,
+    "sampleIntervalStdS": 0.0444,
+    "p95SampleIntervalS": 0.109,
+    "largestRetainedGapS": 8.673,
+    "stallsAtLeast1s": 6,
+    "genuineStallsOneToTwoSeconds": 5,
+    "longestGenuineStallS": 1.299,
+    "rowsFix3": 98643,
+    "rowsFix2": 35,
+    "rowsOtherFix": 4832,
+    "fix3Percent": 95.298,
+    "gpsValidPercent": 100,
+    "imuValidPercent": 100,
+    "baroValidPercent": 100,
+    "batteryValidPercent": 100
+  },
+  "ttc": {
+    "totalRowsAllSessions": 622,
+    "validPacketsInFlightWindow": 200,
+    "invalidRowsInFlightWindow": 62,
+    "lostPacketsReportedInFlightWindow": 180,
+    "duplicatePacketsInFlightWindow": 0,
+    "firstValidPacketCest": "14:29:08",
+    "lastValidPacketCest": "17:20:31",
+    "rssiMedianDbm": -101.5,
+    "rssiMinimumDbm": -121,
+    "rssiMaximumDbm": -52,
+    "snrMedianDb": 8.63,
+    "snrMinimumDb": -12,
+    "snrMaximumDb": 13,
+    "invalidReceptionPercent": 23.66,
+    "session1LastValidSlantRangeKm": 45.06,
+    "session1ReceiverStopSlantRangeKm": 24.78,
+    "session2ApproachStartKm": 1,
+    "session2ApproachStartCest": "16:56:44",
+    "session2ApproachEndCest": "17:20:31",
+    "crcErrorEventsAllSessions": 64,
+    "unexpectedLengthPacketsAllSessions": 12,
+    "crcErrorEventsInFlightWindow": 62,
+    "unexpectedLengthPacketsInFlightWindow": 12,
+    "eventCounts": {
+      "backend_started": 2,
+      "receiver_starting": 2,
+      "radio_initialized": 2,
+      "dashboard_connected": 123,
+      "telemetry_ack_sent": 558,
+      "telemetry_received": 558,
+      "dashboard_disconnected": 120,
+      "lora_crc_error": 64,
+      "receiver_error": 1,
+      "receiver_stopped": 1,
+      "non_telemetry_packet": 12
+    }
+  }
+}

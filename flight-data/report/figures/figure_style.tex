@@ -1,0 +1,27 @@
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{pgfplots}
+\usepgfplotslibrary{groupplots,fillbetween}
+\pgfplotsset{compat=1.18}
+\definecolor{lakitublue}{HTML}{165D8D}
+\definecolor{lakituorange}{HTML}{E8871E}
+\definecolor{lakitugreen}{HTML}{2A9D6F}
+\definecolor{lakitured}{HTML}{C43D3D}
+\definecolor{lakitugray}{HTML}{5B6573}
+\pgfplotsset{
+  every axis/.append style={
+    width=16cm,
+    height=8cm,
+    grid=major,
+    grid style={draw=black!10},
+    axis line style={black!55},
+    tick style={black!55},
+    tick label style={font=\small},
+    label style={font=\small},
+    title style={font=\bfseries\small,align=center},
+    legend style={font=\small,draw=none,fill=white,fill opacity=0.85,text opacity=1},
+    unbounded coords=jump,
+  },
+}

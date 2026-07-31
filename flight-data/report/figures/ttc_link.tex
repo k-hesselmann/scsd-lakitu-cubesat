@@ -1,0 +1,58 @@
+\documentclass[tikz,border=4pt]{standalone}
+\input{figure_style.tex}
+\begin{document}
+\begin{tikzpicture}
+\begin{groupplot}[
+  group style={group size=1 by 4,vertical sep=0.75cm},
+  width=16cm,height=5.44cm,
+  xmin=0,xmax=183,
+]
+\nextgroupplot[
+  title={LoRa link and range},
+  ylabel={RSSI (dBm)},
+  ymin=-125,ymax=-45,
+  xticklabels=\empty,
+  legend style={at={(0.99,0.98)},anchor=north east},
+]
+\addplot[only marks,mark=*,mark size=1.25pt,lakitublue] table[x=elapsed_min,y=rssi_dbm,col sep=comma]{../processed/ttc_link_session1.csv};
+\addlegendentry{Flight station (session 1)}
+\addplot[only marks,mark=triangle*,mark size=1.7pt,lakitugreen] table[x=elapsed_min,y=rssi_dbm,col sep=comma]{../processed/ttc_link_session2.csv};
+\addlegendentry{Recovery approach (session 2)}
+\nextgroupplot[
+  ylabel={SNR (dB)},
+  ymin=-14,ymax=15,
+  xticklabels=\empty,
+]
+\addplot[only marks,mark=*,mark size=1.25pt,lakitublue] table[x=elapsed_min,y=snr_db,col sep=comma]{../processed/ttc_link_session1.csv};
+\addplot[only marks,mark=triangle*,mark size=1.7pt,lakitugreen] table[x=elapsed_min,y=snr_db,col sep=comma]{../processed/ttc_link_session2.csv};
+\nextgroupplot[
+  ylabel={Distance (km, log)},
+  ymode=log,
+  log basis y=10,
+  ymin=0.05,ymax=100,
+  ytick={0.1,1,10,100},
+  yticklabels={0.1,1,10,100},
+  xticklabels=\empty,
+  legend style={at={(0.99,0.98)},anchor=north east},
+]
+\addplot[thick,lakitublue] table[x=elapsed_min,y=range_km,col sep=comma]{../processed/ttc_range_session1.csv};
+\addlegendentry{GNSS-derived slant range}
+\addplot[thick,dashed,lakitugreen] table[x=elapsed_min,y=range_km,col sep=comma]{../processed/ttc_range_session2.csv};
+\addlegendentry{Recovery approach estimate}
+\nextgroupplot[
+  xlabel={Time since 14:29 CEST (min)},
+  ylabel={Failed RX},
+  ymin=0.5,ymax=2.5,
+  ytick={1,2},
+  yticklabels={Length,CRC},
+  grid=none,
+]
+\addplot[
+  only marks,mark=x,mark size=2.2pt,very thick,color=lakitured,
+] table[x=elapsed_min,y expr=2,col sep=comma]{../processed/ttc_failures_crc.csv};
+\addplot[
+  only marks,mark=triangle*,mark size=1.9pt,color=lakituorange,
+] table[x=elapsed_min,y expr=1,col sep=comma]{../processed/ttc_failures_length.csv};
+\end{groupplot}
+\end{tikzpicture}
+\end{document}
