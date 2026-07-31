@@ -1,8 +1,8 @@
 # Fdb version 4
-["pdflatex"] 1785391220.58116 "power_health.tex" "power_health.pdf" "power_health" 1785391229.13028 0
-  "../processed/battery_outliers.csv" 1785391203 144 1c1b13237710d4478e49341288913f10 ""
-  "../processed/power_health.csv" 1785391203 154822 cbc0fadf2bddc3864081eb964ea69164 ""
-  "../report_values.tex" 1785391204 3723 0805b8b2fbbbf1594131af01a4820425 ""
+["pdflatex"] 1785529869.5595 "power_health.tex" "power_health.pdf" "power_health" 1785529888.05221 0
+  "../processed/battery_outliers.csv" 1785529833 144 1c1b13237710d4478e49341288913f10 ""
+  "../processed/power_health.csv" 1785529833 154822 cbc0fadf2bddc3864081eb964ea69164 ""
+  "../report_values.tex" 1785529835 3723 0805b8b2fbbbf1594131af01a4820425 ""
   "c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc" 1779106397 2375 baa924870cfb487815765f9094cf3728 ""
   "c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc" 1779106397 2405 5dcf2c1b967ee25cc46c58cd52244aed ""
   "c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc" 1779106397 2327 9d6df24f9c4f7368395224341a95523a ""
@@ -27,6 +27,7 @@
   "c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx7.pfb" 1779106398 119461 688b5cf3eb232c8cd2868757f6765296 ""
   "c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx9.pfb" 1779106398 126646 56e3d11e90816073e07cc59bd07ef384 ""
   "c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmmi9.pfb" 1779106398 30698 e53a423459271d6c5cdd91f7559396af ""
+  "c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmr7.pfb" 1779106398 121145 00b210fbe9efd7ce850c04e64670de9a ""
   "c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmr9.pfb" 1779106398 121065 ba8daf2228d9e511988917831f1e22e9 ""
   "c:/texlive/2026/texmf-dist/tex/context/base/mkii/supp-pdf.mkii" 1779107595 71627 94eb9990bed73c364d7f53f960cc8c5b ""
   "c:/texlive/2026/texmf-dist/tex/generic/iftex/ifluatex.sty" 1779105730 492 1994775aa15b0d1289725a0b1bbc2d4c ""
@@ -183,9 +184,9 @@
   "c:/texlive/2026/texmf-var/fonts/map/pdftex/updmap/pdftex.map" 1779111257 5619402 ad1310ccf7f36101ef3e8f014a173c46 ""
   "c:/texlive/2026/texmf-var/web2c/pdftex/pdflatex.fmt" 1779111608 3651061 1cc810d42a08f223a78749f1e5a4e1f0 ""
   "c:/texlive/2026/texmf.cnf" 1779111195 713 e69b156964470283e0530f5060668171 ""
-  "figure_style.tex" 1785368293 800 a50bdf58e1f2fb5d30020fa7debcbf74 ""
-  "power_health.aux" 1785391228 32 3985256e7290058c681f74d7a3565a19 "pdflatex"
-  "power_health.tex" 1785391197 2006 189b14bf721cd806e688c73f5dff6334 ""
+  "figure_style.tex" 1785529799 2814 13fbf7c49831c67ce322889f78b7932a ""
+  "power_health.aux" 1785529887 32 3985256e7290058c681f74d7a3565a19 "pdflatex"
+  "power_health.tex" 1785529701 2137 471db126376efaaad12a1e096bad146a ""
   (generated)
   "power_health.aux"
   "power_health.log"

@@ -140,6 +140,35 @@ function mean(values) {
   return clean.length ? clean.reduce((sum, value) => sum + value, 0) / clean.length : null;
 }
 
+/*
+ * Direction of the mean horizontal-velocity vector, clockwise from north.
+ * Weighting course by ground speed preserves the vector meaning of the result
+ * and handles the 0/360-degree wrap correctly. Course is not meaningful for a
+ * stationary receiver, so omit low-speed and non-3D-fix samples.
+ */
+function horizontalVelocityDirectionDeg(rows) {
+  const moving = rows.filter(
+    (row) =>
+      row.gpsFix === 3 &&
+      Number.isFinite(row.gpsHeadingDeg) &&
+      Number.isFinite(row.gpsSpeedMps) &&
+      row.gpsSpeedMps >= 0.5,
+  );
+  if (!moving.length) return null;
+  const eastMps = mean(
+    moving.map(
+      (row) => row.gpsSpeedMps * Math.sin(row.gpsHeadingDeg * Math.PI / 180),
+    ),
+  );
+  const northMps = mean(
+    moving.map(
+      (row) => row.gpsSpeedMps * Math.cos(row.gpsHeadingDeg * Math.PI / 180),
+    ),
+  );
+  const directionDeg = Math.atan2(eastMps, northMps) * 180 / Math.PI;
+  return (directionDeg + 360) % 360;
+}
+
 function standardDeviation(values) {
   const clean = values.filter(Number.isFinite);
   if (clean.length < 2) return null;
@@ -531,6 +560,7 @@ const dynamicsRows = binRows(flightRows, 5, (rows, elapsedS) => ({
   elapsed_min: round(elapsedS / 60, 5),
   vertical_up_mps: round(median(rows.map((row) => -row.gpsVelDownMps)), 4),
   ground_speed_mps: round(median(rows.map((row) => row.gpsSpeedMps)), 4),
+  horizontal_direction_deg: round(horizontalVelocityDirectionDeg(rows), 3),
   accel_mag_g: round(median(rows.map((row) => row.accelMagG)), 4),
   accel_mag_max_g: round(Math.max(...rows.map((row) => row.accelMagG)), 4),
 }));
@@ -540,6 +570,7 @@ writeCsv(
     "elapsed_min",
     "vertical_up_mps",
     "ground_speed_mps",
+    "horizontal_direction_deg",
     "accel_mag_g",
     "accel_mag_max_g",
   ],

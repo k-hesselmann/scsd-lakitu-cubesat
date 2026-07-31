@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.5.18)  30 JUL 2026 08:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.5.18)  31 JUL 2026 22:31
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -586,7 +586,7 @@ PGFPlots: reading {../processed/power_health.csv}
 PGFPlots: reading {../processed/power_health.csv}
 PGFPlots: reading {../processed/power_health.csv}
 PGFPlots: reading {../processed/battery_outliers.csv}
-Package pgfplots info on input line 43: fill between: activating layered graphi
+Package pgfplots info on input line 49: fill between: activating layered graphi
 cs
 \pgf@layerbox@axis background=\box68
 \pgf@layerboxsaved@axis background=\box69
@@ -604,39 +604,39 @@ cs
 \pgf@layerboxsaved@axis descriptions=\box81
 \pgf@layerbox@axis foreground=\box82
 \pgf@layerboxsaved@axis foreground=\box83
-Package pgfplots info on input line 43: Setting layers 'axis background,axis gr
+Package pgfplots info on input line 49: Setting layers 'axis background,axis gr
 id,axis ticks,axis lines,axis tick labels,pre main,main,axis descriptions,axis 
 foreground'...
 LaTeX Font Info:    Trying to load font information for OT1+lmr on input line 4
-3.
+9.
 (c:/texlive/2026/texmf-dist/tex/latex/lm/ot1lmr.fd
 File: ot1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OML+lmm on input line 4
-3.
+9.
 (c:/texlive/2026/texmf-dist/tex/latex/lm/omllmm.fd
 File: omllmm.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OMS+lmsy on input line 
-43.
+49.
 (c:/texlive/2026/texmf-dist/tex/latex/lm/omslmsy.fd
 File: omslmsy.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OMX+lmex on input line 
-43.
+49.
 (c:/texlive/2026/texmf-dist/tex/latex/lm/omxlmex.fd
 File: omxlmex.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <9> on input line 43.
+(Font)              <9> on input line 49.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <6> on input line 43.
+(Font)              <6> on input line 49.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <5> on input line 43.
+(Font)              <5> on input line 49.
 [1
 
 Non-PDF special ignored!
-<special> papersize=456.3414pt,239.95857pt
+<special> papersize=456.32217pt,305.92459pt
 {c:/texlive/2026/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{c:/texlive/2026/
 texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}{c:/texlive/2026/texmf-dist/fonts/enc/d
 vips/lm/lm-mathit.enc}{c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}
@@ -647,21 +647,21 @@ L3 programming layer <2026-04-28>
  ***********
  ) 
 Here is how much of TeX's memory you used:
- 26316 strings out of 467341
- 679247 string characters out of 5419596
- 4305492 words of memory out of 5000000
- 54950 multiletter control sequences out of 15000+600000
+ 26379 strings out of 467341
+ 680623 string characters out of 5419596
+ 4317898 words of memory out of 5000000
+ 55013 multiletter control sequences out of 15000+600000
  658970 words of font info for 75 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 117i,15n,121p,1009b,2104s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 117i,15n,121p,1009b,2387s stack positions out of 10000i,1000n,20000p,200000b,200000s
 <c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx7.pfb><c:/texlive/2026/
 texmf-dist/fonts/type1/public/lm/lmbx9.pfb><c:/texlive/2026/texmf-dist/fonts/ty
-pe1/public/lm/lmmi9.pfb><c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmr9.
-pfb>
-Output written on power_health.pdf (1 page, 177340 bytes).
+pe1/public/lm/lmmi9.pfb><c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmr7.
+pfb><c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmr9.pfb>
+Output written on power_health.pdf (1 page, 203194 bytes).
 PDF statistics:
- 37 PDF objects out of 1000 (max. 8388607)
- 24 compressed objects within 1 object stream
+ 42 PDF objects out of 1000 (max. 8388607)
+ 27 compressed objects within 1 object stream
  0 named destinations out of 1000 (max. 500000)
  18445 words of extra memory for PDF output out of 20736 (max. 10000000)
 

@@ -288,9 +288,13 @@ Maximum acceleration magnitude & \MaxAccelerationG\ g at \MaxAccelerationTime\ C
 \end{figure}
 
 Figure~\ref{fig:dynamics} compares GNSS vertical speed, horizontal ground speed,
-and IMU acceleration magnitude. Positive vertical speed is upward. The red
-acceleration trace retains the maximum value in each five-second plotting bin so
-short peaks remain visible beside the median trend.
+the direction of the horizontal-velocity vector, and IMU acceleration
+magnitude. Positive vertical speed is upward. Horizontal direction is the GNSS
+course over ground, clockwise from north, and describes where the platform was
+moving toward; the meteorological ``wind-from'' direction is approximately the
+opposite bearing. It is omitted below 0.5~m/s and without a 3D fix, where course
+is not meaningful. The red acceleration trace retains the maximum value in each
+five-second plotting bin so short peaks remain visible beside the median trend.
 
 The maximum \MaxAccelerationG\ g magnitude occurred at \MaxAccelerationTime,
 before the 14:38:56 Launch transition, with components $(1.548,-2.045,-3.909)$

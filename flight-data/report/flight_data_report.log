@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.5.18)  30 JUL 2026 08:02
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.5.18)  31 JUL 2026 22:40
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -638,52 +638,52 @@ Package pdftex.def Info: figures/flight_profile.pdf  used on input line 240.
 (pdftex.def)             Requested size: 469.47049pt x 316.52164pt.
 [3{c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}{c:/texlive/2026/tex
 mf-dist/fonts/enc/dvips/lm/lm-mathit.enc}] [4 <./figures/flight_profile.pdf>]
-<figures/vertical_dynamics.pdf, id=219, 465.59143pt x 320.15106pt>
+<figures/vertical_dynamics.pdf, id=219, 465.57239pt x 535.08807pt>
 File: figures/vertical_dynamics.pdf Graphic file (type pdf)
 <use figures/vertical_dynamics.pdf>
 Package pdftex.def Info: figures/vertical_dynamics.pdf  used on input line 285.
 
-(pdftex.def)             Requested size: 469.47049pt x 322.83707pt.
-[5 <./figures/vertical_dynamics.pdf>]
-<figures/environment.pdf, id=244, 457.93886pt x 320.1571pt>
+(pdftex.def)             Requested size: 469.47049pt x 539.57738pt.
+[5] [6 <./figures/vertical_dynamics.pdf>]
+<figures/environment.pdf, id=256, 457.9198pt x 374.74205pt>
 File: figures/environment.pdf Graphic file (type pdf)
 <use figures/environment.pdf>
-Package pdftex.def Info: figures/environment.pdf  used on input line 314.
-(pdftex.def)             Requested size: 469.47049pt x 328.21687pt.
-<figures/trajectory.pdf, id=246, 480.47205pt x 296.86206pt>
+Package pdftex.def Info: figures/environment.pdf  used on input line 318.
+(pdftex.def)             Requested size: 469.47049pt x 384.20457pt.
+[7 <./figures/environment.pdf>]
+<figures/trajectory.pdf, id=295, 480.47205pt x 296.86206pt>
 File: figures/trajectory.pdf Graphic file (type pdf)
 <use figures/trajectory.pdf>
-Package pdftex.def Info: figures/trajectory.pdf  used on input line 340.
+Package pdftex.def Info: figures/trajectory.pdf  used on input line 344.
 (pdftex.def)             Requested size: 431.91199pt x 266.8563pt.
-[6 <./figures/environment.pdf>]
-<figures/power_health.pdf, id=278, 456.34189pt x 239.95848pt>
+<figures/power_health.pdf, id=298, 456.32182pt x 305.92494pt>
 File: figures/power_health.pdf Graphic file (type pdf)
 <use figures/power_health.pdf>
-Package pdftex.def Info: figures/power_health.pdf  used on input line 380.
-(pdftex.def)             Requested size: 469.47049pt x 246.87439pt.
-[7 <./figures/trajectory.pdf>]
-<figures/payload.pdf, id=345, 473.07239pt x 320.15106pt>
+Package pdftex.def Info: figures/power_health.pdf  used on input line 384.
+(pdftex.def)             Requested size: 469.47049pt x 314.7421pt.
+[8 <./figures/trajectory.pdf>]
+<figures/payload.pdf, id=365, 473.05232pt x 374.73601pt>
 File: figures/payload.pdf Graphic file (type pdf)
 <use figures/payload.pdf>
-Package pdftex.def Info: figures/payload.pdf  used on input line 407.
-(pdftex.def)             Requested size: 469.47049pt x 317.71748pt.
-[8 <./figures/power_health.pdf>]
-<figures/ttc_link.pdf, id=374, 470.11734pt x 560.47896pt>
+Package pdftex.def Info: figures/payload.pdf  used on input line 411.
+(pdftex.def)             Requested size: 469.47049pt x 371.91037pt.
+[9 <./figures/power_health.pdf>]
+<figures/ttc_link.pdf, id=398, 470.09727pt x 546.5007pt>
 File: figures/ttc_link.pdf Graphic file (type pdf)
 <use figures/ttc_link.pdf>
-Package pdftex.def Info: figures/ttc_link.pdf  used on input line 442.
-(pdftex.def)             Requested size: 469.47049pt x 559.73354pt.
-[9 <./figures/payload.pdf>] [10 <./figures/ttc_link.pdf>] [11]
-<figures/data_quality.pdf, id=419, 462.48985pt x 328.68597pt>
+Package pdftex.def Info: figures/ttc_link.pdf  used on input line 446.
+(pdftex.def)             Requested size: 469.47049pt x 545.77386pt.
+[10 <./figures/payload.pdf>] [11 <./figures/ttc_link.pdf>] [12]
+<figures/data_quality.pdf, id=459, 462.46979pt x 380.42526pt>
 File: figures/data_quality.pdf Graphic file (type pdf)
 <use figures/data_quality.pdf>
-Package pdftex.def Info: figures/data_quality.pdf  used on input line 552.
-(pdftex.def)             Requested size: 469.47049pt x 333.66035pt.
-[12
+Package pdftex.def Info: figures/data_quality.pdf  used on input line 556.
+(pdftex.def)             Requested size: 469.47049pt x 386.2059pt.
+[13
 
-] [13 <./figures/data_quality.pdf>] [14] [15
+] [14 <./figures/data_quality.pdf>] [15] [16
 
-] [16] (./flight_data_report.aux)
+] [17] (./flight_data_report.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-04-28>
@@ -692,11 +692,11 @@ Package rerunfilecheck Info: File `flight_data_report.out' has not changed.
 (rerunfilecheck)             Checksum: F75F8E2AC60A872FD3029C1053CA3781;3613.
  ) 
 Here is how much of TeX's memory you used:
- 16457 strings out of 467341
- 268453 string characters out of 5419596
- 748075 words of memory out of 5000000
+ 16456 strings out of 467341
+ 268438 string characters out of 5419596
+ 748076 words of memory out of 5000000
  45106 multiletter control sequences out of 15000+600000
- 680414 words of font info for 143 fonts, out of 8000000 for 9000
+ 680331 words of font info for 142 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
  75i,12n,79p,1015b,658s stack positions out of 10000i,1000n,20000p,200000b,200000s
 <c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx10.pfb><c:/texlive/2026
@@ -714,10 +714,10 @@ ve/2026/texmf-dist/fonts/type1/public/lm/lmsy10.pfb><c:/texlive/2026/texmf-dist
 /lm/lmsy8.pfb><c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmsy9.pfb><c:/t
 exlive/2026/texmf-dist/fonts/type1/public/lm/lmtt10.pfb><c:/texlive/2026/texmf-
 dist/fonts/type1/public/lm/lmtt8.pfb>
-Output written on flight_data_report.pdf (19 pages, 10705716 bytes).
+Output written on flight_data_report.pdf (20 pages, 10854131 bytes).
 PDF statistics:
- 564 PDF objects out of 1000 (max. 8388607)
- 425 compressed objects within 5 object streams
- 71 named destinations out of 1000 (max. 500000)
+ 608 PDF objects out of 1000 (max. 8388607)
+ 458 compressed objects within 5 object streams
+ 72 named destinations out of 1000 (max. 500000)
  31966 words of extra memory for PDF output out of 35830 (max. 10000000)
 

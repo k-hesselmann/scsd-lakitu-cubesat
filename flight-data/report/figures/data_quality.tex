@@ -1,9 +1,10 @@
 \documentclass[tikz,border=4pt]{standalone}
 \input{figure_style.tex}
+\input{../report_values.tex}
 \begin{document}
 \begin{tikzpicture}
 \begin{groupplot}[
-  group style={group size=1 by 2,vertical sep=1.3cm},
+  group style={group size=1 by 3,vertical sep=0.8cm},
   width=16cm,height=5.7cm,
 ]
 \nextgroupplot[
@@ -16,12 +17,13 @@
 ]
 \addplot[ybar,bar width=10pt,fill=lakitublue!70,draw=lakitublue] table[x expr=\coordindex,y=count,col sep=comma]{../processed/sample_interval_histogram.csv};
 \nextgroupplot[
-  xlabel={Time since 14:29 CEST (min)},
   ylabel={GNSS fix type},
-  xmin=0,xmax=183,ymin=-0.2,ymax=3.3,
+  xmin=0,xmax=\FlightEndMinute,ymin=-0.2,ymax=3.3,
   ytick={0,1,2,3},yticklabels={none,DR,2D,3D},
+  xticklabels=\empty,
 ]
 \addplot[const plot,very thick,lakitugreen] table[x=elapsed_min,y=fix_type,col sep=comma]{../processed/gps_fix.csv};
+\FlightStateChronology
 \end{groupplot}
 \end{tikzpicture}
 \end{document}

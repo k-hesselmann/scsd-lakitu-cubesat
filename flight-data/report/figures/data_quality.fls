@@ -241,6 +241,9 @@ INPUT c:/texlive/2026/texmf-dist/tex/generic/pgfplots/pgfcontrib/pgflibraryfillb
 INPUT c:/texlive/2026/texmf-dist/tex/generic/pgfplots/pgfcontrib/pgflibraryfillbetween.code.tex
 INPUT c:/texlive/2026/texmf-dist/tex/generic/pgfplots/libs/tikzlibrarypgfplots.decorations.softclip.code.tex
 INPUT c:/texlive/2026/texmf-dist/tex/generic/pgfplots/libs/tikzlibrarypgfplots.decorations.softclip.code.tex
+INPUT ../report_values.tex
+INPUT ../report_values.tex
+INPUT ../report_values.tex
 INPUT c:/texlive/2026/texmf-dist/tex/latex/lm/t1lmr.fd
 INPUT c:/texlive/2026/texmf-dist/tex/latex/lm/t1lmr.fd
 INPUT c:/texlive/2026/texmf-dist/tex/latex/lm/t1lmr.fd
@@ -290,11 +293,13 @@ INPUT c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/lmex10.tfm
 INPUT c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/ec-lmbx10.tfm
 INPUT c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/ec-lmbx9.tfm
 INPUT ../processed/gps_fix.csv
+INPUT c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/ec-lmbx7.tfm
 OUTPUT data_quality.pdf
 INPUT c:/texlive/2026/texmf-var/fonts/map/pdftex/updmap/pdftex.map
 INPUT c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc
 INPUT c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc
 INPUT data_quality.aux
+INPUT c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx7.pfb
 INPUT c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx9.pfb
 INPUT c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmr6.pfb
 INPUT c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmr7.pfb

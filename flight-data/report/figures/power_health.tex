@@ -5,11 +5,17 @@
 \pgfmathsetmacro{\ResetBandStart}{\ResetMinute-0.8}
 \pgfmathsetmacro{\ResetBandEnd}{\ResetMinute+0.8}
 \begin{tikzpicture}
-\begin{axis}[
+\begin{groupplot}[
+  group style={group size=1 by 2,vertical sep=0.8cm},
+  width=16cm,
+  xmin=0,xmax=\FlightEndMinute,
+]
+\nextgroupplot[
   title={Battery rail},
-  xlabel={Time since 14:29 CEST (min)},
   ylabel={Battery voltage (V)},
-  xmin=0,xmax=183,ymin=3.0,ymax=4.8,
+  ymin=3.0,ymax=4.8,
+  xticklabels=\empty,
+  height=8cm,
   legend style={at={(0.02,0.98)},anchor=north west},
 ]
 \path[fill=lakitugreen!8] (axis cs:0,3.2) rectangle (axis cs:183,4.2);
@@ -40,6 +46,7 @@
   font=\scriptsize\bfseries,
   align=center,
 ] at (axis cs:\ResetMinute,4.72) {Power-on reset\\16:51:39 CEST};
-\end{axis}
+\FlightStateChronology
+\end{groupplot}
 \end{tikzpicture}
 \end{document}

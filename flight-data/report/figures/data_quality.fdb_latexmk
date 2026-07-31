@@ -1,12 +1,14 @@
 # Fdb version 4
-["pdflatex"] 1785391248.02742 "data_quality.tex" "data_quality.pdf" "data_quality" 1785391253.72556 0
-  "../processed/gps_fix.csv" 1785391203 73938 4af1ce028e69fe02045a665b4222cd2a ""
-  "../processed/sample_interval_histogram.csv" 1785391203 205 abeb985aca8c39048d0d1c3a440f516f ""
+["pdflatex"] 1785529930.42623 "data_quality.tex" "data_quality.pdf" "data_quality" 1785529940.75453 0
+  "../processed/gps_fix.csv" 1785529833 73938 4af1ce028e69fe02045a665b4222cd2a ""
+  "../processed/sample_interval_histogram.csv" 1785529833 205 abeb985aca8c39048d0d1c3a440f516f ""
+  "../report_values.tex" 1785529835 3723 0805b8b2fbbbf1594131af01a4820425 ""
   "c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc" 1779106397 2375 baa924870cfb487815765f9094cf3728 ""
   "c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc" 1779106397 2327 9d6df24f9c4f7368395224341a95523a ""
   "c:/texlive/2026/texmf-dist/fonts/map/fontname/texfonts.map" 1779105048 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "c:/texlive/2026/texmf-dist/fonts/tfm/jknappen/ec/ecrm1000.tfm" 1779104466 3584 adb004a0c8e7c46ee66cad73671f37b4 ""
   "c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/ec-lmbx10.tfm" 1779106398 12076 b54175e02101bea1addf6b2d0197ed12 ""
+  "c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/ec-lmbx7.tfm" 1779106398 12072 feea2d4511ce6b67cf0049876d122c6b ""
   "c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/ec-lmbx9.tfm" 1779106398 12080 8da3d5e88196e4de175949ad7749b42f ""
   "c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/ec-lmr10.tfm" 1779106398 12056 7e13df7fe4cbce21b072ba7c4f4deb6e ""
   "c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/ec-lmr7.tfm" 1779106398 12064 09aa3eeac96bf141d673bb1b0385ce55 ""
@@ -21,6 +23,7 @@
   "c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/rm-lmr5.tfm" 1779106398 11804 aefb10c002e6492c25236524a447f969 ""
   "c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/rm-lmr6.tfm" 1779106398 11836 e3b6ce3e601aec94f64a536e7f4224d5 ""
   "c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/rm-lmr9.tfm" 1779106398 11884 c93929a6974dce79eabb778f219d7e18 ""
+  "c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx7.pfb" 1779106398 119461 688b5cf3eb232c8cd2868757f6765296 ""
   "c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx9.pfb" 1779106398 126646 56e3d11e90816073e07cc59bd07ef384 ""
   "c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmr6.pfb" 1779106398 123394 992f5e87d698d9e94717394c62580ea6 ""
   "c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmr7.pfb" 1779106398 121145 00b210fbe9efd7ce850c04e64670de9a ""
@@ -180,9 +183,9 @@
   "c:/texlive/2026/texmf-var/fonts/map/pdftex/updmap/pdftex.map" 1779111257 5619402 ad1310ccf7f36101ef3e8f014a173c46 ""
   "c:/texlive/2026/texmf-var/web2c/pdftex/pdflatex.fmt" 1779111608 3651061 1cc810d42a08f223a78749f1e5a4e1f0 ""
   "c:/texlive/2026/texmf.cnf" 1779111195 713 e69b156964470283e0530f5060668171 ""
-  "data_quality.aux" 1785391253 32 3985256e7290058c681f74d7a3565a19 "pdflatex"
-  "data_quality.tex" 1785391197 983 bedac8d13176a59f6dccb977fd70c0de ""
-  "figure_style.tex" 1785368293 800 a50bdf58e1f2fb5d30020fa7debcbf74 ""
+  "data_quality.aux" 1785529939 32 3985256e7290058c681f74d7a3565a19 "pdflatex"
+  "data_quality.tex" 1785529688 1030 dc8632a4babc24913c77bc019152f1a1 ""
+  "figure_style.tex" 1785529799 2814 13fbf7c49831c67ce322889f78b7932a ""
   (generated)
   "data_quality.aux"
   "data_quality.log"

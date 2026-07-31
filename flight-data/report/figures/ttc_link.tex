@@ -1,11 +1,12 @@
 \documentclass[tikz,border=4pt]{standalone}
 \input{figure_style.tex}
+\input{../report_values.tex}
 \begin{document}
 \begin{tikzpicture}
 \begin{groupplot}[
-  group style={group size=1 by 4,vertical sep=0.75cm},
-  width=16cm,height=5.44cm,
-  xmin=0,xmax=183,
+  group style={group size=1 by 5,vertical sep=0.65cm},
+  width=16cm,height=4.85cm,
+  xmin=0,xmax=\FlightEndMinute,
 ]
 \nextgroupplot[
   title={LoRa link and range},
@@ -40,12 +41,12 @@
 \addplot[thick,dashed,lakitugreen] table[x=elapsed_min,y=range_km,col sep=comma]{../processed/ttc_range_session2.csv};
 \addlegendentry{Recovery approach estimate}
 \nextgroupplot[
-  xlabel={Time since 14:29 CEST (min)},
   ylabel={Failed RX},
   ymin=0.5,ymax=2.5,
   ytick={1,2},
   yticklabels={Length,CRC},
   grid=none,
+  xticklabels=\empty,
 ]
 \addplot[
   only marks,mark=x,mark size=2.2pt,very thick,color=lakitured,
@@ -53,6 +54,7 @@
 \addplot[
   only marks,mark=triangle*,mark size=1.9pt,color=lakituorange,
 ] table[x=elapsed_min,y expr=1,col sep=comma]{../processed/ttc_failures_length.csv};
+\FlightStateChronology
 \end{groupplot}
 \end{tikzpicture}
 \end{document}

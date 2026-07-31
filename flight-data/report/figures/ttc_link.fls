@@ -241,6 +241,9 @@ INPUT c:/texlive/2026/texmf-dist/tex/generic/pgfplots/pgfcontrib/pgflibraryfillb
 INPUT c:/texlive/2026/texmf-dist/tex/generic/pgfplots/pgfcontrib/pgflibraryfillbetween.code.tex
 INPUT c:/texlive/2026/texmf-dist/tex/generic/pgfplots/libs/tikzlibrarypgfplots.decorations.softclip.code.tex
 INPUT c:/texlive/2026/texmf-dist/tex/generic/pgfplots/libs/tikzlibrarypgfplots.decorations.softclip.code.tex
+INPUT ../report_values.tex
+INPUT ../report_values.tex
+INPUT ../report_values.tex
 INPUT c:/texlive/2026/texmf-dist/tex/latex/lm/t1lmr.fd
 INPUT c:/texlive/2026/texmf-dist/tex/latex/lm/t1lmr.fd
 INPUT c:/texlive/2026/texmf-dist/tex/latex/lm/t1lmr.fd
@@ -295,12 +298,16 @@ INPUT ../processed/ttc_range_session1.csv
 INPUT ../processed/ttc_range_session2.csv
 INPUT ../processed/ttc_failures_crc.csv
 INPUT ../processed/ttc_failures_length.csv
+INPUT c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/ec-lmr7.tfm
+INPUT c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/ec-lmbx7.tfm
 OUTPUT ttc_link.pdf
 INPUT c:/texlive/2026/texmf-var/fonts/map/pdftex/updmap/pdftex.map
 INPUT c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc
 INPUT c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc
 INPUT c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc
 INPUT ttc_link.aux
+INPUT c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx7.pfb
 INPUT c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx9.pfb
+INPUT c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmr7.pfb
 INPUT c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmr9.pfb
 INPUT c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmsy9.pfb

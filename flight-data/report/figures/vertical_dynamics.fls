@@ -294,12 +294,17 @@ INPUT c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/ec-lmbx10.tfm
 INPUT c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/ec-lmbx9.tfm
 INPUT ../processed/vertical_dynamics.csv
 INPUT ../processed/vertical_dynamics.csv
+INPUT ../processed/vertical_dynamics.csv
+INPUT c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/ec-lmr7.tfm
+INPUT c:/texlive/2026/texmf-dist/fonts/tfm/public/lm/ec-lmbx7.tfm
 OUTPUT vertical_dynamics.pdf
 INPUT c:/texlive/2026/texmf-var/fonts/map/pdftex/updmap/pdftex.map
 INPUT c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc
 INPUT c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc
 INPUT c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc
 INPUT vertical_dynamics.aux
+INPUT c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx7.pfb
 INPUT c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx9.pfb
+INPUT c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmr7.pfb
 INPUT c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmr9.pfb
 INPUT c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmsy9.pfb

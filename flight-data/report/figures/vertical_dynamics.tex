@@ -4,9 +4,9 @@
 \begin{document}
 \begin{tikzpicture}
 \begin{groupplot}[
-  group style={group size=1 by 2,vertical sep=1.2cm},
-  width=16cm,height=5.6cm,
-  xmin=0,xmax=183,
+  group style={group size=1 by 4,vertical sep=0.8cm},
+  width=16cm,height=5.8725cm,
+  xmin=0,xmax=\FlightEndMinute,
 ]
 \nextgroupplot[
   title={Flight dynamics},
@@ -21,15 +21,30 @@
 \addlegendentry{Horizontal ground speed}
 \draw[lakitured,dashed] (axis cs:\DescentMinute,-105) -- (axis cs:\DescentMinute,45);
 \nextgroupplot[
-  xlabel={Time since 14:29 CEST (min)},
+  ylabel={Horizontal direction},
+  ymin=0,ymax=360,
+  ytick={0,90,180,270,360},
+  yticklabels={N,E,S,W,N},
+  xticklabels=\empty,
+  legend style={at={(0.02,0.95)},anchor=north west},
+]
+\addplot[
+  only marks,mark=*,mark size=0.65pt,lakitupurple,
+  filter discard warning=false,
+]
+  table[x=elapsed_min,y=horizontal_direction_deg,col sep=comma]{../processed/vertical_dynamics.csv};
+\addlegendentry{GNSS course over ground (toward)}
+\nextgroupplot[
   ylabel={Acceleration magnitude (g)},
   ymin=0,ymax=5,
+  xticklabels=\empty,
   legend style={at={(0.02,0.95)},anchor=north west},
 ]
 \addplot[thick,lakitugreen] table[x=elapsed_min,y=accel_mag_g,col sep=comma]{../processed/vertical_dynamics.csv};
 \addlegendentry{5 s median}
 \addplot[thin,lakitured,opacity=0.65] table[x=elapsed_min,y=accel_mag_max_g,col sep=comma]{../processed/vertical_dynamics.csv};
 \addlegendentry{5 s maximum}
+\FlightStateChronology
 \end{groupplot}
 \end{tikzpicture}
 \end{document}

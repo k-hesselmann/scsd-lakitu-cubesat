@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.5.18)  30 JUL 2026 08:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.5.18)  31 JUL 2026 22:40
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -584,38 +584,39 @@ s been generated with the most recent feature set (\pgfplotsset{compat=1.18}).
 
 PGFPlots: reading {../processed/vertical_dynamics.csv}
 PGFPlots: reading {../processed/vertical_dynamics.csv}
-LaTeX Font Info:    Trying to load font information for OT1+lmr on input line 2
-8.
+LaTeX Font Info:    Trying to load font information for OT1+lmr on input line 3
+0.
 (c:/texlive/2026/texmf-dist/tex/latex/lm/ot1lmr.fd
 File: ot1lmr.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
-LaTeX Font Info:    Trying to load font information for OML+lmm on input line 2
-8.
+LaTeX Font Info:    Trying to load font information for OML+lmm on input line 3
+0.
 (c:/texlive/2026/texmf-dist/tex/latex/lm/omllmm.fd
 File: omllmm.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OMS+lmsy on input line 
-28.
+30.
 (c:/texlive/2026/texmf-dist/tex/latex/lm/omslmsy.fd
 File: omslmsy.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OMX+lmex on input line 
-28.
+30.
 (c:/texlive/2026/texmf-dist/tex/latex/lm/omxlmex.fd
 File: omxlmex.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
 )
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <9> on input line 28.
+(Font)              <9> on input line 30.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <6> on input line 28.
+(Font)              <6> on input line 30.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <5> on input line 28.
+(Font)              <5> on input line 30.
+PGFPlots: reading {../processed/vertical_dynamics.csv}
 PGFPlots: reading {../processed/vertical_dynamics.csv}
 PGFPlots: reading {../processed/vertical_dynamics.csv}
 [1
 
 Non-PDF special ignored!
-<special> papersize=465.59137pt,320.15129pt
+<special> papersize=465.57214pt,535.08792pt
 {c:/texlive/2026/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{c:/texlive/2026/
 texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc}{c:/texlive/2026/texmf-dist/fonts/e
 nc/dvips/lm/lm-rm.enc}{c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}
@@ -626,20 +627,21 @@ L3 programming layer <2026-04-28>
  ***********
  ) 
 Here is how much of TeX's memory you used:
- 26273 strings out of 467341
- 678457 string characters out of 5419596
- 2061126 words of memory out of 5000000
- 54919 multiletter control sequences out of 15000+600000
- 652634 words of font info for 69 fonts, out of 8000000 for 9000
+ 26369 strings out of 467341
+ 680489 string characters out of 5419596
+ 2627565 words of memory out of 5000000
+ 55005 multiletter control sequences out of 15000+600000
+ 658970 words of font info for 75 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 117i,18n,121p,1014b,2405s stack positions out of 10000i,1000n,20000p,200000b,200000s
-<c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx9.pfb><c:/texlive/2026/
-texmf-dist/fonts/type1/public/lm/lmr9.pfb><c:/texlive/2026/texmf-dist/fonts/typ
-e1/public/lm/lmsy9.pfb>
-Output written on vertical_dynamics.pdf (1 page, 130887 bytes).
+ 117i,18n,121p,1014b,2484s stack positions out of 10000i,1000n,20000p,200000b,200000s
+<c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmbx7.pfb><c:/texlive/2026/
+texmf-dist/fonts/type1/public/lm/lmbx9.pfb><c:/texlive/2026/texmf-dist/fonts/ty
+pe1/public/lm/lmr7.pfb><c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmr9.p
+fb><c:/texlive/2026/texmf-dist/fonts/type1/public/lm/lmsy9.pfb>
+Output written on vertical_dynamics.pdf (1 page, 315896 bytes).
 PDF statistics:
- 32 PDF objects out of 1000 (max. 8388607)
- 21 compressed objects within 1 object stream
+ 42 PDF objects out of 1000 (max. 8388607)
+ 27 compressed objects within 1 object stream
  0 named destinations out of 1000 (max. 500000)
- 14349 words of extra memory for PDF output out of 14400 (max. 10000000)
+ 18445 words of extra memory for PDF output out of 20736 (max. 10000000)
 

@@ -10,6 +10,7 @@
 \definecolor{lakitugreen}{HTML}{2A9D6F}
 \definecolor{lakitured}{HTML}{C43D3D}
 \definecolor{lakitugray}{HTML}{5B6573}
+\definecolor{lakitupurple}{HTML}{7656A8}
 \pgfplotsset{
   every axis/.append style={
     width=16cm,
@@ -24,4 +25,36 @@
     legend style={font=\small,draw=none,fill=white,fill opacity=0.85,text opacity=1},
     unbounded coords=jump,
   },
+}
+
+% Common chronology strip for every time-based flight figure. The transition
+% times and durations come from report_values.tex, generated from telemetry.
+\newcommand{\FlightStateChronology}{%
+  \nextgroupplot[
+    xlabel={Time since 14:29 CEST (min)},
+    ylabel={Flight state},
+    xmin=0,xmax=\FlightEndMinute,
+    ymin=-0.9,ymax=0.9,
+    height=3.1cm,
+    ytick=\empty,
+    grid=none,
+    axis y line=none,
+    axis x line*=bottom,
+  ]
+  \path[fill=lakitugray!55] (axis cs:0,-0.18) rectangle (axis cs:\LaunchMinute,0.18);
+  \path[fill=lakituorange!75] (axis cs:\LaunchMinute,-0.18) rectangle (axis cs:\AscentMinute,0.18);
+  \path[fill=lakitublue!65] (axis cs:\AscentMinute,-0.18) rectangle (axis cs:\DescentMinute,0.18);
+  \path[fill=lakitured!65] (axis cs:\DescentMinute,-0.18) rectangle (axis cs:\LandingMinute,0.18);
+  \path[fill=lakitugreen!65] (axis cs:\LandingMinute,-0.18) rectangle (axis cs:\FlightEndMinute,0.18);
+  \addplot[
+    only marks,mark=diamond*,mark size=3.6pt,color=lakituorange,
+    mark options={draw=white,fill=lakituorange,line width=0.7pt},
+  ] coordinates {({(\LaunchMinute+\AscentMinute)/2},0)};
+  \node[font=\scriptsize\bfseries,anchor=west,text=lakitugray] at (axis cs:1,-0.58) {Standby \StandbyDurationMin\ min};
+  \node[font=\scriptsize\bfseries,text=white] at (axis cs:{(\AscentMinute+\DescentMinute)/2},0) {Ascent \AscentDurationMin\ min};
+  \node[font=\scriptsize\bfseries,text=white] at (axis cs:{(\DescentMinute+\LandingMinute)/2},0) {Descent \DescentDurationMin\ min};
+  \node[font=\scriptsize\bfseries,text=white] at (axis cs:{(\LandingMinute+\FlightEndMinute)/2},0) {Landing \LandingDurationMin\ min};
+  \node[font=\scriptsize,anchor=west,text=lakituorange] at (axis cs:13,0.58) {Launch (\LaunchDurationS\ s)};
+  \draw[->,thick,lakituorange] (axis cs:13,0.48) -- (axis cs:{(\LaunchMinute+\AscentMinute)/2},0.2);
+  \node[font=\scriptsize,anchor=east,text=lakitugray] at (axis cs:{\FlightEndMinute-1},-0.62) {Cruise not entered};
 }
