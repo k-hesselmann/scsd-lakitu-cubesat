@@ -1,5 +1,5 @@
 # Fdb version 4
-["pdflatex"] 1785530447.38641 "flight_data_report.tex" "flight_data_report.pdf" "flight_data_report" 1785530458.78409 0
+["pdflatex"] 1785564194.90353 "flight_data_report.tex" "flight_data_report.pdf" "flight_data_report" 1785564208.6488 0
   "../../scsd_lakitu_logo.png" 1785366453 9711504 bf5707a5d0438cdf9245c24a0ac209ea ""
   "c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc" 1779106397 2375 baa924870cfb487815765f9094cf3728 ""
   "c:/texlive/2026/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc" 1779106397 2405 5dcf2c1b967ee25cc46c58cd52244aed ""
@@ -137,13 +137,13 @@
   "figures/trajectory.pdf" 1785529904 723928 dfcc8d1cb479e7bee7fab25034323794 ""
   "figures/ttc_link.pdf" 1785529926 150610 b0eed3dba873851376c549f1d20ab174 ""
   "figures/vertical_dynamics.pdf" 1785530417 315896 bc047501358d5dc316c8626add3d7bf8 ""
-  "flight_data_report.aux" 1785530457 6143 f2df008d7f440da0846acc92e423cde6 "pdflatex"
-  "flight_data_report.lof" 1785530457 823 441f56fded331d4697254275a5dee1d8 "pdflatex"
-  "flight_data_report.lot" 1785530457 648 12de6139638a91508dcfc0781d3d6b00 "pdflatex"
-  "flight_data_report.out" 1785530457 3613 f75f8e2ac60a872fd3029c1053ca3781 "pdflatex"
-  "flight_data_report.tex" 1785529711 33711 d3c27ed7cd4349f29e85f27f4d850cf2 ""
-  "flight_data_report.toc" 1785530457 1820 721fc5fe9a04a77701e30d0addcd0816 "pdflatex"
-  "report_values.tex" 1785530397 3723 0805b8b2fbbbf1594131af01a4820425 ""
+  "flight_data_report.aux" 1785564207 6143 23197363a3b60e28acb6ca459aa89d06 "pdflatex"
+  "flight_data_report.lof" 1785564207 823 441f56fded331d4697254275a5dee1d8 "pdflatex"
+  "flight_data_report.lot" 1785564207 648 12de6139638a91508dcfc0781d3d6b00 "pdflatex"
+  "flight_data_report.out" 1785564207 3613 f75f8e2ac60a872fd3029c1053ca3781 "pdflatex"
+  "flight_data_report.tex" 1785564149 35650 e2fad4a6694d2819938d458e934d66e0 ""
+  "flight_data_report.toc" 1785564207 1820 09bb609b01d39ae5dd34534a98b0d877 "pdflatex"
+  "report_values.tex" 1785564168 3723 0805b8b2fbbbf1594131af01a4820425 ""
   (generated)
   "flight_data_report.aux"
   "flight_data_report.lof"
